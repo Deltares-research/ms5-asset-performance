@@ -25,7 +25,7 @@ packaging==24.2
 pandas==2.2.3
 patsy==1.0.1
 pillow==11.1.0
-probabilistic-library @ file:///C:/Users/mavritsa/Repositories/ms5-asset-performance/probabilistic_library-25.1.1-py3-none-any.whl#sha256=27ce4fbe6f67b74e8eee1c5067e602090b5cf9d7a61179bff1a7cc8fad10b632
+# probabilistic-library @ file:///C:/Users/mavritsa/Repositories/ms5-asset-performance/probabilistic_library-25.1.1-py3-none-any.whl#sha256=27ce4fbe6f67b74e8eee1c5067e602090b5cf9d7a61179bff1a7cc8fad10b632
 pydantic==1.10.21
 Pygments==2.19.1
 pyparsing==3.2.1
