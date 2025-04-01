@@ -20,9 +20,9 @@ class DSheetPilingStageResults:
     max_displacement: float = field(init=False)
 
     def __post_init__(self):
-        self.max_moment = max(self.moment)
-        self.max_shear = max(self.shear)
-        self.max_displacement = max(self.displacement)
+        self.max_moment = max(abs(self.moment))
+        self.max_shear = max(abs(self.shear))
+        self.max_displacement = max(abs(self.displacement))
 
 
 class DSheetPilingResults:
@@ -109,12 +109,9 @@ class DSheetPiling(GeoModelBase):
         geomodel.parse(model_path)
         self.geomodel = geomodel
 
-    def calculate(self) -> None:
-        self.execute()
-        self.stage_results = self.read_dsheet_results()
-
     def execute(self) -> None:
         self.geomodel.execute()  # Make sure to add 'geolib.env' in run directory
+        self.stage_results = self.read_dsheet_results()
 
     def read_dsheet_results(self) -> DSheetPilingResults:
         
@@ -158,15 +155,14 @@ class DSheetPiling(GeoModelBase):
         self.stage_results.load_json(path)
 
 
-
 if __name__ == "__main__":
 
     model_path = r"C:\Users\mavritsa\Stichting Deltares\Sito-IS 2023 SO Emerging Topics - Moonshot 5 - 02_Asset performance\ARK case study\Geotechnical models\D-Sheet Piling\N60_3_5-060514-red.shi"
     model_path = Path(model_path)
-    result_path = Path("../results/example_results.json")
+    result_path = Path("../../results/example_results.json")
 
     model = DSheetPiling(model_path)
-    model.calculate()
+    model.execute()
     model.save_results(result_path)
 
     model2 = DSheetPiling(model_path)
