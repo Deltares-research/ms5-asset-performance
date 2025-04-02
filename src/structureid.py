@@ -5,12 +5,14 @@ from dataclasses import dataclass, field
 from typing import Union, List, Tuple, Optional, Annotated
 
 
+Annotated[List[float] | Tuple[float, ...] | NDArray[np.float64], ("grid_size")]
+
 @dataclass
 class RV:
     name: str
     dist: stats.rv_continuous | stats.rv_discrete
     n_dim: int = 1
-    rv_grid: Optional[List[float] | Annotated[NDArray[np.float64], ("grid_size")]] = None
+    rv_grid: Optional[List[float] | Tuple[float, ...] | Annotated[NDArray[np.float64], ("grid_size")]] = None
     pdf_grid: List[float] | Annotated[NDArray[np.float64], ("grid_size")]= field(init=False)
     logpdf_grid: List[float] | Annotated[NDArray[np.float64], ("grid_size")] = field(init=False)
 

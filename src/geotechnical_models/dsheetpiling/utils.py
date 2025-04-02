@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from dataclasses import dataclass, asdict, field
 from numpy.typing import NDArray
-from typing import List, Dict, Tuple, Optional, Annotated, NamedTuple
+from typing import Optional, Annotated, NamedTuple
 
 
 class WaterLevel(NamedTuple):
@@ -34,7 +34,7 @@ class WaterData:
 
         self.water_lvls = water_lvls
 
-    def adjust(self, new_lvls: Dict[str, float]) -> None:
+    def adjust(self, new_lvls: dict[str, float]) -> None:
 
         water_lvl_names = [water_lvl.name for water_lvl in self.water_lvls]
         new_lvl_names = list(new_lvls.keys())
@@ -56,13 +56,13 @@ class WaterData:
 
         self.water_lvls = water_lvls
 
-    def add(self, new_lvls: Dict[str, List[float] | Tuple[float, ...]]) -> None:
+    def add(self, new_lvls: dict[str, list[float] | tuple[float, ...]]) -> None:
         for (name, params) in new_lvls.items():
             lvl, x_coord = params
             water_lvl = WaterLevel(name=name, lvl=lvl, x_coord=x_coord)
             self.water_lvls.append(water_lvl)
 
-    def remove(self, removed_lvls: List[str] | Tuple[str, ...]) -> None:
+    def remove(self, removed_lvls: list[str] | tuple[str, ...]) -> None:
         water_lvls = []
         for water_lvl in self.water_lvls:
             if not water_lvl.name in removed_lvls:
@@ -113,13 +113,13 @@ class DSheetPilingStageResults:
 
 class DSheetPilingResults:
 
-    z: Optional[List[float]] = None
-    moment: Optional[List[List[float]]] = None
-    shear: Optional[List[List[float]]] = None
-    displacement: Optional[List[List[float]]] = None
-    max_moment: List[float] = None
-    max_shear: List[float] = None
-    max_displacement: List[float] = None
+    z: Optional[list[float]] = None
+    moment: Optional[list[list[float]]] = None
+    shear: Optional[list[list[float]]] = None
+    displacement: Optional[list[list[float]]] = None
+    max_moment: list[float] = None
+    max_shear: list[float] = None
+    max_displacement: list[float] = None
     n_stages: int = None
     stage_results = None
 
@@ -129,7 +129,7 @@ class DSheetPilingResults:
     def __eq__(self, other: "DSheetPilingResults") -> bool:
         return self.__dict__ == other.__dict__
 
-    def read(self, stage_results: List[DSheetPilingStageResults]) -> None:
+    def read(self, stage_results: list[DSheetPilingStageResults]) -> None:
         self.stage_results = stage_results
         self.n_stages = len(stage_results)
         self.z = [stage_result.z for stage_result in stage_results][0]
@@ -140,7 +140,7 @@ class DSheetPilingResults:
         self.max_shear = [stage_result.max_shear for stage_result in stage_results]
         self.max_displacement = [stage_result.max_displacement for stage_result in stage_results]
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, list[float | int]]:
         stage_result_dicts = [asdict(stage_result) for stage_result in self.stage_results]
         keys = list(stage_result_dicts[0].keys())
         stage_result_dict = {key: [stage_result_dict[key] for stage_result_dict in stage_result_dicts] for key in keys}

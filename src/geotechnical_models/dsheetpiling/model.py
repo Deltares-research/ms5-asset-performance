@@ -5,7 +5,7 @@ from src.geotechnical_models.base import GeoModelBase
 from geolib.models.dsheetpiling import DSheetPilingModel
 from geolib.models.dsheetpiling.internal import SoilCollection, UniformLoad
 from pathlib import Path
-from typing import Optional, Dict, List, Tuple
+from typing import Optional
 import json
 
 
@@ -35,10 +35,10 @@ class DSheetPiling(GeoModelBase):
         self.water = self.get_water()
         self.uniform_loads = self.get_uniform_loads()
 
-    def get_soils(self) -> Dict[str, SoilCollection]:
+    def get_soils(self) -> dict[str, SoilCollection]:
         return {soil.name: soil for soil in deepcopy(self.geomodel.input.input_data.soil_collection.soil)}
 
-    def update_soils(self, soil_data: Dict[str, Dict[str, float]]) -> None:
+    def update_soils(self, soil_data: dict[str, dict[str, float]]) -> None:
         for (soil_name, soil_params) in soil_data.items():
             for (soil_param_name, soil_param_value) in soil_params.items():
                 if hasattr(self.soils[soil_name], soil_param_name):
@@ -51,7 +51,7 @@ class DSheetPiling(GeoModelBase):
         water_input =  deepcopy(self.geomodel.input.input_data.waterlevels)
         return WaterData(water_input)
     
-    def update_water(self, water_lvls: Dict[str, float]) -> None:
+    def update_water(self, water_lvls: dict[str, float]) -> None:
         self.water.adjust(water_lvls)
         water_lines = self.water.write()
         self.geomodel.input.input_data.waterlevels = water_lines
@@ -62,13 +62,13 @@ class DSheetPiling(GeoModelBase):
     def update_wall(self) -> float:
         raise NotImplementedError("Adjusting the structural properties of the wall is not possible yet.")
 
-    def get_uniform_loads(self) -> Dict[str, UniformLoad]:
+    def get_uniform_loads(self) -> dict[str, UniformLoad]:
         return {
             uniform_load.name: uniform_load
             for uniform_load in deepcopy(self.geomodel.input.input_data.uniform_loads.loads)
         }
 
-    def update_uniform_loads(self, load_data: Dict[str, List[float] | Tuple[float,...]]) -> None:
+    def update_uniform_loads(self, load_data: dict[str, list[float] | tuple[float,...]]) -> None:
         for (load_name, load_params) in load_data.items():
             load_left, load_right = load_params
             if load_name in list(load_data.keys()):
