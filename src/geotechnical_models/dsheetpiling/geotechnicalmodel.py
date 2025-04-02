@@ -1,15 +1,14 @@
 import os
 import numpy as np
-import pandas as pd
 import json
 from copy import deepcopy
-from geomodel import GeoModelBase
+from src.geotechnical_models.geotechnicalmodel_base import GeoModelBase
 from geolib.models.dsheetpiling import DSheetPilingModel
 from geolib.models.dsettlement.internal import SoilCollection
 from dataclasses import dataclass, asdict, field
-from pathlib import Path, WindowsPath
+from pathlib import Path
 from numpy.typing import NDArray
-from typing import List, Optional, Annotated, Dict, Tuple
+from typing import List, Optional, Annotated, Dict
 
 
 @dataclass
@@ -76,12 +75,12 @@ class DSheetPilingResults:
         self.max_shear = [res["max_shear"] for res in result_dict.values()]
         self.max_displacement = [res["max_displacement"] for res in result_dict.values()]
 
-    def save_json(self, path: str | WindowsPath | Path) -> None:
+    def save_json(self, path: str | Path) -> None:
         if not isinstance(path, Path): path = Path(path)
         with open(path, 'w') as f:
             json.dump(self.to_dict(), f)
 
-    def load_json(self, path: str | WindowsPath | Path) -> None:
+    def load_json(self, path: str | Path) -> None:
         if not isinstance(path, Path): path = Path(path)
         with open(path, 'r') as f:
             stage_results = json.load(f)
@@ -108,27 +107,38 @@ class DSheetPilingResults:
 
 class DSheetPiling(GeoModelBase):
 
-    def __init__(self, model_path: str | WindowsPath | Path, exe_path: Optional[str | WindowsPath | Path] = None
-                 ) -> None:
+    def __init__(self, model_path: str | Path, exe_path: Optional[str | Path] = None) -> None:
         super(GeoModelBase, self).__init__()
         if not isinstance(model_path, Path): model_path = Path(model_path)
         self.model_path = Path(model_path.as_posix())
+        if not self.model_path.exists():
+            raise AttributeError("Model path does not exist.")
         if exe_path is not None:
             if not isinstance(exe_path, Path): exe_path = Path(exe_path)
         else:
             exe_path = model_path.with_name(model_path.stem+"_executed"+model_path.suffix)
         self.exe_path = Path(exe_path.as_posix())
-        self.parse_model()
+        if not exe_path.parent.exists(): os.mkdir(self.exe_path.parent)
+        self.parse_model(self.model_path)
 
-    def parse_model(self) -> None:
+    def parse_model(self, path: str | Path) -> None:
+        if not isinstance(path, Path): path = Path(path)
         geomodel = DSheetPilingModel()
-        geomodel.parse(self.model_path)
+        geomodel.parse(path)
         self.geomodel = geomodel
         self.n_stages = int(self.geomodel.input.input_data.construction_stages[0].split(" ")[0])
-        self.soils = self.list_soils()
+        self.soils = self.get_soils()
+        self.wall = self.get_wall()
+        self.water = self.get_water()
 
-    def list_soils(self) -> Dict[str, SoilCollection]:
+    def get_soils(self) -> Dict[str, SoilCollection]:
         return {soil.name: soil for soil in deepcopy(self.geomodel.input.input_data.soil_collection.soil)}
+
+    def get_wall(self) -> float:
+        pass
+
+    def get_water(self) -> float:
+        pass
 
     def adjust_soil(self, soil_data: Dict[str, Dict[str, float]]) -> None:
         for (soil_name, soil_params) in soil_data.items():
@@ -140,7 +150,7 @@ class DSheetPiling(GeoModelBase):
         self.geomodel.input.input_data.soil_collection.soil = list(self.soils.values())
 
     def execute(self) -> None:
-        self.geomodel.serialize(self.exe_path)
+        self.geomodel.serialize(self.exe_path)  # _executed model is parsed from now on. TODO: Check w/ Eleni
         self.geomodel.execute()  # Make sure to add 'geolib.env' in run directory
         self.results = self.read_dsheet_results()
 
@@ -172,12 +182,12 @@ class DSheetPiling(GeoModelBase):
 
         return results
 
-    def save_results(self, path: str | WindowsPath | Path) -> None:
+    def save_results(self, path: str | Path) -> None:
         if not isinstance(path, Path): path = Path(path)
         path = Path(path.as_posix())
         self.results.save_json(path)
 
-    def load_results(self, path: str | WindowsPath | Path) -> None:
+    def load_results(self, path: str | Path) -> None:
         if not isinstance(path, Path): path = Path(path)
         path = Path(path.as_posix())
         self.results = DSheetPilingResults()
@@ -187,7 +197,7 @@ class DSheetPiling(GeoModelBase):
 if __name__ == "__main__":
 
     model_path = os.environ["MODEL_PATH"]  # model_path defined as environment variable
-    result_path = r"../../results/example_results.json"
+    result_path = r"../../../results/example_results.json"
     soil_data = {"Klei": {"soilcohesion": 10}}
 
     model = DSheetPiling(model_path)
