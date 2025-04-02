@@ -112,12 +112,12 @@ class DSheetPiling(GeoModelBase):
                  ) -> None:
         super(GeoModelBase, self).__init__()
         if not isinstance(model_path, Path): model_path = Path(model_path)
-        self.model_path = model_path
+        self.model_path = Path(model_path.as_posix())
         if exe_path is not None:
             if not isinstance(exe_path, Path): exe_path = Path(exe_path)
-            self.exe_path = exe_path
         else:
-            self.exe_path = model_path.with_name(model_path.stem+"_executed"+model_path.suffix)
+            exe_path = model_path.with_name(model_path.stem+"_executed"+model_path.suffix)
+        self.exe_path = Path(exe_path.as_posix())
         self.parse_model()
 
     def parse_model(self) -> None:
@@ -174,21 +174,21 @@ class DSheetPiling(GeoModelBase):
 
     def save_results(self, path: str | WindowsPath | Path) -> None:
         if not isinstance(path, Path): path = Path(path)
+        path = Path(path.as_posix())
         self.results.save_json(path)
 
     def load_results(self, path: str | WindowsPath | Path) -> None:
         if not isinstance(path, Path): path = Path(path)
+        path = Path(path.as_posix())
         self.results = DSheetPilingResults()
         self.results.load_json(path)
 
 
 if __name__ == "__main__":
 
-    model_path = (r"C:\Users\mavritsa\Stichting Deltares\Sito-IS 2023 SO Emerging Topics - Moonshot 5 - "
-                  r"02_Asset performance\ARK case study\Geotechnical models\D-Sheet Piling\N60_3_5-060514-red.shi")
+    model_path = os.environ["MODEL_PATH"]  # model_path defined as environment variable
     result_path = r"../../results/example_results.json"
-
-    soil_data = {"Klei": {"soilcohesion": 10000}}
+    soil_data = {"Klei": {"soilcohesion": 10}}
 
     model = DSheetPiling(model_path)
     model.adjust_soil(soil_data)
