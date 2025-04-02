@@ -1,9 +1,11 @@
 import os
+import numpy as np
 import pandas as pd
 from dataclasses import dataclass, asdict, field
 from geomodel import GeoModelBase
 from pathlib import Path, WindowsPath
-from typing import Union, List, Tuple, Any, Optional
+from numpy.typing import NDArray
+from typing import Union, List, Tuple, Any, Optional, Annotated, Type
 from geolib.models.dsheetpiling import DSheetPilingModel
 import json
 
@@ -11,33 +13,37 @@ import json
 @dataclass
 class DSheetPilingStageResults:
     stage_id: int
-    z: list
-    moment: list
-    shear: list
-    displacement: list
+    z: list | Annotated[NDArray[np.float64], ("n_points")]
+    moment: list | Annotated[NDArray[np.float64], ("n_points")]
+    shear: list | Annotated[NDArray[np.float64], ("n_points")]
+    displacement: list | Annotated[NDArray[np.float64], ("n_points")]
     max_moment: float = field(init=False)
     max_shear: float = field(init=False)
     max_displacement: float = field(init=False)
 
     def __post_init__(self):
-        self.max_moment = max(abs(self.moment))
-        self.max_shear = max(abs(self.shear))
-        self.max_displacement = max(abs(self.displacement))
+        self.max_moment = max([abs(moment) for moment in self.moment])
+        self.max_shear = max([abs(shear) for shear in self.shear])
+        self.max_displacement = max([abs(displacement) for displacement in self.displacement])
 
 
 class DSheetPilingResults:
-    z = None
-    moment = None
-    shear = None
-    displacement = None
-    max_moment = None
-    max_shear = None
-    max_displacement = None
-    n_stages = None
+
+    z: Optional[List[float] | Annotated[NDArray[np.float64], ("n_points")]] = None
+    moment: Optional[List[float] | Annotated[NDArray[np.float64], ("n_points")]] = None
+    shear: Optional[List[float] | Annotated[NDArray[np.float64], ("n_points")]] = None
+    displacement: Optional[List[float] | Annotated[NDArray[np.float64], ("n_points")]] = None
+    max_moment: List[float] = None
+    max_shear: List[float] = None
+    max_displacement: List[float] = None
+    n_stages: int = None
     stage_results = None
 
     def __init__(self):
         pass
+
+    def __eq__(self, other: "DSheetPilingResults") -> bool:
+        return self.__dict__ == other.__dict__
 
     def read(self, stage_results: List[DSheetPilingStageResults]) -> None:
         self.stage_results = stage_results
@@ -98,11 +104,11 @@ class DSheetPilingResults:
 
 class DSheetPiling(GeoModelBase):
 
-    def __init__(self, model_path: Union[str, WindowsPath]) -> None:
+    def __init__(self, model_path: str | WindowsPath | Path) -> None:
         super(GeoModelBase, self).__init__()
         self.parse_model(model_path)
 
-    def parse_model(self, model_path: Union[str, WindowsPath]) -> None:
+    def parse_model(self, model_path: str | WindowsPath | Path) -> None:
         if isinstance(model_path, str):
             model_path = Path(model_path)
         geomodel = DSheetPilingModel()
@@ -111,15 +117,9 @@ class DSheetPiling(GeoModelBase):
 
     def execute(self) -> None:
         self.geomodel.execute()  # Make sure to add 'geolib.env' in run directory
-        self.stage_results = self.read_dsheet_results()
+        self.results = self.read_dsheet_results()
 
     def read_dsheet_results(self) -> DSheetPilingResults:
-        
-        stage_max = {
-            int(res['stagenumber']):
-                {"moment": abs(res['moment']), "shear": abs(res['shearforce']), "disp": abs(res['displacement'])}
-            for res in self.geomodel.output.resume.resume
-        }
 
         stage_result_lst = []
         for i_stage, stage in enumerate(self.geomodel.output.construction_stage):
@@ -142,17 +142,17 @@ class DSheetPiling(GeoModelBase):
 
         # TODO: Read anchor results.
 
-        stage_results = DSheetPilingResults()
-        stage_results.read(stage_result_lst)
+        results = DSheetPilingResults()
+        results.read(stage_result_lst)
 
-        return stage_results
+        return results
 
-    def save_results(self, path: Union[str, WindowsPath]) -> None:
-        self.stage_results.save_json(path)
+    def save_results(self, path: str | WindowsPath | Path) -> None:
+        self.results.save_json(path)
 
-    def load_results(self, path: Union[str, WindowsPath]) -> None:
-        self.stage_results = DSheetPilingResults()
-        self.stage_results.load_json(path)
+    def load_results(self, path: str | WindowsPath | Path) -> None:
+        self.results = DSheetPilingResults()
+        self.results.load_json(path)
 
 
 if __name__ == "__main__":
@@ -165,8 +165,8 @@ if __name__ == "__main__":
     model.execute()
     model.save_results(result_path)
 
-    model2 = DSheetPiling(model_path)
-    model2.load_results(result_path)
+    loaded_model = DSheetPiling(model_path)
+    loaded_model.load_results(result_path)
 
-    print("Were the results loaded correctly?  -->  " + str(model.stage_results == model2.stage_results))
+    print("Were the results loaded correctly?  -->  " + str(model.results.__eq__(loaded_model.results)))
 
