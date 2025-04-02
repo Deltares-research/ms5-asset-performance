@@ -3,7 +3,7 @@ from utils import DSheetPilingResults, DSheetPilingStageResults, WaterData, Wate
 from copy import deepcopy
 from src.geotechnical_models.base import GeoModelBase
 from geolib.models.dsheetpiling import DSheetPilingModel
-from geolib.models.dsheetpiling.internal import SoilCollection
+from geolib.models.dsheetpiling.internal import SoilCollection, UniformLoad
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 
@@ -33,6 +33,7 @@ class DSheetPiling(GeoModelBase):
         self.soils = self.get_soils()
         self.wall = self.get_wall()
         self.water = self.get_water()
+        self.uniform_loads = self.get_uniform_loads()
 
     def get_soils(self) -> Dict[str, SoilCollection]:
         return {soil.name: soil for soil in deepcopy(self.geomodel.input.input_data.soil_collection.soil)}
@@ -57,6 +58,25 @@ class DSheetPiling(GeoModelBase):
 
     def get_wall(self) -> float:
         pass
+
+    def update_wall(self) -> float:
+        pass
+
+    def get_uniform_loads(self) -> Dict[str, UniformLoad]:
+        return {
+            uniform_load.name: uniform_load
+            for uniform_load in deepcopy(self.geomodel.input.input_data.uniform_loads.loads)
+        }
+
+    def update_uniform_loads(self, load_data: Dict[str, List[float] | Tuple[float,...]]) -> None:
+        for (load_name, load_params) in load_data.items():
+            load_left, load_right = load_params
+            if load_name in list(load_data.keys()):
+                self.uniform_loads[load_name].uniformloadleft = float(load_left)
+                self.uniform_loads[load_name].uniformloadright = float(load_right)
+            else:
+                raise AttributeError(f"Uniform load name {load_name} not found in Uniform load list.")
+        self.geomodel.input.input_data.uniform_loads.loads = list(self.uniform_loads.values())
 
     def execute(self) -> None:
         self.geomodel.serialize(self.exe_path)  # _executed model is parsed from now on. TODO: Check w/ Eleni
@@ -113,11 +133,13 @@ if __name__ == "__main__":
     model_path = os.environ["MODEL_PATH"]  # model_path defined as environment variable
     result_path = r"../../../results/example_results.json"
     soil_data = {"Klei": {"soilcohesion": 10.}}
-    water_lvls = {"GWS  0,0": +1.}
+    water_data = {"GWS  0,0": +1.}
+    load_data = {"A": (15, 0.)}
 
     model = DSheetPiling(model_path)
     model.update_soils(soil_data)
-    model.update_water(water_lvls)
+    model.update_water(water_data)
+    model.update_uniform_loads(load_data)
     model.execute()
     model.save_results(result_path)
 
