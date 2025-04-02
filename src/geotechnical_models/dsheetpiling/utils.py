@@ -36,7 +36,13 @@ class WaterData:
 
     def adjust(self, new_lvls: Dict[str, float]) -> None:
 
+        water_lvl_names = [water_lvl.name for water_lvl in self.water_lvls]
         new_lvl_names = list(new_lvls.keys())
+
+        for new_lvl_name in new_lvl_names:
+            if new_lvl_name not in water_lvl_names:
+                message = f"New water level name {new_lvl_name} was not found in existing water level names."
+                raise AttributeError(message)
 
         water_lvls = []
         for water_lvl in self.water_lvls:
@@ -154,18 +160,24 @@ class DSheetPilingResults:
 
     def save_json(self, path: str | Path) -> None:
         if not isinstance(path, Path): path = Path(path)
+        path = Path(path.as_posix())
+        if not path.exists():
+            raise NotADirectoryError("Result path does not exist.")
         with open(path, 'w') as f:
             json.dump(self.to_dict(), f)
 
     def load_json(self, path: str | Path) -> None:
         if not isinstance(path, Path): path = Path(path)
+        path = Path(path.as_posix())
+        if not path.exists():
+            raise NotADirectoryError("Result path does not exist.")
         with open(path, 'r') as f:
             stage_results = json.load(f)
+
         n_stages = len(stage_results["stage_id"])
         stage_results["z"] = [stage_results["z"] for _ in range(n_stages)]
 
         stage_result_lst = []
-
         for results in zip(*stage_results.values()):
 
             stage_id, z, moment, shear, displacement, max_moment, max_shear, max_displacement = results

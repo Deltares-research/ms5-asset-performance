@@ -6,6 +6,7 @@ from geolib.models.dsheetpiling import DSheetPilingModel
 from geolib.models.dsheetpiling.internal import SoilCollection, UniformLoad
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
+import json
 
 
 class DSheetPiling(GeoModelBase):
@@ -31,7 +32,6 @@ class DSheetPiling(GeoModelBase):
         self.geomodel = geomodel
         self.n_stages = int(self.geomodel.input.input_data.construction_stages[0].split(" ")[0])
         self.soils = self.get_soils()
-        self.wall = self.get_wall()
         self.water = self.get_water()
         self.uniform_loads = self.get_uniform_loads()
 
@@ -57,10 +57,10 @@ class DSheetPiling(GeoModelBase):
         self.geomodel.input.input_data.waterlevels = water_lines
 
     def get_wall(self) -> float:
-        pass
+        raise NotImplementedError("Adjusting the structural properties of the wall is not possible yet.")
 
     def update_wall(self) -> float:
-        pass
+        raise NotImplementedError("Adjusting the structural properties of the wall is not possible yet.")
 
     def get_uniform_loads(self) -> Dict[str, UniformLoad]:
         return {
@@ -78,10 +78,18 @@ class DSheetPiling(GeoModelBase):
                 raise AttributeError(f"Uniform load name {load_name} not found in Uniform load list.")
         self.geomodel.input.input_data.uniform_loads.loads = list(self.uniform_loads.values())
 
-    def execute(self) -> None:
+    def execute(self, result_path: Optional[str | Path] = None) -> None:
         self.geomodel.serialize(self.exe_path)  # _executed model is parsed from now on. TODO: Check w/ Eleni
         self.geomodel.execute()  # Make sure to add 'geolib.env' in run directory
         self.results = self.read_dsheet_results()
+        if result_path is not None:
+            if not isinstance(result_path, Path): result_path = Path(result_path)
+            result_path = Path(result_path.as_posix())
+            if not result_path.exists():
+                raise NotADirectoryError("Result path does not exist.")
+            self.save_results(result_path)
+            log_path = result_path.parent / "log.json"
+            self.log_input(log_path)
 
     def read_dsheet_results(self) -> DSheetPilingResults:
 
@@ -127,6 +135,18 @@ class DSheetPiling(GeoModelBase):
         self.results = DSheetPilingResults()
         self.results.load_json(path)
 
+    def log_input(self, path: str | Path) -> None:
+        soil_dict = {soil_name: soil.__dict__ for (soil_name, soil) in self.soils.items()}
+        water_lvl_dict = {water_lvl.name: water_lvl.lvl for water_lvl in self.water.water_lvls}
+        uniform_load_dict = {uniform_load_name: uniform_load.__dict__ for (uniform_load_name, uniform_load) in self.uniform_loads.items()}
+        log = {
+            "soil": soil_dict,
+            "water_levels": water_lvl_dict,
+            "uniform_loads": uniform_load_dict,
+        }
+        with open(path, 'w') as f:
+            json.dump(log, f)
+
 
 if __name__ == "__main__":
 
@@ -140,8 +160,7 @@ if __name__ == "__main__":
     model.update_soils(soil_data)
     model.update_water(water_data)
     model.update_uniform_loads(load_data)
-    model.execute()
-    model.save_results(result_path)
+    model.execute(result_path)
 
     loaded_model = DSheetPiling(model_path)
     loaded_model.load_results(result_path)
