@@ -1,11 +1,11 @@
 import os
-from utils import DSheetPilingResults, DSheetPilingStageResults
+from utils import DSheetPilingResults, DSheetPilingStageResults, WaterData, WaterLevel
 from copy import deepcopy
-from src.geotechnical_models.geotechnicalmodel_base import GeoModelBase
+from src.geotechnical_models.base import GeoModelBase
 from geolib.models.dsheetpiling import DSheetPilingModel
-from geolib.models.dsettlement.internal import SoilCollection
+from geolib.models.dsheetpiling.internal import SoilCollection
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Tuple
 
 
 class DSheetPiling(GeoModelBase):
@@ -15,7 +15,7 @@ class DSheetPiling(GeoModelBase):
         if not isinstance(model_path, Path): model_path = Path(model_path)
         self.model_path = Path(model_path.as_posix())
         if not self.model_path.exists():
-            raise AttributeError("Model path does not exist.")
+            raise NotADirectoryError("Model path does not exist.")
         if exe_path is not None:
             if not isinstance(exe_path, Path): exe_path = Path(exe_path)
         else:
@@ -37,20 +37,26 @@ class DSheetPiling(GeoModelBase):
     def get_soils(self) -> Dict[str, SoilCollection]:
         return {soil.name: soil for soil in deepcopy(self.geomodel.input.input_data.soil_collection.soil)}
 
-    def get_wall(self) -> float:
-        pass
-
-    def get_water(self) -> float:
-        pass
-
-    def adjust_soil(self, soil_data: Dict[str, Dict[str, float]]) -> None:
+    def update_soils(self, soil_data: Dict[str, Dict[str, float]]) -> None:
         for (soil_name, soil_params) in soil_data.items():
             for (soil_param_name, soil_param_value) in soil_params.items():
                 if hasattr(self.soils[soil_name], soil_param_name):
-                    setattr(self.soils[soil_name], soil_param_name, soil_param_value)
+                    setattr(self.soils[soil_name], soil_param_name, float(soil_param_value))
                 else:
                     raise AttributeError(f"Soil parameter {soil_param_name} not found in {soil_name}.")
         self.geomodel.input.input_data.soil_collection.soil = list(self.soils.values())
+
+    def get_water(self) -> WaterData:
+        water_input =  deepcopy(self.geomodel.input.input_data.waterlevels)
+        return WaterData(water_input)
+    
+    def update_water(self, water_lvls: Dict[str, float]) -> None:
+        self.water.adjust(water_lvls)
+        water_lines = self.water.write()
+        self.geomodel.input.input_data.waterlevels = water_lines
+
+    def get_wall(self) -> float:
+        pass
 
     def execute(self) -> None:
         self.geomodel.serialize(self.exe_path)  # _executed model is parsed from now on. TODO: Check w/ Eleni
@@ -80,6 +86,11 @@ class DSheetPiling(GeoModelBase):
 
         # TODO: Read anchor results.
 
+        if len(stage_result_lst) != self.n_stages:
+            error_message = (f"Parsing results discovered {len(stage_result_lst)} stages,"
+                             f" but D-SheetPiling model has {self.n_stages} stages.")
+            raise ValueError(error_message)
+
         results = DSheetPilingResults()
         results.read(stage_result_lst)
 
@@ -101,10 +112,12 @@ if __name__ == "__main__":
 
     model_path = os.environ["MODEL_PATH"]  # model_path defined as environment variable
     result_path = r"../../../results/example_results.json"
-    soil_data = {"Klei": {"soilcohesion": 10}}
+    soil_data = {"Klei": {"soilcohesion": 10.}}
+    water_lvls = {"GWS  0,0": +1.}
 
     model = DSheetPiling(model_path)
-    model.adjust_soil(soil_data)
+    model.update_soils(soil_data)
+    model.update_water(water_lvls)
     model.execute()
     model.save_results(result_path)
 

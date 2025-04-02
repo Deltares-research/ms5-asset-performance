@@ -3,7 +3,89 @@ import json
 from pathlib import Path
 from dataclasses import dataclass, asdict, field
 from numpy.typing import NDArray
-from typing import List, Optional, Annotated
+from typing import List, Dict, Tuple, Optional, Annotated, NamedTuple
+
+
+class WaterLevel(NamedTuple):
+    name: str
+    lvl: float
+    x_coord: float = 0.
+    unknown_entry: int = 2
+
+
+class WaterData:
+
+    def __init__(self, water_input: str) -> None:
+        self.parse(water_input)
+
+    def parse(self, water_input: str) -> None:
+
+        water_lines = water_input.split('\n')
+
+        water_lvls = []
+        for line in water_lines[2::4]:
+            idx = water_lines.index(line)
+            water_lvl = WaterLevel(
+                name=water_lines[idx],
+                lvl=float(water_lines[idx+1]),
+                x_coord=float(water_lines[idx+2]),
+            )
+            water_lvls.append(water_lvl)
+
+        self.water_lvls = water_lvls
+
+    def adjust(self, new_lvls: Dict[str, float]) -> None:
+
+        new_lvl_names = list(new_lvls.keys())
+
+        water_lvls = []
+        for water_lvl in self.water_lvls:
+            if water_lvl.name in new_lvl_names:
+                water_lvl = WaterLevel(
+                    name=water_lvl.name,
+                    lvl=float(new_lvls[water_lvl.name]),
+                    x_coord=water_lvl.x_coord,
+                )
+            water_lvls.append(water_lvl)
+
+        self.water_lvls = water_lvls
+
+    def add(self, new_lvls: Dict[str, List[float] | Tuple[float, ...]]) -> None:
+        for (name, params) in new_lvls.items():
+            lvl, x_coord = params
+            water_lvl = WaterLevel(name=name, lvl=lvl, x_coord=x_coord)
+            self.water_lvls.append(water_lvl)
+
+    def remove(self, removed_lvls: List[str] | Tuple[str, ...]) -> None:
+        water_lvls = []
+        for water_lvl in self.water_lvls:
+            if not water_lvl.name in removed_lvls:
+                water_lvls.append(water_lvl)
+        self.water_lvls = water_lvls
+
+    def write(self) -> str:
+
+        water_lines = [
+            f"{len(self.water_lvls)} Number of Waterlevels ",
+            "  3 Number of Data per Waterlevel "
+        ]
+
+        for water_lvl in self.water_lvls:
+            water_line = [
+            water_lvl.name,  # Name
+            f"{water_lvl.lvl:.2f}",  # Canal lvl
+            f"{water_lvl.x_coord:.2f}",  # X-coordinate
+            f"{water_lvl.unknown_entry:d}"  # ???
+            # TODO: Use these lines in case water level handling does not work.
+            # f"      {water_lvl.lvl:.2f}" if water_lvl.lvl >= 0 else f"     {water_lvl.lvl:.2f}",  # Canal lvl
+            # f"      {water_lvl.x_coord:.2f}",  # X-coordinate
+            # f"         {water_lvl.unknown_entry:d}"  # ???
+            ]
+            water_lines += water_line
+
+        water_lines = "\n".join(water_lines)
+
+        return water_lines
 
 
 @dataclass
