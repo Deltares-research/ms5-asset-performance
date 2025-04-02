@@ -1,13 +1,15 @@
 import os
 import numpy as np
 import pandas as pd
-from dataclasses import dataclass, asdict, field
+import json
+from copy import deepcopy
 from geomodel import GeoModelBase
+from geolib.models.dsheetpiling import DSheetPilingModel
+from geolib.models.dsettlement.internal import SoilCollection
+from dataclasses import dataclass, asdict, field
 from pathlib import Path, WindowsPath
 from numpy.typing import NDArray
-from typing import Union, List, Tuple, Any, Optional, Annotated, Type
-from geolib.models.dsheetpiling import DSheetPilingModel
-import json
+from typing import List, Optional, Annotated, Dict, Tuple
 
 
 @dataclass
@@ -29,10 +31,10 @@ class DSheetPilingStageResults:
 
 class DSheetPilingResults:
 
-    z: Optional[List[float] | Annotated[NDArray[np.float64], ("n_points")]] = None
-    moment: Optional[List[float] | Annotated[NDArray[np.float64], ("n_points")]] = None
-    shear: Optional[List[float] | Annotated[NDArray[np.float64], ("n_points")]] = None
-    displacement: Optional[List[float] | Annotated[NDArray[np.float64], ("n_points")]] = None
+    z: Optional[List[float]] = None
+    moment: Optional[List[List[float]]] = None
+    shear: Optional[List[List[float]]] = None
+    displacement: Optional[List[List[float]]] = None
     max_moment: List[float] = None
     max_shear: List[float] = None
     max_displacement: List[float] = None
@@ -74,11 +76,13 @@ class DSheetPilingResults:
         self.max_shear = [res["max_shear"] for res in result_dict.values()]
         self.max_displacement = [res["max_displacement"] for res in result_dict.values()]
 
-    def save_json(self, path: Union[str, WindowsPath]) -> None:
+    def save_json(self, path: str | WindowsPath | Path) -> None:
+        if not isinstance(path, Path): path = Path(path)
         with open(path, 'w') as f:
             json.dump(self.to_dict(), f)
 
-    def load_json(self, path: Union[str, WindowsPath]) -> None:
+    def load_json(self, path: str | WindowsPath | Path) -> None:
+        if not isinstance(path, Path): path = Path(path)
         with open(path, 'r') as f:
             stage_results = json.load(f)
         n_stages = len(stage_results["stage_id"])
@@ -104,18 +108,39 @@ class DSheetPilingResults:
 
 class DSheetPiling(GeoModelBase):
 
-    def __init__(self, model_path: str | WindowsPath | Path) -> None:
+    def __init__(self, model_path: str | WindowsPath | Path, exe_path: Optional[str | WindowsPath | Path] = None
+                 ) -> None:
         super(GeoModelBase, self).__init__()
-        self.parse_model(model_path)
+        if not isinstance(model_path, Path): model_path = Path(model_path)
+        self.model_path = model_path
+        if exe_path is not None:
+            if not isinstance(exe_path, Path): exe_path = Path(exe_path)
+            self.exe_path = exe_path
+        else:
+            self.exe_path = model_path.with_name(model_path.stem+"_executed"+model_path.suffix)
+        self.parse_model()
 
-    def parse_model(self, model_path: str | WindowsPath | Path) -> None:
-        if isinstance(model_path, str):
-            model_path = Path(model_path)
+    def parse_model(self) -> None:
         geomodel = DSheetPilingModel()
-        geomodel.parse(model_path)
+        geomodel.parse(self.model_path)
         self.geomodel = geomodel
+        self.n_stages = int(self.geomodel.input.input_data.construction_stages[0].split(" ")[0])
+        self.soils = self.list_soils()
+
+    def list_soils(self) -> Dict[str, SoilCollection]:
+        return {soil.name: soil for soil in deepcopy(self.geomodel.input.input_data.soil_collection.soil)}
+
+    def adjust_soil(self, soil_data: Dict[str, Dict[str, float]]) -> None:
+        for (soil_name, soil_params) in soil_data.items():
+            for (soil_param_name, soil_param_value) in soil_params.items():
+                if hasattr(self.soils[soil_name], soil_param_name):
+                    setattr(self.soils[soil_name], soil_param_name, soil_param_value)
+                else:
+                    raise AttributeError(f"Soil parameter {soil_param_name} not found in {soil_name}.")
+        self.geomodel.input.input_data.soil_collection.soil = list(self.soils.values())
 
     def execute(self) -> None:
+        self.geomodel.serialize(self.exe_path)
         self.geomodel.execute()  # Make sure to add 'geolib.env' in run directory
         self.results = self.read_dsheet_results()
 
@@ -148,25 +173,34 @@ class DSheetPiling(GeoModelBase):
         return results
 
     def save_results(self, path: str | WindowsPath | Path) -> None:
+        if not isinstance(path, Path): path = Path(path)
         self.results.save_json(path)
 
     def load_results(self, path: str | WindowsPath | Path) -> None:
+        if not isinstance(path, Path): path = Path(path)
         self.results = DSheetPilingResults()
         self.results.load_json(path)
 
 
 if __name__ == "__main__":
 
-    model_path = r"C:\Users\mavritsa\Stichting Deltares\Sito-IS 2023 SO Emerging Topics - Moonshot 5 - 02_Asset performance\ARK case study\Geotechnical models\D-Sheet Piling\N60_3_5-060514-red.shi"
-    model_path = Path(model_path)
-    result_path = Path("../../results/example_results.json")
+    model_path = (r"C:\Users\mavritsa\Stichting Deltares\Sito-IS 2023 SO Emerging Topics - Moonshot 5 - "
+                  r"02_Asset performance\ARK case study\Geotechnical models\D-Sheet Piling\N60_3_5-060514-red.shi")
+    result_path = r"../../results/example_results.json"
+
+    soil_data = {"Klei": {"soilcohesion": 10000}}
 
     model = DSheetPiling(model_path)
+    model.adjust_soil(soil_data)
     model.execute()
     model.save_results(result_path)
 
     loaded_model = DSheetPiling(model_path)
     loaded_model.load_results(result_path)
 
-    print("Were the results loaded correctly?  -->  " + str(model.results.__eq__(loaded_model.results)))
+    model_check = model.results.__eq__(loaded_model.results)
+    if model_check:
+        print(f"Were the results loaded correctly?  -->  {model_check} \u2705")
+    else:
+        print(f"Were the results loaded correctly?  -->  {model_check} \u274C")
 

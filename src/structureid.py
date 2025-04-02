@@ -19,15 +19,15 @@ class RV:
             self.pdf_grid = self.prob(self.rv_grid)
             self.logpdf_grid = self.logprob(self.rv_grid)
 
-    def prob(self, x: float | List[float] | Annotated[NDArray[np.float64], ("x_size")])\
-            -> float | List[float] | Annotated[NDArray[np.float64], ("x_size")]:
+    def prob(self, x: float | List[float] | Annotated[NDArray[np.float64], ("x_size")]
+             ) -> float | List[float] | Annotated[NDArray[np.float64], ("x_size")]:
         prob = self.dist.logpdf(x)
         is_lst = isinstance(x, list)
         if is_lst: prob = prob.tolist()
         return prob
 
-    def logprob(self, x: float | List[float] | Annotated[NDArray[np.float64], ("x_size")])\
-            -> float | List[float] | Annotated[NDArray[np.float64], ("x_size")]:
+    def logprob(self, x: float | List[float] | Annotated[NDArray[np.float64], ("x_size")]
+                ) -> float | List[float] | Annotated[NDArray[np.float64], ("x_size")]:
         log_prob = self.dist.logpdf(x)
         is_lst = isinstance(x, list)
         if is_lst: log_prob = log_prob.tolist()
