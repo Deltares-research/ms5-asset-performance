@@ -24,6 +24,7 @@ class RV(ABC):
     def sample(self, sample_size: int = 1, seed: int = 42) -> float | Annotated[NDArray[np.float64], "sample_size"]:
         raise NotImplementedError()
 
+    @abstractmethod
     def read_grid(self, rv_grid: GridType) -> None:
         raise NotImplementedError()
 

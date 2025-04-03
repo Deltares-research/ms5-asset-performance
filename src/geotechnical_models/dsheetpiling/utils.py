@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import json
 from pathlib import Path
@@ -13,7 +14,7 @@ class WaterLevel(NamedTuple):
     unknown_entry: int = 2
 
 
-class WaterData:
+class WaterLvlData:
 
     def __init__(self, water_input: str) -> None:
         self.parse(water_input)
@@ -161,8 +162,8 @@ class DSheetPilingResults:
     def save_json(self, path: str | Path) -> None:
         if not isinstance(path, Path): path = Path(path)
         path = Path(path.as_posix())
-        if not path.exists():
-            raise NotADirectoryError("Result path does not exist.")
+        dir = path.parent
+        if not dir.exists(): os.mkdir(dir)
         with open(path, 'w') as f:
             json.dump(self.to_dict(), f)
 

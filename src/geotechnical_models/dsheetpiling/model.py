@@ -1,5 +1,5 @@
 import os
-from utils import DSheetPilingResults, DSheetPilingStageResults, WaterData, WaterLevel
+from utils import DSheetPilingResults, DSheetPilingStageResults, WaterLvlData
 from copy import deepcopy
 from src.geotechnical_models.base import GeoModelBase
 from geolib.models.dsheetpiling import DSheetPilingModel
@@ -47,9 +47,9 @@ class DSheetPiling(GeoModelBase):
                     raise AttributeError(f"Soil parameter {soil_param_name} not found in {soil_name}.")
         self.geomodel.input.input_data.soil_collection.soil = list(self.soils.values())
 
-    def get_water(self) -> WaterData:
+    def get_water(self) -> WaterLvlData:
         water_input =  deepcopy(self.geomodel.input.input_data.waterlevels)
-        return WaterData(water_input)
+        return WaterLvlData(water_input)
     
     def update_water(self, water_lvls: dict[str, float]) -> None:
         self.water.adjust(water_lvls)
@@ -85,8 +85,8 @@ class DSheetPiling(GeoModelBase):
         if result_path is not None:
             if not isinstance(result_path, Path): result_path = Path(result_path)
             result_path = Path(result_path.as_posix())
-            if not result_path.exists():
-                raise NotADirectoryError("Result path does not exist.")
+            result_dir = result_path.parent
+            if not result_dir.exists(): os.mkdir(result_dir)
             self.save_results(result_path)
             log_path = result_path.parent / "log.json"
             self.log_input(log_path)
@@ -151,7 +151,7 @@ class DSheetPiling(GeoModelBase):
 if __name__ == "__main__":
 
     model_path = os.environ["MODEL_PATH"]  # model_path defined as environment variable
-    result_path = r"../../../results/example_results.json"
+    result_path = r"../../../results/example/results.json"
     soil_data = {"Klei": {"soilcohesion": 10.}}
     water_data = {"GWS  0,0": +1.}
     load_data = {"A": (15, 0.)}
