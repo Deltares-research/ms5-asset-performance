@@ -98,6 +98,12 @@ class RVS(RV):
         self.pdf_grid = self.prob(self.rv_grid)
         self.logpdf_grid = self.logprob(self.rv_grid)
 
+    def cdf(self):
+        pass
+
+    def ppf(self):
+        pass
+
 
 if __name__ == "__main__":
 
