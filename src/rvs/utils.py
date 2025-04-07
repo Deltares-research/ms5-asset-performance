@@ -1,13 +1,14 @@
 import numpy as np
 from numpy.typing import NDArray
 from scipy import stats
-from dataclasses import dataclass, field
-from typing import Optional, Annotated
+from typing import Optional, Annotated, List, Tuple
 from abc import abstractmethod, ABC
 
-GridType = Annotated[list[float] | tuple[float, ...] | NDArray[np.float64], "grid_size"]
-EvalInType = float | Annotated[list[float] | tuple[float, ...] | NDArray[np.float64], "eval_size"]
-EvalOutType = float | Annotated[list[float] | tuple[float, ...] | NDArray[np.float64], "eval_size"]
+GridType = Annotated[List[float] | Tuple[float, ...] | NDArray[np.float64], "grid_size"]
+EvalInType = float | Annotated[List[float] | Tuple[float, ...] | NDArray[np.float64], "eval_size"]
+EvalOutType = float | Annotated[List[float] | Tuple[float, ...] | NDArray[np.float64], "eval_size"]
+EvalInNpType = Annotated[NDArray[np.float64], "eval_size ndims"]
+EvalOutNpType = Annotated[NDArray[np.float64], "eval_size ndims"]
 
 
 class RV(ABC):
@@ -22,9 +23,6 @@ class RV(ABC):
 
     @abstractmethod
     def sample(self, sample_size: int = 1, seed: int = 42) -> float | Annotated[NDArray[np.float64], "sample_size"]:
-        raise NotImplementedError()
-
-    def read_grid(self, rv_grid: GridType) -> None:
         raise NotImplementedError()
 
 
@@ -43,12 +41,14 @@ class RVD(RV):
         if self.rv_grid is not None: self.read_grid(self.rv_grid)
 
     def prob(self, x: EvalInType) -> EvalOutType:
+        if isinstance(x, list): x_np = np.asarray(x)
         prob = self.dist.logpdf(x)
         if isinstance(x, list): prob = prob.tolist()
         if isinstance(x, tuple): prob = tuple(prob)
         return prob
 
     def logprob(self, x: EvalInType) -> EvalOutType:
+        if isinstance(x, list): x_np = np.asarray(x)
         log_prob = self.dist.logpdf(x)
         if isinstance(x, list): log_prob = log_prob.tolist()
         if isinstance(x, tuple): log_prob = tuple(log_prob)
@@ -68,7 +68,7 @@ class RVS(RV):
 
     def __init__(self,
                  name: str,
-                 rv_sample: Annotated[list[float] | tuple[float, ...] | NDArray[np.float64], "n_samples"],
+                 rv_sample: Annotated[List[float] | Tuple[float, ...] | NDArray[np.float64], "n_samples"],
                  ) -> None:
         self.name= name
         self.rv_sample= rv_sample if isinstance(rv_sample, np.ndarray) else np.asarray(rv_sample)
@@ -79,12 +79,14 @@ class RVS(RV):
         if self.rv_grid is not None: self.read_grid(self.rv_grid)
 
     def prob(self, x: EvalInType) -> EvalOutType:
+        if isinstance(x, list): x_np = np.asarray(x)
         prob = np.interp(x, self.rv_grid, self.freqs)
         if isinstance(x, list): prob = prob.tolist()
         if isinstance(x, tuple): prob = tuple(prob)
         return prob
 
     def logprob(self, x: EvalInType) -> EvalOutType:
+        if isinstance(x, list): x_np = np.asarray(x)
         prob = np.interp(x, self.rv_grid, self.freqs)
         return np.log(prob)
 
@@ -98,7 +100,106 @@ class RVS(RV):
         self.logpdf_grid = self.logprob(self.rv_grid)
 
 
+class MvnRV(RV):
+
+    def __init__(
+            self,
+            mus: Annotated[List[float] | Tuple[float, ...] | NDArray[np.float64], "ndims"],
+            stds: Optional[Annotated[List[float] | Tuple[float, ...] | NDArray[np.float64], "ndims"]] = None,
+            cov: Optional[Annotated[NDArray[np.float64], "ndims x ndims"]] = None
+    ) -> None:
+        if (stds is None) == (cov is None):
+            raise ValueError("You must provide exactly one of 'stds' or 'cov'")
+        self.assert_dimensions(mus, stds, cov)
+
+        if not isinstance(mus, np.ndarray): mus = np.asarray(mus)
+        mus = mus.astype(np.float32)
+        self.mus = mus
+        self.ndims = mus.size
+
+        if stds is not None:
+            corr = np.eye(self.ndims)
+            if not isinstance(stds, np.ndarray): stds = np.asarray(stds)
+            stds = stds.astype(np.float32)
+            cov = stds[:, np.newaxis] * corr * stds[np.newaxis, :]
+
+        if stds is None:
+            cov = cov.astype(np.float32)
+            cov += np.eye(self.ndims) * 1e-6
+            stds = np.sqrt(np.diag(cov))
+
+        self.stds = stds
+        self.cov = cov
+        self.chol = np.linalg.cholesky(self.cov)
+
+        self.dist = stats.multivariate_normal(mus, cov)
+        self.st_dist = stats.multivariate_normal(np.zeros(self.ndims), np.eye(self.ndims))
+
+    def assert_dimensions(
+            self,
+            mus: Tuple[float, ...] | List[float] | Annotated[NDArray[np.float64], "ndims"],
+            stds: Optional[Tuple[float, ...] | List[float] | Annotated[NDArray[np.float64], "ndims"]] = None,
+            cov: Optional[Annotated[NDArray[np.float64], "ndims x ndims"]] = None
+    ) -> None:
+        input_type = None
+        if stds is not None: input_type = "std"
+        if cov is not None: input_type = "cov"
+        if input_type == "std":
+            if len(mus) != len(stds):
+                raise ValueError("The size of 'mus' is different from the size of 'stds'.")
+        else:
+            if len(mus) != cov.shape[0]:
+                raise ValueError("The size of 'mus' is different from the number of dimensions in 'cov'.")
+
+    def transform(self, x: EvalInNpType) -> EvalInNpType:
+        return self.mus + self.chol.dot(x)
+
+    def detransform(self, x: EvalInNpType) -> EvalInNpType:
+        return np.linalg.inv(self.chol).dot(x-self.mus)
+
+    def standard_prob(self, x: EvalInNpType) -> EvalOutNpType:
+        x_st = self.detransform(x)
+        prob = self.st_dist.pdf(x_st)
+        return prob
+
+    def actual_prob(self, x: EvalInNpType) -> EvalOutNpType:
+        prob = self.dist.pdf(x)
+        return prob
+
+    def prob(self, x: EvalInNpType, standard_domain: bool = False) -> EvalOutNpType:
+        if standard_domain:
+            return self.standard_prob(x)
+        else:
+            return self.actual_prob(x)
+
+    def standard_logprob(self, x: EvalInNpType) -> EvalOutNpType:
+        x_st = self.detransform(x)
+        logprob = self.st_dist.logpdf(x_st)
+        return logprob
+
+    def actual_logprob(self, x: EvalInNpType) -> EvalOutNpType:
+        logprob = self.dist.logpdf(x)
+        return logprob
+
+    def logprob(self, x: EvalInNpType, standard_domain: bool = False) -> EvalOutNpType:
+        if standard_domain:
+            return self.standard_logprob(x)
+        else:
+            return self.actual_logprob(x)
+
+    def sample(
+            self,
+            sample_size: int = 1,
+            seed: int = 42,
+            standard_domain: bool = False
+    ) -> float | Annotated[NDArray[np.float64], "sample_size n_dims"]:
+        np.random.seed(seed)
+        if standard_domain:
+            return self.st_dist.rvs(sample_size)
+        else:
+            return self.dist.rvs(sample_size)
+
+
 if __name__ == "__main__":
 
     pass
-
