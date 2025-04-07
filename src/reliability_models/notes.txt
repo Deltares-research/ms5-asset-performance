@@ -1,0 +1,10 @@
+
+displacements --> displacement limit  --> Z_d
+
+moments  -->  moment capacity --> Z_M
+
+shear  -->  shear capacity --> Z_Q
+
+System failure --> Z = Z_d U Z_M U Z_Q
+
+

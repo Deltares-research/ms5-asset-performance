@@ -161,7 +161,8 @@ class DSheetPilingResults:
     def save_json(self, path: str | Path) -> None:
         if not isinstance(path, Path): path = Path(path)
         path = Path(path.as_posix())
-        if not path.exists():
+        path_folder = path.parent
+        if not path_folder.exists():
             raise NotADirectoryError("Result path does not exist.")
         with open(path, 'w') as f:
             json.dump(self.to_dict(), f)
@@ -169,7 +170,8 @@ class DSheetPilingResults:
     def load_json(self, path: str | Path) -> None:
         if not isinstance(path, Path): path = Path(path)
         path = Path(path.as_posix())
-        if not path.exists():
+        path_folder = path.parent
+        if not path_folder.exists():
             raise NotADirectoryError("Result path does not exist.")
         with open(path, 'r') as f:
             stage_results = json.load(f)
