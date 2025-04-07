@@ -1,5 +1,5 @@
 import os
-from utils import DSheetPilingResults, DSheetPilingStageResults, WaterData, WaterLevel
+from src.geotechnical_models.dsheetpiling.utils import DSheetPilingResults, DSheetPilingStageResults, WaterData
 from copy import deepcopy
 from src.geotechnical_models.base import GeoModelBase
 from geolib.models.dsheetpiling import DSheetPilingModel
@@ -81,11 +81,13 @@ class DSheetPiling(GeoModelBase):
     def execute(self, result_path: Optional[str | Path] = None) -> None:
         self.geomodel.serialize(self.exe_path)  # _executed model is parsed from now on. TODO: Check w/ Eleni
         self.geomodel.execute()  # Make sure to add 'geolib.env' in run directory
+        # self.geomodel.close()
         self.results = self.read_dsheet_results()
         if result_path is not None:
             if not isinstance(result_path, Path): result_path = Path(result_path)
             result_path = Path(result_path.as_posix())
-            if not result_path.exists():
+            result_folder = result_path.parent
+            if not result_folder.exists():
                 raise NotADirectoryError("Result path does not exist.")
             self.save_results(result_path)
             log_path = result_path.parent / "log.json"
@@ -112,10 +114,10 @@ class DSheetPiling(GeoModelBase):
             )
             stage_result_lst.append(stage_result)
 
-        # TODO: Read anchor results.
+        # TODO: Read anchor examples.
 
         if len(stage_result_lst) != self.n_stages:
-            error_message = (f"Parsing results discovered {len(stage_result_lst)} stages,"
+            error_message = (f"Parsing examples discovered {len(stage_result_lst)} stages,"
                              f" but D-SheetPiling model has {self.n_stages} stages.")
             raise ValueError(error_message)
 
@@ -151,7 +153,7 @@ class DSheetPiling(GeoModelBase):
 if __name__ == "__main__":
 
     model_path = os.environ["MODEL_PATH"]  # model_path defined as environment variable
-    result_path = r"../../../results/example_results.json"
+    result_path = r"../../../examples/dsheet_model/results.json"
     soil_data = {"Klei": {"soilcohesion": 10.}}
     water_data = {"GWS  0,0": +1.}
     load_data = {"A": (15, 0.)}
@@ -161,13 +163,8 @@ if __name__ == "__main__":
     model.update_water(water_data)
     model.update_uniform_loads(load_data)
     model.execute(result_path)
+    # model.execute(result_path)
 
-    loaded_model = DSheetPiling(model_path)
-    loaded_model.load_results(result_path)
-
-    model_check = model.results.__eq__(loaded_model.results)
-    if model_check:
-        print(f"Were the results loaded correctly?  -->  {model_check} \u2705")
-    else:
-        print(f"Were the results loaded correctly?  -->  {model_check} \u274C")
+    benchmark_model = DSheetPiling(model_path)
+    benchmark_model.load_results(r"../../../examples/dsheet_model/bench_results.json")
 
