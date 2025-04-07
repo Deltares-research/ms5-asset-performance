@@ -113,15 +113,19 @@ class MvnRV(RV):
         self.assert_dimensions(mus, stds, cov)
 
         if not isinstance(mus, np.ndarray): mus = np.asarray(mus)
+        mus = mus.astype(np.float32)
         self.mus = mus
         self.ndims = mus.size
 
         if stds is not None:
             corr = np.eye(self.ndims)
             if not isinstance(stds, np.ndarray): stds = np.asarray(stds)
+            stds = stds.astype(np.float32)
             cov = stds[:, np.newaxis] * corr * stds[np.newaxis, :]
 
         if stds is None:
+            cov = cov.astype(np.float32)
+            cov += np.eye(self.ndims) * 1e-6
             stds = np.sqrt(np.diag(cov))
 
         self.stds = stds
@@ -199,13 +203,3 @@ class MvnRV(RV):
 if __name__ == "__main__":
 
     pass
-
-    rv = MvnRV(mus=[10, 50], stds=[1, 4])
-
-    x = np.asarray([10, 50])
-
-    logprob = rv.logprob(x, standard_domain=False)
-    st_logprob = rv.logprob(x, standard_domain=True)
-    s = rv.sample(100, standard_domain=False)
-    st_s = rv.sample(100, standard_domain=True)
-
