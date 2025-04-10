@@ -45,13 +45,21 @@ def unpack_params(params: Dict[str, float]) -> Dict[str, Dict[str, float]]:
 def safety_fn(
         params: Dict[str, float],
         geomodel: DSheetPiling,
-        performance_config: Tuple[str, Callable[[float | List[float]], float]]
+        rv: Type[RV],
+        performance_config: Tuple[str, Callable[[float | List[float]], float]],
+        standardized_rv: bool = False
 ) -> float:
 
     """
     NOTE: Soil layer name and soil parameter name must be split by a lowerdash("_").
     TODO: Use something less common that _?
     """
+
+    if standardized_rv:
+        x_st = np.asarray(list(params.values()))
+        x = rv.transform(x_st)
+        params = {key: val for (key, val) in zip(params.keys(), x)}
+
     soil_data = unpack_params(params)
     geomodel.update_soils(soil_data)
     geomodel.execute()
@@ -67,7 +75,9 @@ def safety_fn(
 def package_lsf(
         geomodel: DSheetPiling,
         soil_layers: Dict[str, Tuple[str, ...]],
-        performance_config: Tuple[str, Callable[[float | List[float]], float]]
+        rv: Type[RV],
+        performance_config: Tuple[str, Callable[[float | List[float]], float]],
+        standardized_rv: bool = False
 ) -> LSFType:
 
     model_parsed = hasattr(geomodel, "geomodel")
@@ -88,7 +98,7 @@ def package_lsf(
     rvs = [[name+"_"+param for param in soil_layers[name]] for name in soil_layers.keys()]
     rvs = list(itertools.chain(*rvs))
 
-    lsf = build_lsf(rvs, lambda x: safety_fn(x, geomodel, performance_config))
+    lsf = build_lsf(rvs, lambda x: safety_fn(x, geomodel, rv, performance_config, standardized_rv))
 
     return lsf
 
@@ -100,12 +110,13 @@ if __name__ == "__main__":
     geomodel = DSheetPiling(geomodel_path, form_path)
 
     soil_layers = {"Klei": ("soilphi", "soilcohesion")}
+    state = GaussianState(rvs=[MvnRV(mus=[30, 10], stds=[3, 1], names=["Klei_soilphi", "Klei_soilcohesion"])])
     performance_config = ("max_moment", lambda x: 150. / (x[0] + 1e-5))
 
-    lsf = package_lsf(geomodel, soil_layers, performance_config)
+    """ The first arg is "soilphi" and the second is "soilcohesion" for "Klei", as declared. """
+    lsf = package_lsf(geomodel, soil_layers, state.rvs[0], performance_config, False)
+    limit_state = lsf(30, 10)
 
-    # limit_state = lsf(30, 10)  # The first arg is "soilphi" and the second is "soilcohesion" for "Klei", as declared.
-
-    params = {"Klei_soilphi": 30, "Klei_soilcohesion": 10}
-    sf = safety_fn(params, geomodel, performance_config)
+    lsf = package_lsf(geomodel, soil_layers, state.rvs[0], performance_config, True)
+    limit_state_st = lsf(0, 0)
 
