@@ -7,6 +7,7 @@ from geolib.models.dsheetpiling.internal import SoilCollection, UniformLoad
 from pathlib import Path
 from typing import Optional
 import json
+import warnings
 
 
 class DSheetPiling(GeoModelBase):
@@ -134,9 +135,9 @@ class DSheetPiling(GeoModelBase):
         # TODO: Read anchor examples.
 
         if len(stage_result_lst) != self.n_stages:
-            error_message = (f"Parsing examples discovered {len(stage_result_lst)} stages,"
+            warning_message = (f"Parsing examples discovered {len(stage_result_lst)} stages,"
                              f" but D-SheetPiling model has {self.n_stages} stages.")
-            raise ValueError(error_message)
+            raise warnings.warn(warning_message, UserWarning)
 
         results = DSheetPilingResults()
         results.read(stage_result_lst)

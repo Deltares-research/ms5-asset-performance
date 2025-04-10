@@ -50,11 +50,24 @@ class GaussianState(StateBase):
     def __init__(self, rvs: Annotated[List[MvnRV] | Tuple[MvnRV, ...], "nrvs"]) -> None:
         self.rvs = rvs
         self.names = [*itertools.chain.from_iterable(rv.names for rv in rvs)]
+        self.ndims = len(self.names)
+        self.compile_params()
 
-        mus = [*itertools.chain.from_iterable(rv.mus for rv in rvs)]
-        stds = [*itertools.chain.from_iterable(rv.stds for rv in rvs)]
-        self.marginal_dist = {name: stats.norm(mu, std) for (name, mu, std) in zip(self.names, mus, stds)}
-        self.marginal_dist_type = {name: "normal" for name in self.names}
+        self.jpdf = stats.multivariate_normal(self.mus, self.cov)
+        self.marginal_pdf = {name: stats.norm(mu, std) for (name, mu, std) in zip(self.names, self.mus, self.stds)}
+        self.marginal_pdf_type = {name: "normal" for name in self.names}
+
+    def compile_params(self) -> None:
+        self.mus = np.asarray([*itertools.chain.from_iterable(rv.mus for rv in self.rvs)])
+        self.stds = np.asarray([*itertools.chain.from_iterable(rv.stds for rv in self.rvs)])
+        cov = np.eye(self.ndims)
+        start = 0
+        for rv in self.rvs:
+            end = start + rv.ndims
+            cov[start: end][:, start: end] = rv.cov
+            start = end
+        self.cov = cov
+        self.chol = np.linalg.cholesky(self.cov)
 
     def check_rvs(self) -> None:
         pass
@@ -63,10 +76,16 @@ class GaussianState(StateBase):
         pass
 
     def joint_prob(self, x: EvalInNpType, standard_domain: bool = False) -> float:
-        return np.prod(self.rvs.prob(x, standard_domain=standard_domain))
+        return self.jpdf.pdf(x)
 
     def joint_log_prob(self, x: EvalInNpType, standard_domain: bool = False) -> float:
-        return np.sum(self.rvs.logprob(x, standard_domain=standard_domain))
+        return self.jpdf.logpdf(x)
+
+    def transform(self, x: EvalInNpType) -> EvalInNpType:
+        return self.mus + self.chol.dot(x)
+
+    def detransform(self, x: EvalInNpType) -> EvalInNpType:
+        return np.linalg.inv(self.chol).dot(x-self.mus)
 
 
 if __name__ == "__main__":
