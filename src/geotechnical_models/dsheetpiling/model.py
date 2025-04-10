@@ -13,17 +13,25 @@ class DSheetPiling(GeoModelBase):
 
     def __init__(self, model_path: str | Path, exe_path: Optional[str | Path] = None) -> None:
         super(GeoModelBase, self).__init__()
+        self.parse_model_path(model_path)
+        self.parse_exe_path(exe_path)
+        self.parse_model(self.model_path)
+
+    def parse_model_path(self, model_path: str | Path) -> None:
         if not isinstance(model_path, Path): model_path = Path(model_path)
-        self.model_path = Path(model_path.as_posix())
-        if not self.model_path.exists():
+        if not model_path.exists():
             raise NotADirectoryError("Model path does not exist.")
+        self.model_path = Path(model_path.as_posix())
+        self.file_suffix = self.model_path.suffix
+        self.file_name = self.model_path.stem
+
+    def parse_exe_path(self, exe_path: Optional[str | Path] = None) -> None:
         if exe_path is not None:
             if not isinstance(exe_path, Path): exe_path = Path(exe_path)
+            if not exe_path.exists(): os.mkdir(exe_path)
         else:
-            exe_path = model_path.with_name(model_path.stem+"_executed"+model_path.suffix)
+            exe_path = self.model_path.parent
         self.exe_path = Path(exe_path.as_posix())
-        if not exe_path.parent.exists(): os.mkdir(self.exe_path.parent)
-        self.parse_model(self.model_path)
 
     def parse_model(self, path: str | Path) -> None:
         if not isinstance(path, Path): path = Path(path)
@@ -78,11 +86,17 @@ class DSheetPiling(GeoModelBase):
                 raise AttributeError(f"Uniform load name {load_name} not found in Uniform load list.")
         self.geomodel.input.input_data.uniform_loads.loads = list(self.uniform_loads.values())
 
-    def execute(self, result_path: Optional[str | Path] = None) -> None:
-        self.geomodel.serialize(self.exe_path)  # _executed model is parsed from now on. TODO: Check w/ Eleni
-        self.geomodel.execute()  # Make sure to add 'geolib.env' in run directory
-        # self.geomodel.close()
-        self.results = self.read_dsheet_results()
+    def execute(self, result_path: Optional[str | Path] = None, i_run: Optional[int] = None) -> None:
+        if i_run is None:
+            file_name = self.file_name + "_executed" + self.file_suffix
+        else:
+            file_name = self.file_name + f"_executed_run{i_run:d}" + self.file_suffix
+        exe_path = self.exe_path / file_name
+        geomodel = deepcopy(self.geomodel)
+        geomodel.serialize(exe_path)  # _executed model is used from now on.
+        geomodel.execute()  # Make sure to add 'geolib.env' in run directory
+        self.results = self.read_dsheet_results(geomodel)
+
         if result_path is not None:
             if not isinstance(result_path, Path): result_path = Path(result_path)
             result_path = Path(result_path.as_posix())
@@ -93,14 +107,17 @@ class DSheetPiling(GeoModelBase):
             log_path = result_path.parent / "log.json"
             self.log_input(log_path)
 
-    def read_dsheet_results(self) -> DSheetPilingResults:
+    def read_dsheet_results(self, geomodel: Optional[DSheetPilingModel] = None) -> DSheetPilingResults:
+
+        if geomodel is None:
+            geomodel = self.geomodel
 
         stage_result_lst = []
-        for i_stage, stage in enumerate(self.geomodel.output.construction_stage):
+        for i_stage, stage in enumerate(geomodel.output.construction_stage):
             stage_num = i_stage + 1
             results = stage.moments_forces_displacements.momentsforcesdisplacements
             wall_points = [list(point.values())[0]
-                           for point in self.geomodel.output.points_on_sheetpile[i_stage].pointsonsheetpile]
+                           for point in geomodel.output.points_on_sheetpile[i_stage].pointsonsheetpile]
             moments = [res['moment'] for res in results]
             shear_forces = [res['shear_force'] for res in results]
             displacements = [res['displacements'] for res in results]
@@ -163,7 +180,6 @@ if __name__ == "__main__":
     model.update_water(water_data)
     model.update_uniform_loads(load_data)
     model.execute(result_path)
-    # model.execute(result_path)
 
     benchmark_model = DSheetPiling(model_path)
     benchmark_model.load_results(r"../../../examples/dsheet_model/bench_results.json")
