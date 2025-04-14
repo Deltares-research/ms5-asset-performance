@@ -1,94 +1,150 @@
 import numpy as np
+from numpy.typing import NDArray
 from scipy import stats
 import probabilistic_library as ptk
 from src.reliability_models.base import ReliabilityBase
 from src.reliability_models.dsheetpiling.lsf import package_lsf, LSFType
 from src.geotechnical_models.dsheetpiling.model import *
 from src.rvs.state import *
-from typing import Optional, Type, Tuple, Dict
+from typing import Optional, Type, Tuple, Dict, NamedTuple
+from dataclasses import dataclass, asdict, field
 from tqdm import tqdm
+import json
 
 
-def init_project(lsf: LSFType, form_params: Tuple[float, int, float] = (0.15, 5, 0.02)) -> ptk.ReliabilityProject:
-    project = ptk.ReliabilityProject()
-    project.model = lsf
-    project.settings.reliability_method = ptk.ReliabilityMethod.form
-    relaxation_factor, maximum_iterations, variation_coefficient = form_params
-    project.settings.relaxation_factor = relaxation_factor
-    project.settings.maximum_iterations = maximum_iterations
-    project.settings.variation_coefficient = variation_coefficient
-    return project
+class FragilityPoint(NamedTuple):
+    point: Annotated[List[float] | Tuple[float, ...] | NDArray[np.float64], "integration_dims"]
+    pf: float | Annotated[NDArray[np.float64], "1"]
+    beta: float | Annotated[NDArray[np.float64], "1"]
+    design_point: Dict[str, float]
+    alphas: Dict[str, float]
+    logpf: float | Annotated[NDArray[np.float64], "1"]
+    convergence: bool
 
 
-def set_fragility_rvs(project: ptk.ReliabilityProject, rv_names: List[str]) -> ptk.ReliabilityProject:
-    for rv_name in rv_names:
-        if state.marginal_pdf_type[rv_name] in ["normal", "multivariate_normal"]:
-            project.variables[rv_name].distribution = ptk.DistributionType.normal
-            project.variables[rv_name].mean = 0
-            project.variables[rv_name].deviation = 1
+@dataclass
+class FragilityCurve:
+    fragility_points: Annotated[List[FragilityPoint] | Tuple[FragilityPoint, ...], "n_points"]
+    points: Annotated[NDArray[np.float64], "n_points integration_dims"] = field(init=False)
+    design_points: Annotated[NDArray[np.float64], "n_points rv_dims"] = field(init=False)
+    pfs: Annotated[NDArray[np.float64], "n_points"] = field(init=False)
+    betas: Annotated[NDArray[np.float64], "n_points"] = field(init=False)
+    logpfs: Annotated[NDArray[np.float64], "n_points"] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.points = np.asarray([fp.point for fp in self.fragility_points])
+        self.design_points = np.asarray([fp.design_point for fp in self.fragility_points])
+        self.pfs = np.asarray([fp.pf for fp in self.fragility_points])
+        self.betas = np.asarray([fp.beta for fp in self.fragility_points])
+        self.logpfs = np.asarray([fp.logpf for fp in self.fragility_points])
+
+    def save(self, path: str | Path) -> None:
+        if not isinstance(path, Path): path = Path(Path(path).as_posix())
+        fc_dict = asdict(self)
+        fc_dict = {key: list(val.squeeze()) if isinstance(val, np.ndarray) else val for (key, val) in fc_dict.items()}
+        fc_dict["fragility_points"] = [{
+            key: val.item() if isinstance(val, np.ndarray) else val for (key, val) in fp._asdict().items()
+        } for fp in fc_dict["fragility_points"]]
+        if not path.parent.exists(): path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, 'w') as f: json.dump(fc_dict, f)
+
+
+class ReliabilityFragilityCurve(ReliabilityBase):
+
+    def __init__(self, lsf: LSFType, reliability_method: str, method_params: Tuple[float | int, ...]) -> None:
+        self.lsf = lsf
+        self.project = ptk.ReliabilityProject()
+        self.project.model = lsf
+        if reliability_method.lower() == "form":
+            self.adjust_form(method_params)
         else:
-            raise NotImplementedError("Non-normal distributions have not been implemented yet.")
-    return project
+            raise NotImplementedError(f"Method '{reliability_method}' has not yet been implemented.")
 
+    def adjust_form(self, form_params: Tuple[float, int, float]) -> None:
+        relaxation_factor, maximum_iterations, variation_coefficient = form_params
+        self.project.settings.reliability_method = ptk.ReliabilityMethod.form
+        self.project.settings.relaxation_factor = relaxation_factor
+        self.project.settings.maximum_iterations = maximum_iterations
+        self.project.settings.variation_coefficient = variation_coefficient
 
-def fragility_point(
-        project: ptk.ReliabilityProject,
-        point: Annotated[NDArray[float], "integration_dims"],
-        integration_rv_names: List[str]
-) -> Tuple[ptk.FragilityValue, float]:
+    def set_fragility_rvs(self, state: Type[StateBase]) -> None:
+        for rv_name in state.names:
+            if state.marginal_pdf_type[rv_name] in ["normal", "multivariate_normal"]:
+                self.project.variables[rv_name].distribution = ptk.DistributionType.normal
+                self.project.variables[rv_name].mean = 0
+                self.project.variables[rv_name].deviation = 1
+            else:
+                raise NotImplementedError("Non-normal distributions have not been implemented yet.")
 
-    for i, rv_name in enumerate(integration_rv_names):
-        project.variables[rv_name].distribution = ptk.DistributionType.deterministic
-        project.variables[rv_name].mean = float(point[i])
+    def generate_integration_mesh(self, n_rvs: int = 1, lims: Tuple[float, float] = (1e-5, 1-1e-5), n_grid: int = 20):
+        cdf_grid = np.linspace(min(lims), max(lims), n_grid)
+        grid = stats.norm(0, 1).ppf(cdf_grid)
+        mesh = np.meshgrid([grid]*n_rvs)
+        mesh = np.c_[*mesh]
+        return mesh
 
-    project.run()
-    dp = project.design_point
+    def fragility_point(
+            self,
+            point: Annotated[NDArray[float], "integration_dims"],
+            integration_rv_names: List[str]
+    ) -> ptk.FragilityValue:
 
-    frag_value = ptk.FragilityValue()
-    frag_value.x = point
-    frag_value.reliability_index = dp.reliability_index
-    frag_value.design_point = dp
-    fragility_logpf = np.log(dp.probability_failure).item()
+        for i, rv_name in enumerate(integration_rv_names):
+            self.project.variables[rv_name].distribution = ptk.DistributionType.deterministic
+            self.project.variables[rv_name].mean = float(point[i])
 
-    return frag_value, fragility_logpf
+        self.project.run()
+        dp = self.project.design_point
 
+        # frag_value = ptk.FragilityValue()
+        # frag_value.x = point
+        # frag_value.reliability_index = dp.reliability_index
+        # frag_value.design_point = dp
 
-def build_fragility(
-        lsf: LSFType,
-        state: Type[StateBase],
-        fragility_rv_names: Optional[Annotated[Tuple[str, ...] | List[str], "fragility_dims"]] = None,
-        integration_rv_names: Optional[Annotated[Tuple[str, ...] | List[str], "integration_dims"]] = None,
-        form_params: Tuple[float, int, float] = (0.15, 5, 0.02),
-        n_integration_grid: int = 10
-) -> ptk.FragilityCurve:
+        fragility_point = FragilityPoint(
+            point=point,
+            pf=dp.probability_failure,
+            beta=dp.reliability_index,
+            design_point={alpha.variable.name: alpha.x for alpha in dp.alphas
+                          if alpha.variable.name not in integration_rv_names},
+            logpf=np.log(dp.probability_failure),
+            alphas = {alpha.variable.name: alpha.alpha for alpha in dp.alphas
+                      if alpha.variable.name not in integration_rv_names},
+            convergence=dp.is_converged
+        )
 
-    if (fragility_rv_names is None) == (integration_rv_names is None):
-        raise ValueError("You must provide exactly one of 'fragility_rv_names' or 'integration_rv_names'")
+        return fragility_point
 
-    if fragility_rv_names is None:
-        fragility_rv_names = [rv_name for rv_name in state.names if rv_name not in integration_rv_names]
+    def build_fragility(
+            self,
+            state: Type[StateBase],
+            fragility_rv_names: Optional[Annotated[Tuple[str, ...] | List[str], "fragility_dims"]] = None,
+            integration_rv_names: Optional[Annotated[Tuple[str, ...] | List[str], "integration_dims"]] = None,
+            n_integration_grid: int = 20,
+            integration_lims: Tuple[float, float] = (1e-5, 1-1e-5),
+            fc_savedir: Optional[str | Path] = None
+    ):
 
-    if integration_rv_names is None:
-        integration_rv_names = [rv_name for rv_name in state.names if rv_name not in fragility_rv_names]
+        if (fragility_rv_names is None) == (integration_rv_names is None):
+            raise ValueError("You must provide exactly one of 'fragility_rv_names' or 'integration_rv_names'")
 
-    project = init_project(lsf, form_params)
+        if integration_rv_names is None:
+            integration_rv_names = [rv_name for rv_name in state.names if rv_name not in fragility_rv_names]
 
-    project = set_fragility_rvs(project, fragility_rv_names)
+        self.set_fragility_rvs(state)
 
-    cdf_grid = np.linspace(1e-5, 1-1e-5, n_integration_grid)
-    grid = stats.norm(0, 1).ppf(cdf_grid)
-    mesh = np.meshgrid([grid]*len(integration_rv_names))
-    mesh = np.c_[*mesh]
+        mesh = self.generate_integration_mesh(len(integration_rv_names), integration_lims, n_integration_grid)
 
-    fragility_curve = ptk.FragilityCurve()
-    fragility_curve.name = "conditional"
-    fragility_logpfs = []
-    for point in tqdm(mesh, desc="Running FORM for combination of integration variables:"):
-        frag_value, fragility_logpf = fragility_point(project, point, integration_rv_names)
-        fragility_curve.fragility_values.append(frag_value)
-        fragility_logpfs.append(fragility_logpf)
+        # fragility_curve = ptk.FragilityCurve()
+        # fragility_curve.name = "conditional"
+        fragility_points = []
+        for point in tqdm(mesh, desc="Running FORM for combination of integration variables:"):
+            fragility_point = self.fragility_point(point, integration_rv_names)
+            fragility_points.append(fragility_point)
 
-    return fragility_curve
+        self.fragility_curve = FragilityCurve(fragility_points)
+
+        if fc_savedir is not None: self.fragility_curve.save(fc_savedir)
 
 
 if __name__ == "__main__":
@@ -104,8 +160,14 @@ if __name__ == "__main__":
     state = GaussianState(rvs=[rv_strength, rv_water])
 
     performance_config = ("max_moment", lambda x: 150. / (x[0] + 1e-5))
-
+    form_params = (0.15, 3, 0.02)
     lsf = package_lsf(geomodel, state, performance_config, True)
 
-    build_fragility(lsf, state, integration_rv_names=["water_lvl"], n_integration_grid=3)
+    r = ReliabilityFragilityCurve(lsf, "form", form_params)
+    r.build_fragility(
+        state=state,
+        integration_rv_names=["water_lvl"],
+        n_integration_grid=2,
+        fc_savedir=r"../../../examples/reliability/fragility_curve.json"
+    )
 
