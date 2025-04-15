@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 import json
 import warnings
+from datetime import datetime
 
 
 class DSheetPiling(GeoModelBase):
@@ -89,7 +90,9 @@ class DSheetPiling(GeoModelBase):
 
     def execute(self, result_path: Optional[str | Path] = None, i_run: Optional[int] = None) -> None:
         if i_run is None:
-            file_name = self.file_name + "_executed" + self.file_suffix
+            now = datetime.now()
+            timestamp = now.strftime("%Y%m%d_%H%M%S")
+            file_name = self.file_name + "_executed_" + timestamp + self.file_suffix
         else:
             file_name = self.file_name + f"_executed_run{i_run:d}" + self.file_suffix
         exe_path = self.exe_path / file_name
@@ -174,7 +177,7 @@ if __name__ == "__main__":
     result_path = r"../../../examples/dsheet_model/results.json"
     soil_data = {"Klei": {"soilcohesion": 10.}}
     water_data = {"GWS  0,0": +1.}
-    load_data = {"A": (15, 0.)}
+    load_data = {"load": (15, 0.)}
 
     model = DSheetPiling(model_path)
     model.update_soils(soil_data)

@@ -43,7 +43,7 @@ class FragilityCurve:
         fc_dict = asdict(self)
         fc_dict = {key: list(val.squeeze()) if isinstance(val, np.ndarray) else val for (key, val) in fc_dict.items()}
         fc_dict["fragility_points"] = [{
-            key: val.item() if isinstance(val, np.ndarray) else val for (key, val) in fp._asdict().items()
+            key: list(val.squeeze()) if isinstance(val, np.ndarray) else val for (key, val) in fp._asdict().items()
         } for fp in fc_dict["fragility_points"]]
         if not path.parent.exists(): path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, 'w') as f: json.dump(fc_dict, f)
@@ -96,11 +96,6 @@ class ReliabilityFragilityCurve(ReliabilityBase):
         self.project.run()
         dp = self.project.design_point
 
-        # frag_value = ptk.FragilityValue()
-        # frag_value.x = point
-        # frag_value.reliability_index = dp.reliability_index
-        # frag_value.design_point = dp
-
         fragility_point = FragilityPoint(
             point=point,
             pf=dp.probability_failure,
@@ -123,20 +118,23 @@ class ReliabilityFragilityCurve(ReliabilityBase):
             n_integration_grid: int = 20,
             integration_lims: Tuple[float, float] = (1e-5, 1-1e-5),
             fc_savedir: Optional[str | Path] = None
-    ):
+    ) -> None:
 
         if (fragility_rv_names is None) == (integration_rv_names is None):
             raise ValueError("You must provide exactly one of 'fragility_rv_names' or 'integration_rv_names'")
 
+        if fragility_rv_names is None:
+            self.integration_rv_names = integration_rv_names
+            self.fragility_rv_names = [rv_name for rv_name in state.names if rv_name not in integration_rv_names]
+
         if integration_rv_names is None:
-            integration_rv_names = [rv_name for rv_name in state.names if rv_name not in fragility_rv_names]
+            self.fragility_rv_names = fragility_rv_names
+            self.integration_rv_names = [rv_name for rv_name in state.names if rv_name not in fragility_rv_names]
 
         self.set_fragility_rvs(state)
 
         mesh = self.generate_integration_mesh(len(integration_rv_names), integration_lims, n_integration_grid)
 
-        # fragility_curve = ptk.FragilityCurve()
-        # fragility_curve.name = "conditional"
         fragility_points = []
         for point in tqdm(mesh, desc="Running FORM for combination of integration variables:"):
             fragility_point = self.fragility_point(point, integration_rv_names)
