@@ -24,29 +24,58 @@ class FragilityPoint(NamedTuple):
 
 @dataclass
 class FragilityCurve:
-    fragility_points: Annotated[List[FragilityPoint] | Tuple[FragilityPoint, ...], "n_points"]
+    fragility_points: Optional[Annotated[List[FragilityPoint] | Tuple[FragilityPoint, ...], "n_points"]] = None
     points: Annotated[NDArray[np.float64], "n_points integration_dims"] = field(init=False)
     design_points: Annotated[NDArray[np.float64], "n_points rv_dims"] = field(init=False)
     pfs: Annotated[NDArray[np.float64], "n_points"] = field(init=False)
     betas: Annotated[NDArray[np.float64], "n_points"] = field(init=False)
     logpfs: Annotated[NDArray[np.float64], "n_points"] = field(init=False)
+    alphas: Annotated[NDArray[np.float64], "n_points"] = field(init=False)
+    convergences: Annotated[NDArray[np.bool], "n_points"] = field(init=False)
 
     def __post_init__(self) -> None:
-        self.points = np.asarray([fp.point for fp in self.fragility_points])
-        self.design_points = np.asarray([fp.design_point for fp in self.fragility_points])
-        self.pfs = np.asarray([fp.pf for fp in self.fragility_points])
-        self.betas = np.asarray([fp.beta for fp in self.fragility_points])
-        self.logpfs = np.asarray([fp.logpf for fp in self.fragility_points])
+        if self.fragility_points is not None:
+            self.parse_fragility_points(self.fragility_points)
+
+    def parse_fragility_points(
+            self,
+            fragility_points: Annotated[List[FragilityPoint] | Tuple[FragilityPoint, ...], "n_points"]
+    ) -> None:
+        self.points = np.asarray([fp.point for fp in fragility_points])
+        self.design_points = np.asarray([fp.design_point for fp in fragility_points])
+        self.pfs = np.asarray([fp.pf for fp in fragility_points])
+        self.betas = np.asarray([fp.beta for fp in fragility_points])
+        self.logpfs = np.asarray([fp.logpf for fp in fragility_points])
+        self.alphas = np.asarray([fp.alphas for fp in fragility_points])
+        self.convergences = np.asarray([fp.convergence for fp in fragility_points])
 
     def save(self, path: str | Path) -> None:
         if not isinstance(path, Path): path = Path(Path(path).as_posix())
         fc_dict = asdict(self)
-        fc_dict = {key: list(val.squeeze()) if isinstance(val, np.ndarray) else val for (key, val) in fc_dict.items()}
+        fc_dict = {key: val.squeeze().tolist() if isinstance(val, np.ndarray) else val for (key, val) in fc_dict.items()}
         fc_dict["fragility_points"] = [{
-            key: list(val.squeeze()) if isinstance(val, np.ndarray) else val for (key, val) in fp._asdict().items()
+            key: val.squeeze().tolist() if isinstance(val, np.ndarray) else val for (key, val) in fp._asdict().items()
         } for fp in fc_dict["fragility_points"]]
         if not path.parent.exists(): path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, 'w') as f: json.dump(fc_dict, f)
+
+    def load(self, path: str | Path) -> "FragilityCurve":
+        if not isinstance(path, Path): path = Path(Path(path).as_posix())
+        with open(path, 'r') as f: fc_dict = json.load(f)
+        fragility_points = [
+            FragilityPoint(
+                point=fc_dict["points"][i],
+                pf=fc_dict["pfs"][i],
+                beta=fc_dict["betas"][i],
+                design_point=fc_dict["design_points"][i],
+                logpf=fc_dict["logpfs"][i],
+                alphas = fc_dict["alphas"][i],
+                convergence=fc_dict["convergences"][i]
+        )
+            for i, fragility_point in enumerate(fc_dict["fragility_points"])
+        ]
+        fc_dict["fragility_points"] = fragility_points
+        return FragilityCurve(fragility_points)
 
 
 class ReliabilityFragilityCurve(ReliabilityBase):
