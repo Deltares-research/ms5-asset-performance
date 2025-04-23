@@ -28,7 +28,7 @@ def lsf({args_str}):
     return fn
 
 
-def unpack_params(params: Dict[str, float], soil_layers: List[str]) -> Dict[str, Dict[str, float]]:
+def unpack_soil_params(params: Dict[str, float], soil_layers: List[str]) -> Dict[str, Dict[str, float]]:
     soil_data = {}
     for (key, val) in params.items():
         try:
@@ -45,6 +45,19 @@ def unpack_params(params: Dict[str, float], soil_layers: List[str]) -> Dict[str,
             if not param_name in list(soil_data[soil_name].keys()):
                 soil_data[soil_name][param_name] = float(param_value)
     return soil_data
+
+
+def unpack_water_params(params: Dict[str, float], water_lvls: List[str]) -> Dict[str, float]:
+    water_data = {}
+    for (key, val) in params.items():
+        try:
+            water_lvl_name = key.split("_")[-1]
+        except:
+            continue
+        if not water_lvl_name in water_lvls:
+            continue
+        water_data[water_lvl_name] = float(val)
+    return water_data
 
 
 def safety_fn(
@@ -66,8 +79,11 @@ def safety_fn(
         x = state.transform(x_st)
         rvs = {key: val for (key, val) in zip(rvs.keys(), x)}
 
-    soil_data = unpack_params(rvs, list(geomodel.soils.keys()))
+    soil_data = unpack_soil_params(rvs, list(geomodel.soils.keys()))
+    water_data = unpack_water_params(rvs, [lvl.name for lvl in geomodel.water.water_lvls])
+
     geomodel.update_soils(soil_data)
+    geomodel.update_water(water_data)
     geomodel.execute()
     results = geomodel.results
 
@@ -113,11 +129,11 @@ if __name__ == "__main__":
 
     state = GaussianState(rvs=[
         MvnRV(mus=[30, 10], stds=[3, 1], names=["Klei_soilphi", "Klei_soilcohesion"]),
-        MvnRV(mus=[1], stds=[0.1], names=["water_level"])  # Unused, just for testing
+        MvnRV(mus=[1], stds=[0.1], names=["water_A"])
     ])
     performance_config = ("max_moment", lambda x: 150. / (x[0] + 1e-5))
 
-    """ The args are "soilphi", "soilcohesion" and "water_lvl" respectively. """
+    """ The args are "soilphi", "soilcohesion" and "water_A" respectively. """
     lsf = package_lsf(geomodel, state, performance_config, False)
     limit_state = lsf(30, 10, 1)
 
