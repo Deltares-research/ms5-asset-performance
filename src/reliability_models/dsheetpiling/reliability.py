@@ -199,6 +199,23 @@ class ReliabilityFragilityCurve(ReliabilityBase):
 
         return pf, beta
 
+    def compile_fragility_points(self, path: str | Path) -> None:
+
+        json_files = list(path.glob("*.json"))
+
+        fragility_points = []
+        for json_file in json_files:
+            with open(json_file, 'r') as f: fp_dict = json.load(f)
+            fragility_point = FragilityPoint(**fp_dict)
+            if np.isnan(fragility_point.pf):
+                continue
+            fragility_points.append(fragility_point)
+
+        if len(fragility_points) > 0:
+            self.fragility_curve = FragilityCurve(fragility_points)
+        else:
+            raise ValueError("No acceptable entries in the fragility points!")
+
 
 if __name__ == "__main__":
 
@@ -219,7 +236,10 @@ if __name__ == "__main__":
     fc_savedir = r"../../../examples/reliability/fragility_curve_100.json"
     rm = ReliabilityFragilityCurve(lsf, state, "form", form_params, integration_rv_names=["water_A"])
     # rm.build_fragility(n_integration_grid=3, fc_savedir=fc_savedir)
-    rm.generate_integration_mesh(n_grid=3)
-    rm.load_fragility(fc_savedir)
-    pf, beta = rm.integrate_fragility()
+    # rm.generate_integration_mesh(n_grid=3)
+    # rm.load_fragility(fc_savedir)
+    # pf, beta = rm.integrate_fragility()
+
+    path = Path(Path(r"C:\Users\mavritsa\Repositories\ms5-asset-performance\examples\reliability\bash").as_posix())
+    rm.compile_fragility_points(path)
 
