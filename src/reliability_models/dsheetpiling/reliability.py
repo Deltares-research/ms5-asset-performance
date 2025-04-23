@@ -1,6 +1,7 @@
 import numpy as np
 from numpy.typing import NDArray
 from scipy import stats
+from scipy.integrate import trapezoid
 import math
 import probabilistic_library as ptk
 from src.reliability_models.base import ReliabilityBase
@@ -92,6 +93,7 @@ class ReliabilityFragilityCurve(ReliabilityBase):
             self.integration_rv_names = [rv_name for rv_name in state.names if rv_name not in fragility_rv_names]
 
         self.set_fragility_rvs(state)
+        self.state = state
 
     def adjust_form(self, form_params: Tuple[float, int, float]) -> None:
         relaxation_factor, maximum_iterations, variation_coefficient = form_params
@@ -109,12 +111,13 @@ class ReliabilityFragilityCurve(ReliabilityBase):
             else:
                 raise NotImplementedError("Non-normal distributions have not been implemented yet.")
 
-    def generate_integration_mesh(self, n_rvs: int = 1, lims: Tuple[float, float] = (1e-5, 1-1e-5), n_grid: int = 20):
+    def generate_integration_mesh(self, lims: Tuple[float, float] = (1e-5, 1-1e-5), n_grid: int = 20) -> None:
+        n_rvs = len(self.integration_rv_names)
         cdf_grid = np.linspace(min(lims), max(lims), n_grid)
         grid = stats.norm(0, 1).ppf(cdf_grid)
         mesh = np.meshgrid([grid]*n_rvs)
         mesh = np.c_[*mesh]
-        return mesh
+        self.fc_mesh = mesh
 
     def fragility_point(self, point: Annotated[NDArray[float], "integration_dims"]) -> FragilityPoint:
 
@@ -146,10 +149,10 @@ class ReliabilityFragilityCurve(ReliabilityBase):
             fc_savedir: Optional[str | Path] = None
     ) -> None:
 
-        mesh = self.generate_integration_mesh(len(self.integration_rv_names), integration_lims, n_integration_grid)
+        self.generate_integration_mesh(len(self.integration_rv_names), integration_lims, n_integration_grid)
 
         fragility_points = []
-        for point in tqdm(mesh, desc="Running FORM for combination of integration variables:"):
+        for point in tqdm(self.fc_mesh, desc="Running FORM for combination of integration variables:"):
             fragility_point = self.fragility_point(point)
             fragility_points.append(fragility_point)
 
@@ -175,6 +178,27 @@ class ReliabilityFragilityCurve(ReliabilityBase):
         fc_dict["fragility_points"] = fragility_points
         self.fragility_curve = FragilityCurve(fragility_points)
 
+    def integrate_fragility(self) -> Tuple[float, float]:
+
+        idx_integration_rvs = np.asarray([self.state.names.index(rv) for rv in self.integration_rv_names])
+        mus = self.state.mus[idx_integration_rvs]
+        cov = self.state.cov[idx_integration_rvs][:, idx_integration_rvs]
+        detransformed_mesh = mus + np.sqrt(np.diag(cov)) * self.fc_mesh
+
+        grids = tuple(np.sort(np.unique(m)) for m in detransformed_mesh.T)
+        shapes = tuple(grid.size for grid in grids)
+
+        log_prob = stats.multivariate_normal(mus, cov).logpdf(detransformed_mesh)
+        pf = log_prob + self.fragility_curve.logpfs
+        pf = np.exp(pf).reshape(shapes)
+
+        for i_axis, grid in reversed(list(enumerate(grids))):
+            pf = trapezoid(pf, grid, axis=i_axis)
+
+        beta = stats.norm.ppf(1-pf)
+
+        return pf, beta
+
 
 if __name__ == "__main__":
 
@@ -189,10 +213,13 @@ if __name__ == "__main__":
     state = GaussianState(rvs=[rv_strength, rv_water])
 
     performance_config = ("max_moment", lambda x: 150. / (x[0] + 1e-5))
-    form_params = (0.15, 50, 0.02)
+    form_params = (0.15, 30, 0.02)
     lsf = package_lsf(geomodel, state, performance_config, True)
 
     fc_savedir = r"../../../examples/reliability/fragility_curve_100.json"
-    r = ReliabilityFragilityCurve(lsf, state, "form", form_params, integration_rv_names=["water_A"])
-    r.build_fragility(n_integration_grid=3, fc_savedir=fc_savedir)
+    rm = ReliabilityFragilityCurve(lsf, state, "form", form_params, integration_rv_names=["water_A"])
+    # rm.build_fragility(n_integration_grid=3, fc_savedir=fc_savedir)
+    rm.generate_integration_mesh(n_grid=3)
+    rm.load_fragility(fc_savedir)
+    pf, beta = rm.integrate_fragility()
 
