@@ -8,7 +8,7 @@ GridType = Annotated[List[float] | Tuple[float, ...] | NDArray[np.float64], "gri
 EvalInType = float | Annotated[List[float] | Tuple[float, ...] | NDArray[np.float64], "eval_size"]
 EvalOutType = float | Annotated[List[float] | Tuple[float, ...] | NDArray[np.float64], "eval_size"]
 EvalInNpType = Annotated[NDArray[np.float64], "eval_size ndims"]
-EvalOutNpType = Annotated[NDArray[np.float64], "eval_size ndims"]
+EvalOutNpType = float | Annotated[NDArray[np.float64], "eval_size ndims"]
 
 
 class RV(ABC):
@@ -106,8 +106,10 @@ class MvnRV(RV):
             self,
             mus: Annotated[List[float] | Tuple[float, ...] | NDArray[np.float64], "ndims"],
             stds: Optional[Annotated[List[float] | Tuple[float, ...] | NDArray[np.float64], "ndims"]] = None,
-            cov: Optional[Annotated[NDArray[np.float64], "ndims x ndims"]] = None
+            cov: Optional[Annotated[NDArray[np.float64], "ndims x ndims"]] = None,
+            names: Optional[Annotated[Tuple[str, ...] | List[str], "ndims"]] = None
     ) -> None:
+
         if (stds is None) == (cov is None):
             raise ValueError("You must provide exactly one of 'stds' or 'cov'")
         self.assert_dimensions(mus, stds, cov)
@@ -134,6 +136,13 @@ class MvnRV(RV):
 
         self.dist = stats.multivariate_normal(mus, cov)
         self.st_dist = stats.multivariate_normal(np.zeros(self.ndims), np.eye(self.ndims))
+
+        if names is not None and len(names) != self.ndims:
+            raise ValueError("Number of names provided different than the number of variables.")
+
+        self.names = [f"x{i:d}" for i in range(1, self.ndims+1)] if names is None else list(names)
+        self.default_names = names is None
+        self.dist_type = "multivariate_normal"
 
     def assert_dimensions(
             self,
