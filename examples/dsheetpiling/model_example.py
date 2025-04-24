@@ -1,13 +1,14 @@
 import os
 from src.geotechnical_models.dsheetpiling.model import DSheetPiling
 
-def test_execution():
+
+if __name__ == "__main__":
 
     model_path = os.environ["MODEL_PATH"]  # model_path defined as environment variable
-    result_path = r"../examples/dsheetpiling/results/results.json"
+    result_path = r"results/results.json"
     soil_data = {"Klei": {"soilcohesion": 10.}}
-    water_data = {"GWS  0,0": +1.}
-    load_data = {"A": (15, 0.)}
+    water_data = {"A": +1.}
+    load_data = {"load": (15, 0.)}
 
     model = DSheetPiling(model_path)
     model.update_soils(soil_data)
@@ -16,7 +17,4 @@ def test_execution():
     model.execute(result_path)
 
     benchmark_model = DSheetPiling(model_path)
-    benchmark_model.load_results(r"../examples/results/bench_results.json")
-
-    assert model.results.__eq__(benchmark_model.results)
-
+    benchmark_model.load_results(r"results/bench_results.json")

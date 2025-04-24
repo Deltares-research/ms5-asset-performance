@@ -1,8 +1,6 @@
-import numpy as np
-from numpy.typing import NDArray
 from src.geotechnical_models.dsheetpiling.model import *
 from src.rvs.state import *
-from typing import Optional, Type, Tuple, Dict, Callable
+from typing import Type, Tuple, Dict, Callable
 
 
 LSFInputType = Annotated[Tuple[float,...] | List[float] | NDArray[np.float64], "lsf_input"]
@@ -105,17 +103,6 @@ def package_lsf(
     if not model_parsed:
         raise ValueError("Geotechnical model has not yet been parsed.")
 
-    # """ Check is soil layers and parameters exist in model """
-    # geomodel_soil_names = geomodel.get_soils()
-    # for soil_name, soil_params in soil_layers.items():
-    #     if soil_name not in list(geomodel_soil_names.keys()):
-    #         raise ValueError(f"Soil name {soil_name} not found in geomodel.")
-    #     geomodel_soil = geomodel_soil_names[soil_name]
-    #     geomodel_layer_params = list(vars(geomodel_soil).keys())
-    #     for soil_param in soil_params:
-    #         if soil_param not in geomodel_layer_params:
-    #             raise ValueError(f"Soil parameter {soil_param} of soil {soil_name} not found in geomodel.")
-
     lsf = build_lsf(state.names, lambda x: safety_fn(x, geomodel, state, performance_config, standardized_rv))
 
     return lsf
@@ -123,20 +110,5 @@ def package_lsf(
 
 if __name__ == "__main__":
 
-    geomodel_path = os.environ["MODEL_PATH"]
-    form_path = os.environ["FORM_PATH"]
-    geomodel = DSheetPiling(geomodel_path, form_path)
-
-    state = GaussianState(rvs=[
-        MvnRV(mus=[30, 10], stds=[3, 1], names=["Klei_soilphi", "Klei_soilcohesion"]),
-        MvnRV(mus=[1], stds=[0.1], names=["water_A"])
-    ])
-    performance_config = ("max_moment", lambda x: 150. / (x[0] + 1e-5))
-
-    """ The args are "soilphi", "soilcohesion" and "water_A" respectively. """
-    lsf = package_lsf(geomodel, state, performance_config, False)
-    limit_state = lsf(30, 10, 1)
-
-    lsf_st = package_lsf(geomodel, state, performance_config, True)
-    limit_state_st = lsf_st(0, 0, 0)
+    pass
 
