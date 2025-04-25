@@ -20,7 +20,7 @@ class DSheetPiling(GeoModelBase):
         self.parse_model(self.model_path)
 
     def parse_model_path(self, model_path: str | Path) -> None:
-        if not isinstance(model_path, Path): model_path = Path(model_path)
+        if not isinstance(model_path, Path): model_path = Path(Path(model_path).as_posix())
         if not model_path.exists():
             raise NotADirectoryError("Model path does not exist.")
         self.model_path = Path(model_path.as_posix())
@@ -29,14 +29,14 @@ class DSheetPiling(GeoModelBase):
 
     def parse_exe_path(self, exe_path: Optional[str | Path] = None) -> None:
         if exe_path is not None:
-            if not isinstance(exe_path, Path): exe_path = Path(exe_path)
+            if not isinstance(exe_path, Path): exe_path = Path(Path(exe_path).as_posix())
             if not exe_path.exists(): os.mkdir(exe_path)
         else:
             exe_path = self.model_path.parent
         self.exe_path = Path(exe_path.as_posix())
 
     def parse_model(self, path: str | Path) -> None:
-        if not isinstance(path, Path): path = Path(path)
+        if not isinstance(path, Path): path = Path(Path(path).as_posix())
         geomodel = DSheetPilingModel()
         geomodel.parse(path)
         self.geomodel = geomodel
@@ -102,7 +102,7 @@ class DSheetPiling(GeoModelBase):
         self.results = self.read_dsheet_results(geomodel)
 
         if result_path is not None:
-            if not isinstance(result_path, Path): result_path = Path(result_path)
+            if not isinstance(result_path, Path): result_path = Path(Path(result_path).as_posix())
             result_path = Path(result_path.as_posix())
             result_folder = result_path.parent
             if not result_folder.exists():
@@ -148,12 +148,12 @@ class DSheetPiling(GeoModelBase):
         return results
 
     def save_results(self, path: str | Path) -> None:
-        if not isinstance(path, Path): path = Path(path)
+        if not isinstance(path, Path): path = Path(Path(path).as_posix())
         path = Path(path.as_posix())
         self.results.save_json(path)
 
     def load_results(self, path: str | Path) -> None:
-        if not isinstance(path, Path): path = Path(path)
+        if not isinstance(path, Path): path = Path(Path(path).as_posix())
         path = Path(path.as_posix())
         self.results = DSheetPilingResults()
         self.results.load_json(path)

@@ -87,6 +87,9 @@ class GaussianState(StateBase):
     def detransform(self, x: EvalInNpType) -> EvalInNpType:
         return np.linalg.inv(self.chol).dot(x-self.mus)
 
+    def sample(self, n: int = 1, seed: int = 42) -> Annotated[NDArray, "n_dims"]:
+        return self.jpdf.rvs(size=(n,), random_state=seed)
+
 
 if __name__ == "__main__":
 
