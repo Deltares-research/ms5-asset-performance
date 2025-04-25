@@ -37,7 +37,12 @@ class PosteriorRetainingStructure:
         """
         Load the synthetic data
         """
-        self.synthetic_data = pd.read_csv(measurement_path)
+        if measurement_path.endswith('.json'):
+            self.synthetic_data = pd.read_json(measurement_path)
+        elif measurement_path.endswith('.csv'):
+            self.synthetic_data = pd.read_csv(measurement_path)
+        else:
+            raise ValueError('Invalid file extension')
         self.measured_displacement_mean = self.synthetic_data['displacement'].values
         self.measured_displacement_sigma = self.synthetic_data['sigma'].values
 
@@ -85,7 +90,7 @@ class PosteriorRetainingStructure:
         """
         return np.log(self.likelihood_function_for_parameters(parameters))
     
-    def get_displacement_from_dsheet_model(self, updated_parameters: list[float]):
+    def get_displacement_from_dsheet_model(self, updated_parameters: list[float], stage_id: int = -1):
         """
         Run the Dsheet analysis for given parameters
         updated_parameters: list of parameters with
@@ -107,7 +112,8 @@ class PosteriorRetainingStructure:
         #TODO: Get the displacement
         results = self.model.results
 
-        return results.displacement
+        # return max displacement of the last stage
+        return results.max_displacement[stage_id]
 
 
     def find_c(self, method: int = 1):
@@ -146,7 +152,8 @@ class PosteriorRetainingStructure:
         else:
             raise RuntimeError('Finding the scale constant c requires -method- 1, 2 or 3')
 
-    def update_for_new_displacement_data(self, N: int = 1000, p0: float = 0.1, approach: str = 'aBUS'):
+    def update_for_new_displacement_data(self, N: int = 1000, p0: float = 0.1,
+                                         approach: str = 'aBUS'):
         """
         Update the posterior for new data
         """
@@ -406,10 +413,10 @@ class PosteriorRetainingStructure:
 
 
 if __name__ == '__main__':
-    model_path = 'data/dsheetpiling_model.inp'
-    measurement_path = 'data/synthetic_data.csv'
+    model_path = os.path.join(os.path.dirname(__file__), 'dsheetpiling_model.inp')
+    measurement_path = os.path.join(os.path.dirname(__file__), 'synthetic_data.json')
     posterior_retention_structure = PosteriorRetainingStructure(model_path, measurement_path)
     posterior_retention_structure.define_parameters()
-    posterior_retention_structure.update_for_new_displacement_data(N=1000, p0=0.1, approach='aBUS')
+    posterior_retention_structure.update_for_new_displacement_data(N=10, p0=0.1, approach='aBUS')
     posterior_retention_structure.plot_prior_and_posterior_marginal_pdfs()
     posterior_retention_structure.plot_posterior_samples()
