@@ -173,3 +173,21 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+figures/lsf_comparison_exponential_linear.png
+figures/lsf_comparison_exponential_poly.png
+figures/lsf_comparison_exponential_rbf.png
+figures/lsf_comparison_exponential_sigmoid.png
+figures/lsf_comparison_linear_linear.png
+figures/lsf_comparison_linear_poly.png
+figures/lsf_comparison_linear_rbf.png
+fundamentals/main_example_3_2DOF.py
+fundamentals/benchmarks/brain_storming.py
+fundamentals/benchmarks/BUS.py
+fundamentals/benchmarks/rejection_sampling.py
+fundamentals/ERAgroup/aCS.py
+fundamentals/ERAgroup/BUS_SuS.py
+fundamentals/ERAgroup/ERACond.py
+fundamentals/ERAgroup/ERADist.py
+fundamentals/ERAgroup/ERANataf.py
+fundamentals/ERAgroup/ERARosen.py
+fundamentals/updating_methods/update_retaining_structure.py
