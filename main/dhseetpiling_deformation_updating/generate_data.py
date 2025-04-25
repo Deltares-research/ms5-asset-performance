@@ -31,6 +31,7 @@ def sample_rvs(
         rv_sample = np.repeat(rv_sample[np.newaxis, :], n_locs, axis=0)
     elif var_pooling == "unpooled":
         rv_sample = state.sample(n_locs, seed)
+        if n_locs == 1: rv_sample = rv_sample[np.newaxis, :]
 
     return rv_sample
 
@@ -130,7 +131,7 @@ if __name__ == "__main__":
     state = GaussianState(rvs=[rv_strength, rv_water])
 
     config = {
-        "var_pooling": "unpooled",
+        "var_pooling": "pooled",
         "n_locs": 1,
         "seed": 42,
         "disp_dist_type": "lognormal",
