@@ -11,6 +11,7 @@ import json
 import os
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 
 
 def calculate_mesh(
@@ -133,6 +134,53 @@ def update(
     return posterior.squeeze(), grids
 
 
+def plot_posterior(
+        posterior: Annotated[NDArray[np.float64], "n_points**(n_rvs+1)"],
+        grids: Dict[str, Annotated[NDArray[np.float64], "n_points"]],
+        path: str | Path
+) -> None:
+    if not isinstance(path, Path): path = Path(Path(path).as_posix())
+
+    fig = plt.figure(figsize=(8, 8))
+    gs = GridSpec(2, 2, width_ratios=[4, 1], height_ratios=[1, 4], hspace=0.0, wspace=0.0)
+
+    ax_joint = fig.add_subplot(gs[1, 0])
+    ax_marg_x = fig.add_subplot(gs[0, 0], sharex=ax_joint)
+    ax_marg_y = fig.add_subplot(gs[1, 1], sharey=ax_joint)
+
+    ax_marg_x.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
+    ax_marg_y.tick_params(axis="y", which="both", left=False, labelleft=False)
+
+    extent = (
+        grids["Klei_soilphi"].min(), grids["Klei_soilphi"].max(),
+        grids["Klei_soilcohesion"].min(), grids["Klei_soilcohesion"].max()
+    )
+    im = ax_joint.imshow(posterior, cmap="viridis", extent=extent, origin="lower", aspect="auto")
+    ax_joint.set_xlabel("Klei phi [deg]", fontsize=12)
+    ax_joint.set_ylabel("Klei cohesion [kPa]", fontsize=12)
+
+    marginal_phi = trapezoid(posterior, grids["Klei_soilcohesion"], axis=-1)
+    ax_marg_x.fill_between(grids["Klei_soilphi"], marginal_phi, color="b", alpha=0.6)
+    ax_marg_x.set_ylabel("Density [-]", fontsize=10)
+
+    marginal_cohesion = trapezoid(posterior, grids["Klei_soilphi"], axis=0)
+    ax_marg_y.fill_betweenx(grids["Klei_soilcohesion"], marginal_cohesion, color="b", alpha=0.6)
+    ax_marg_y.set_xlabel("Density [-]", fontsize=10)
+
+    ax_marg_x.set_xlim(grids["Klei_soilphi"].min(), grids["Klei_soilphi"].max())
+    ax_marg_y.set_ylim(grids["Klei_soilcohesion"].min(), grids["Klei_soilcohesion"].max())
+
+    for spine in ["top", "right", "left"]:
+        ax_marg_x.spines[spine].set_visible(False)
+    for spine in ["top", "bottom", "right"]:
+        ax_marg_y.spines[spine].set_visible(False)
+
+    fig.subplots_adjust(left=0.1, bottom=0.1, right=0.85, top=0.9, wspace=0.0, hspace=0.0)
+    fig.subplots_adjust()
+
+    plt.close()
+    fig.savefig(path)
+
 
 if __name__ == "__main__":
 
@@ -147,33 +195,23 @@ if __name__ == "__main__":
     state = GaussianState(rvs=[rv_strength, rv_water])
 
     rv_names = ["Klei_soilphi", "Klei_soilcohesion"]
-    # posterior, grids = update(
-    #     rv_names=rv_names,
-    #     state=state,
-    #     model=geomodel,
-    #     path=data_path,
-    #     use_noisy=False,
-    #     log_likelihood_type="normal",
-    #     n_grid=20,
-    #     grid_lims=(1e-1, 1-1e-1)
-    # )
-    #
-    # with open("dummy.json", "w") as f:
-    #     d = {
-    #         "posterior": posterior.flatten().tolist(),
-    #         "grids": {key: val.tolist() for (key, val) in grids.items()}
-    #     }
-    #     json.dump(d, f)
+    posterior, grids = update(
+        rv_names=rv_names,
+        state=state,
+        model=geomodel,
+        path=data_path,
+        use_noisy=False,
+        log_likelihood_type="normal",
+        n_grid=30,
+        grid_lims=(1e-1, 1-1e-1)
+    )
 
-    with open("dummy.json", "r") as f:
-        d = json.load(f)
-    grids = {key: np.asarray(val) for (key, val) in d["grids"].items()}
-    posterior = np.asarray(d["posterior"]).reshape(grids["Klei_soilphi"].size, grids["Klei_soilcohesion"].size)
+    d = {"posterior": posterior.flatten().tolist(), "grids": {key: val.tolist() for (key, val) in grids.items()}}
+    with open(r"results/posterior.json", "w") as f: json.dump(d, f)
 
-    fig = plt.figure(figsize=(8, 8))
-    extent = grids["Klei_soilphi"].min(), grids["Klei_soilphi"].max(), grids["Klei_soilcohesion"].min(), grids["Klei_soilcohesion"].max()
-    plt.imshow(posterior, cmap=plt.cm.viridis, extent=extent)
-    plt.xlabel("Klei phi [deg]", fontsize=12)
-    plt.ylabel("Klei cohesion [kPa]", fontsize=12)
-    plt.close()
-    fig.savefig(r"dummy.png", dpi=600)
+    # with open(r"results/posterior.json", "r") as f: d = json.load(f)
+    # grids = {key: np.asarray(val) for (key, val) in d["grids"].items()}
+    # posterior = np.asarray(d["posterior"]).reshape(grids["Klei_soilphi"].size, grids["Klei_soilcohesion"].size)
+
+    plot_posterior(posterior, grids, r"results/posterior.png")
+
