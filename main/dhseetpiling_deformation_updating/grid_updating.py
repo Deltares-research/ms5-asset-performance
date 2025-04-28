@@ -10,6 +10,7 @@ from typing import List, Tuple, Dict, Annotated
 import json
 import os
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 
 def calculate_mesh(
@@ -17,14 +18,16 @@ def calculate_mesh(
         state: GaussianState,
         model: DSheetPiling,
         data: Dict[str, List[float] | float | str],
-        n_grid: int = 10
+        n_grid: int = 10,
+        grid_lims: Tuple[float, float] = (1e-3, 1-1e-3)
 ) -> Tuple[
     Dict[str, Annotated[NDArray[np.float64], "n_grid"]],
     Dict[str, Annotated[NDArray[np.float64], "n_grid"]]
 ]:
 
+    grid_min, grid_max = grid_lims
     grids = {
-        name: np.linspace(state.marginal_pdf[name].ppf(1e-3), state.marginal_pdf[name].ppf(1 - 1e-3), n_grid)
+        name: np.linspace(state.marginal_pdf[name].ppf(grid_min), state.marginal_pdf[name].ppf(grid_max), n_grid)
         for name in state.names
     }
 
@@ -98,9 +101,10 @@ def update(
         state: GaussianState,
         model: DSheetPiling,
         path: str | Path,
-        n_grid: int = 10,
         use_noisy: bool = True,
-        log_likelihood_type: str = "normal"
+        log_likelihood_type: str = "normal",
+        n_grid: int = 10,
+        grid_lims: Tuple[float, float] = (1e-3, 1-1e-3)
 ) -> Tuple[
     Annotated[NDArray[np.float64], "n_points**(n_rvs+1)"],
     Dict[str, Annotated[NDArray[np.float64], "n_points"]]
@@ -115,7 +119,7 @@ def update(
     else:
         y = np.asarray(data["displacement"]).squeeze()
 
-    y_hat, grids = calculate_mesh(rv_names, state, model, data, n_grid)
+    y_hat, grids = calculate_mesh(rv_names, state, model, data, n_grid, grid_lims)
     y_hat = y_hat.squeeze()
 
     # cov_grid = np.logspace(-3, 0, n_grid)
@@ -126,7 +130,8 @@ def update(
 
     grids.update({"cov": cov_grid})
 
-    return posterior, grids
+    return posterior.squeeze(), grids
+
 
 
 if __name__ == "__main__":
@@ -142,9 +147,33 @@ if __name__ == "__main__":
     state = GaussianState(rvs=[rv_strength, rv_water])
 
     rv_names = ["Klei_soilphi", "Klei_soilcohesion"]
-    # update(rv_names, state, geomodel, data_path, use_noisy=False, log_likelihood_type="lognormal", n_grid=3)
-    posterior, grids = update(rv_names, state, geomodel, data_path, use_noisy=False, log_likelihood_type="normal", n_grid=20)
-    posterior = posterior.squeeze()
+    # posterior, grids = update(
+    #     rv_names=rv_names,
+    #     state=state,
+    #     model=geomodel,
+    #     path=data_path,
+    #     use_noisy=False,
+    #     log_likelihood_type="normal",
+    #     n_grid=20,
+    #     grid_lims=(1e-1, 1-1e-1)
+    # )
+    #
+    # with open("dummy.json", "w") as f:
+    #     d = {
+    #         "posterior": posterior.flatten().tolist(),
+    #         "grids": {key: val.tolist() for (key, val) in grids.items()}
+    #     }
+    #     json.dump(d, f)
 
+    with open("dummy.json", "r") as f:
+        d = json.load(f)
+    grids = {key: np.asarray(val) for (key, val) in d["grids"].items()}
+    posterior = np.asarray(d["posterior"]).reshape(grids["Klei_soilphi"].size, grids["Klei_soilcohesion"].size)
 
-
+    fig = plt.figure(figsize=(8, 8))
+    extent = grids["Klei_soilphi"].min(), grids["Klei_soilphi"].max(), grids["Klei_soilcohesion"].min(), grids["Klei_soilcohesion"].max()
+    plt.imshow(posterior, cmap=plt.cm.viridis, extent=extent)
+    plt.xlabel("Klei phi [deg]", fontsize=12)
+    plt.ylabel("Klei cohesion [kPa]", fontsize=12)
+    plt.close()
+    fig.savefig(r"dummy.png", dpi=600)
