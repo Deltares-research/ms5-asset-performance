@@ -3,6 +3,9 @@ import scipy as sp
 np.seterr(all='ignore')
 
 # Make sure to include aCS.py in your workspace
+import os
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
 from aCS import aCS
 
 # Make sure ERADist, ERANataf classes are in the path
@@ -77,7 +80,7 @@ def BUS_SuS(N, p0, c, log_likelihood, distr):
     # initialization of variables
     j        = 0                         # number of conditional level
     lam      = 0.6                       # initial scaling parameter \in (0,1)
-    max_it   = 20                        # maximum number of iterations
+    max_it   = 5                        # maximum number of iterations
     samplesU = {'seeds': list(),
                 'total': list()}
     samplesX = list()

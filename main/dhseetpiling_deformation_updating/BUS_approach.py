@@ -9,6 +9,7 @@ import sys
 import os
 # Add the ERAgroup directory to the path if needed
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..\\..'))
 from src.bayesian_updating.ERADist import ERADist
 from src.bayesian_updating.ERANataf import ERANataf
 from src.bayesian_updating.BUS_SuS import BUS_SuS
@@ -30,6 +31,15 @@ class PosteriorRetainingStructure:
             output_samples (dict): Dictionary containing output samples with subdictionaries for displacement and moments
         """
         self.model = DSheetPiling(model_path)
+        result_path = r"results/results.json"
+        soil_data = {"Klei": {"soilcohesion": 10.}}
+        # water_data = {"A": +1.}
+        load_data = {"load": (15, 0.)}
+
+        self.model.update_soils(soil_data)
+        # self.model.update_water(water_data)
+        self.model.update_uniform_loads(load_data)
+        self.model.execute(result_path)
         self.load_synthetic_data(measurement_path)
         self.define_parameters()
 
@@ -75,6 +85,10 @@ class PosteriorRetainingStructure:
         """
         Log likelihood function for displacement
         """
+        print(50*"=")
+        print('Displacement sample:', displacement_sample)
+        print("Results of the likelihood function:", self.likelihood_function_for_displacement(displacement_sample))
+        print("Log of the likelihood function:", np.log(self.likelihood_function_for_displacement(displacement_sample)))
         return np.log(self.likelihood_function_for_displacement(displacement_sample))
     
     def likelihood_function_for_parameters(self, parameters: list[float]):
@@ -157,13 +171,13 @@ class PosteriorRetainingStructure:
         """
         Update the posterior for new data
         """
-        # find c
-        c = self.find_c(method=1)
         
         if approach == 'BUS':
+            # find c
+            c = self.find_c(method=1)
             h, samplesU, samplesX, logcE, sigma = BUS_SuS(N, p0, c, self.log_likelihood_function_for_displacement, self.prior_pdf)
         elif approach == 'aBUS':
-            h, samplesU, samplesX, logcE, sigma = aBUS_SuS(N, p0, c, self.log_likelihood_function_for_displacement, self.prior_pdf)
+            h, samplesU, samplesX, logcE, sigma = aBUS_SuS(N, p0, self.log_likelihood_function_for_parameters, self.prior_pdf)
         else:
             raise ValueError('Invalid approach')
         
@@ -405,16 +419,17 @@ class PosteriorRetainingStructure:
             df = pd.DataFrame(param_samples[-1], columns=self.parameter_names)
             
             # Create pairwise plots
-            g = sns.pairplot(df, diag_kind='kde')ß
+            g = sns.pairplot(df, diag_kind='kde')
             g.fig.subplots_adjust(top=0.95)
             plt.savefig('pairwise_posterior.png', dpi=300)
         
         plt.show()
 
 
-if __name__ == '__main__':
-    model_path = os.path.join(os.path.dirname(__file__), 'dsheetpiling_model.inp')
-    measurement_path = os.path.join(os.path.dirname(__file__), 'synthetic_data.json')
+if __name__ == '__main__':    
+    model_path = "C:\\Users\\cotoarba\\ms5-asset-performance\\examples\\dummy.shi"
+    # model_path = os.path(mmodel_path)
+    measurement_path = os.path.join(os.path.dirname(__file__), 'synthetic_measurement_data.json')
     posterior_retention_structure = PosteriorRetainingStructure(model_path, measurement_path)
     posterior_retention_structure.define_parameters()
     posterior_retention_structure.update_for_new_displacement_data(N=10, p0=0.1, approach='aBUS')

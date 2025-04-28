@@ -57,18 +57,21 @@ def aBUS_SuS(N, p0, log_likelihood, distr):
     if (N*p0 != np.fix(N*p0)) or (1/p0 != np.fix(1/p0)):
         raise RuntimeError('N*p0 and 1/p0 must be positive integers. Adjust N and p0 accordingly')
 
+    print(50*'-')
+    print('Adaptive Bayesian Updating with Subset Simulation')
+    print(f"Distribution: {distr}")
     # initial check if there exists a Nataf object
-    if isinstance(distr, ERANataf):    # use Nataf transform (dependence)
-        n   = len(distr.Marginals)+1   # number of random variables + p Uniform variable of BUS
-        u2x = lambda u: distr.U2X(u)   # from u to x
+    # if isinstance(distr, ERANataf):    # use Nataf transform (dependence)
+    n   = len(distr.Marginals)+1   # number of random variables + p Uniform variable of BUS
+    u2x = lambda u: distr.U2X(u)   # from u to x
 
-    elif isinstance(distr[0], ERADist):   # use distribution information for the transformation (independence)
-        # Here we are assuming that all the parameters have the same distribution !!!
-        # Adjust accordingly otherwise or use an ERANataf object
-        n   = len(distr)+1                # number of random variables + p Uniform variable of BUS
-        u2x = lambda u: distr[0].icdf(sp.stats.norm.cdf(u))   # from u to x
-    else:
-        raise RuntimeError('Incorrect distribution. Please create an ERADist/Nataf object!')
+    # elif isinstance(distr[0], ERADist):   # use distribution information for the transformation (independence)
+    #     # Here we are assuming that all the parameters have the same distribution !!!
+    #     # Adjust accordingly otherwise or use an ERANataf object
+    #     n   = len(distr)+1                # number of random variables + p Uniform variable of BUS
+    #     u2x = lambda u: distr[0].icdf(sp.stats.norm.cdf(u))   # from u to x
+    # else:
+    #     raise RuntimeError('Incorrect distribution. Please create an ERADist/Nataf object!')
 
     # limit state funtion for the observation event (Ref.1 Eq.12)
     # log likelihood in standard space
@@ -82,7 +85,7 @@ def aBUS_SuS(N, p0, log_likelihood, distr):
     # initialization of variables
     i        = 0                         # number of conditional level
     lam      = 0.6                       # initial scaling parameter \in (0,1)
-    max_it   = 20                        # maximum number of iterations
+    max_it   = 5                        # maximum number of iterations
     samplesU = {'seeds': list(),
                 'total': list()}
     samplesX = list()
@@ -99,6 +102,8 @@ def aBUS_SuS(N, p0, log_likelihood, distr):
     leval = [log_L_fun(u_j[:,i]) for i in range(N)]
     leval = np.array(leval)
     print('Done!')
+    print(50*"=")
+    print(f"leval: {leval}")
     logl_hat = max(leval)   # =-log(c) (Ref.1 Alg.5 Part.3)
     print('Initial maximum log-likelihood: ', logl_hat)
 
