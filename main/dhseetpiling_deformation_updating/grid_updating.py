@@ -6,7 +6,7 @@ from src.geotechnical_models.dsheetpiling.model import DSheetPiling
 from src.rvs.state import MvnRV, GaussianState
 from generate_data import run_model
 from pathlib import Path
-from typing import List, Tuple, Dict, Annotated
+from typing import List, Tuple, Dict, Annotated, Optional
 import json
 import os
 from tqdm import tqdm
@@ -137,7 +137,8 @@ def update(
 def plot_posterior(
         posterior: Annotated[NDArray[np.float64], "n_points**(n_rvs+1)"],
         grids: Dict[str, Annotated[NDArray[np.float64], "n_points"]],
-        path: str | Path
+        path: str | Path,
+        true_params: Optional[Tuple[float,...]] = None
 ) -> None:
     if not isinstance(path, Path): path = Path(Path(path).as_posix())
 
@@ -162,13 +163,23 @@ def plot_posterior(
     marginal_phi = trapezoid(posterior, grids["Klei_soilcohesion"], axis=-1)
     ax_marg_x.fill_between(grids["Klei_soilphi"], marginal_phi, color="b", alpha=0.6)
     ax_marg_x.set_ylabel("Density [-]", fontsize=10)
+    ax_marg_x.yaxis.set_visible(False)
 
     marginal_cohesion = trapezoid(posterior, grids["Klei_soilphi"], axis=0)
     ax_marg_y.fill_betweenx(grids["Klei_soilcohesion"], marginal_cohesion, color="b", alpha=0.6)
     ax_marg_y.set_xlabel("Density [-]", fontsize=10)
+    ax_marg_y.xaxis.set_visible(False)
 
     ax_marg_x.set_xlim(grids["Klei_soilphi"].min(), grids["Klei_soilphi"].max())
     ax_marg_y.set_ylim(grids["Klei_soilcohesion"].min(), grids["Klei_soilcohesion"].max())
+
+    if not true_params is None:
+        true_phi, true_cohesion = true_params
+        ax_joint.axvline(true_phi, c="r")
+        ax_joint.axhline(true_cohesion, c="r")
+        ax_joint.scatter(true_phi, true_cohesion, marker="x", c="r")
+        ax_marg_x.axvline(true_phi, c="r")
+        ax_marg_y.axhline(true_cohesion, c="r")
 
     for spine in ["top", "right", "left"]:
         ax_marg_x.spines[spine].set_visible(False)
@@ -177,6 +188,8 @@ def plot_posterior(
 
     fig.subplots_adjust(left=0.1, bottom=0.1, right=0.85, top=0.9, wspace=0.0, hspace=0.0)
     fig.subplots_adjust()
+
+    fig.suptitle("Posterior distribution\nvia grid integration", fontsize=16)
 
     plt.close()
     fig.savefig(path)
@@ -195,23 +208,25 @@ if __name__ == "__main__":
     state = GaussianState(rvs=[rv_strength, rv_water])
 
     rv_names = ["Klei_soilphi", "Klei_soilcohesion"]
-    posterior, grids = update(
-        rv_names=rv_names,
-        state=state,
-        model=geomodel,
-        path=data_path,
-        use_noisy=False,
-        log_likelihood_type="normal",
-        n_grid=30,
-        grid_lims=(1e-1, 1-1e-1)
-    )
+    # posterior, grids = update(
+    #     rv_names=rv_names,
+    #     state=state,
+    #     model=geomodel,
+    #     path=data_path,
+    #     use_noisy=False,
+    #     log_likelihood_type="normal",
+    #     n_grid=30,
+    #     grid_lims=(1e-1, 1-1e-1)
+    # )
+    #
+    # d = {"posterior": posterior.flatten().tolist(), "grids": {key: val.tolist() for (key, val) in grids.items()}}
+    # with open(r"results/posterior.json", "w") as f: json.dump(d, f)
 
-    d = {"posterior": posterior.flatten().tolist(), "grids": {key: val.tolist() for (key, val) in grids.items()}}
-    with open(r"results/posterior.json", "w") as f: json.dump(d, f)
+    with open(r"results/posterior.json", "r") as f: d = json.load(f)
+    grids = {key: np.asarray(val) for (key, val) in d["grids"].items()}
+    posterior = np.asarray(d["posterior"]).reshape(grids["Klei_soilphi"].size, grids["Klei_soilcohesion"].size)
 
-    # with open(r"results/posterior.json", "r") as f: d = json.load(f)
-    # grids = {key: np.asarray(val) for (key, val) in d["grids"].items()}
-    # posterior = np.asarray(d["posterior"]).reshape(grids["Klei_soilphi"].size, grids["Klei_soilcohesion"].size)
-
-    plot_posterior(posterior, grids, r"results/posterior.png")
+    with open(data_path, "r") as f: data = json.load(f)
+    true_params = (data["Klei_soilphi"], data["Klei_soilcohesion"])
+    plot_posterior(posterior, grids, r"results/posterior.png", true_params=true_params)
 
