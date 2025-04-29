@@ -6,12 +6,26 @@ from src.geotechnical_models.dsheetpiling.model import DSheetPiling
 from src.rvs.state import MvnRV, GaussianState
 from generate_data import run_model
 from pathlib import Path
-from typing import List, Tuple, Dict, Annotated, Optional
+from typing import List, Tuple, Dict, Annotated, Optional, NamedTuple
 import json
 import os
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
+
+
+class PosteriorResults(NamedTuple):
+    rv_names: List[str] | Tuple[str, ...]
+    posterior: List[List[float]]
+    grids: Dict[str, List[float]]
+    data: Dict[str, List[float]]
+    true_params: Tuple[float, ...]
+    map: Tuple[float, ...]
+    mse: Tuple[float, ...]
+    use_noisy: bool
+    log_likelihood_type: str
+    n_grid: int
+    grid_lims: Tuple[float, float]
 
 
 def calculate_mesh(
@@ -105,11 +119,9 @@ def update(
         use_noisy: bool = True,
         log_likelihood_type: str = "normal",
         n_grid: int = 10,
-        grid_lims: Tuple[float, float] = (1e-3, 1-1e-3)
-) -> Tuple[
-    Annotated[NDArray[np.float64], "n_points**(n_rvs+1)"],
-    Dict[str, Annotated[NDArray[np.float64], "n_points"]]
-]:
+        grid_lims: Tuple[float, float] = (1e-3, 1-1e-3),
+        export_path: Optional[str | Path] = None
+) -> PosteriorResults:
 
     if not isinstance(path, Path): path = Path(Path(path).as_posix())
 
@@ -128,19 +140,59 @@ def update(
 
     grids = {key: val for (key, val) in grids.items() if key in rv_names}
     posterior = apply_bayes(y, y_hat, cov_grid, state, grids, log_likelihood_type)
+    posterior = posterior.squeeze()
 
     grids.update({"cov": cov_grid})
 
-    return posterior.squeeze(), grids
+
+    true_params = tuple([data[name][0] for name in rv_names])
+
+    map_idxs = np.unravel_index(np.argmax(posterior), posterior.shape)
+    map_point = (
+        grids["Klei_soilphi"][map_idxs[0]].tolist(),
+        grids["Klei_soilcohesion"][map_idxs[1]].tolist()
+    )
+
+    marginals = (
+        trapezoid(posterior, grids["Klei_soilcohesion"], axis=-1),
+        trapezoid(posterior, grids["Klei_soilphi"], axis=0)
+    )
+
+    mses = (
+        np.sum(marginals[0] * (grids["Klei_soilphi"] - true_params[0]) ** 2).item(),
+        np.sum(marginals[1] * (grids["Klei_soilphi"] - true_params[1]) ** 2).item()
+    )
+
+    posterior_results = PosteriorResults(
+        rv_names=rv_names,
+        posterior=posterior.tolist(),
+        grids={key: val.tolist() for (key, val) in grids.items()},
+        data=data,
+        true_params=true_params,
+        map=map_point,
+        mse=mses,
+        use_noisy=use_noisy,
+        log_likelihood_type=log_likelihood_type,
+        n_grid=n_grid,
+        grid_lims=grid_lims
+    )
+
+    if export_path is not None:
+        if not isinstance(export_path, Path): export_path = Path(Path(export_path).as_posix())
+        posterior_dict = posterior_results._asdict()
+        with open(export_path / "posterior_results.json", "w") as f: json.dump(posterior_dict, f, indent=4)
+
+    return posterior_results
 
 
 def plot_posterior(
-        posterior: Annotated[NDArray[np.float64], "n_points**(n_rvs+1)"],
-        grids: Dict[str, Annotated[NDArray[np.float64], "n_points"]],
+        posterior_results: PosteriorResults,
         path: str | Path,
-        true_params: Optional[Tuple[float,...]] = None
 ) -> None:
     if not isinstance(path, Path): path = Path(Path(path).as_posix())
+
+    posterior = np.asarray(posterior_results.posterior)
+    grids = posterior_results.grids
 
     fig = plt.figure(figsize=(8, 8))
     gs = GridSpec(2, 2, width_ratios=[4, 1], height_ratios=[1, 4], hspace=0.0, wspace=0.0)
@@ -153,10 +205,10 @@ def plot_posterior(
     ax_marg_y.tick_params(axis="y", which="both", left=False, labelleft=False)
 
     extent = (
-        grids["Klei_soilphi"].min(), grids["Klei_soilphi"].max(),
-        grids["Klei_soilcohesion"].min(), grids["Klei_soilcohesion"].max()
+        min(grids["Klei_soilphi"]), max(grids["Klei_soilphi"]),
+        min(grids["Klei_soilcohesion"]), max(grids["Klei_soilcohesion"])
     )
-    im = ax_joint.imshow(posterior, cmap="viridis", extent=extent, origin="lower", aspect="auto")
+    im = ax_joint.imshow(posterior.T, cmap="viridis", extent=extent, origin="lower", aspect="auto")  # Transpose for imshow
     ax_joint.set_xlabel("Klei phi [deg]", fontsize=12)
     ax_joint.set_ylabel("Klei cohesion [kPa]", fontsize=12)
 
@@ -170,14 +222,21 @@ def plot_posterior(
     ax_marg_y.set_xlabel("Density [-]", fontsize=10)
     ax_marg_y.xaxis.set_visible(False)
 
-    ax_marg_x.set_xlim(grids["Klei_soilphi"].min(), grids["Klei_soilphi"].max())
-    ax_marg_y.set_ylim(grids["Klei_soilcohesion"].min(), grids["Klei_soilcohesion"].max())
+    ax_marg_x.set_xlim(min(grids["Klei_soilphi"]), max(grids["Klei_soilphi"]))
+    ax_marg_y.set_ylim(min(grids["Klei_soilcohesion"]), max(grids["Klei_soilcohesion"]))
 
-    if not true_params is None:
-        true_phi, true_cohesion = true_params
+    map_phi, map_cohesion = posterior_results.map
+    ax_joint.axvline(map_phi, c="b")
+    ax_joint.axhline(map_cohesion, c="b")
+    ax_joint.scatter(map_phi, map_cohesion, marker="x", c="r", label="True MAP")
+    ax_marg_x.axvline(map_phi, c="b")
+    ax_marg_y.axhline(map_cohesion, c="b")
+
+    if not posterior_results.true_params is None:
+        true_phi, true_cohesion = posterior_results.true_params
         ax_joint.axvline(true_phi, c="r")
         ax_joint.axhline(true_cohesion, c="r")
-        ax_joint.scatter(true_phi, true_cohesion, marker="x", c="r")
+        ax_joint.scatter(true_phi, true_cohesion, marker="x", c="r", label="True values")
         ax_marg_x.axvline(true_phi, c="r")
         ax_marg_y.axhline(true_cohesion, c="r")
 
@@ -185,6 +244,8 @@ def plot_posterior(
         ax_marg_x.spines[spine].set_visible(False)
     for spine in ["top", "bottom", "right"]:
         ax_marg_y.spines[spine].set_visible(False)
+
+    # plt.legend(fontsize=10)
 
     fig.subplots_adjust(left=0.1, bottom=0.1, right=0.85, top=0.9, wspace=0.0, hspace=0.0)
     fig.subplots_adjust()
@@ -208,25 +269,20 @@ if __name__ == "__main__":
     state = GaussianState(rvs=[rv_strength, rv_water])
 
     rv_names = ["Klei_soilphi", "Klei_soilcohesion"]
-    # posterior, grids = update(
-    #     rv_names=rv_names,
-    #     state=state,
-    #     model=geomodel,
-    #     path=data_path,
-    #     use_noisy=False,
-    #     log_likelihood_type="normal",
-    #     n_grid=30,
-    #     grid_lims=(1e-1, 1-1e-1)
-    # )
-    #
-    # d = {"posterior": posterior.flatten().tolist(), "grids": {key: val.tolist() for (key, val) in grids.items()}}
-    # with open(r"results/posterior.json", "w") as f: json.dump(d, f)
 
-    with open(r"results/posterior.json", "r") as f: d = json.load(f)
-    grids = {key: np.asarray(val) for (key, val) in d["grids"].items()}
-    posterior = np.asarray(d["posterior"]).reshape(grids["Klei_soilphi"].size, grids["Klei_soilcohesion"].size)
+    posterior_results = update(
+        rv_names=rv_names,
+        state=state,
+        model=geomodel,
+        path=data_path,
+        use_noisy=False,
+        log_likelihood_type="normal",
+        n_grid=40,
+        grid_lims=(1e-1, 1-1e-1),
+        export_path=r"results"
+    )
 
-    with open(data_path, "r") as f: data = json.load(f)
-    true_params = (data["Klei_soilphi"], data["Klei_soilcohesion"])
-    plot_posterior(posterior, grids, r"results/posterior.png", true_params=true_params)
+    with open(r"results/posterior_results.json", "r") as f: posterior_dict = json.load(f)
+    posterior_results = PosteriorResults(**posterior_dict)
+    plot_posterior(posterior_results, r"results/posterior.png")
 
