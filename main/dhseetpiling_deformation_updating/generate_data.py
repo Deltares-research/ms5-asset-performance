@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
-from src.geotechnical_models.dsheetpiling.model import DSheetPiling
+from src.geotechnical_models.dsheetpiling.model import DSheetPiling, DSheetPilingResults
 from src.rvs.state import MvnRV, GaussianState
 from src.reliability_models.dsheetpiling.lsf import unpack_soil_params, unpack_water_params
 from typing import Dict, Optional, Annotated, Tuple
@@ -14,60 +14,68 @@ def sample_rvs(
         state: GaussianState,
         config: Dict[str, str | float| int],
         path: Optional[str | Path] = None
-) -> Annotated[NDArray, "n_samples n_rvs"]:
+) -> Annotated[NDArray[np.float64], "n_samples n_rvs"]:
 
-    var_pooling = config["var_pooling"]
+    rv_pooling = config["rv_pooling"]
     n_locs = config["n_locs"]
     seed = config["seed"]
 
-    if var_pooling not in ["pooled", "unpooled", "partially_pooled"]:
+    if rv_pooling not in ["pooled", "unpooled", "partially_pooled"]:
         raise ValueError("Unknown pooling configuration.")
 
-    if var_pooling == "partially_pooled":
+    if rv_pooling == "partially_pooled":
         raise NotImplementedError("Partial pooling not implemented yet.")
 
-    if var_pooling == "pooled":
+    if rv_pooling == "pooled":
         rv_sample = state.sample(1, seed)
         rv_sample = np.repeat(rv_sample[np.newaxis, :], n_locs, axis=0)
-    elif var_pooling == "unpooled":
+    elif rv_pooling == "unpooled":
         rv_sample = state.sample(n_locs, seed)
         if n_locs == 1: rv_sample = rv_sample[np.newaxis, :]
 
     return rv_sample
 
 
+def run_model(
+        rvs: Annotated[NDArray[np.float64], "n_rvs"],
+        model: DSheetPiling,
+        state: GaussianState
+) -> DSheetPilingResults:
+    params = {name: rv for (name, rv) in zip(state.names, rvs)}
+    soil_data = unpack_soil_params(params, list(model.soils.keys()))
+    water_data = unpack_water_params(params, [lvl.name for lvl in model.water.water_lvls])
+    model.update_soils(soil_data)
+    model.update_water(water_data)
+    model.execute()
+    return model.results
+
+
 def sample_disp(
-        rv_sample: Annotated[NDArray, "n_samples n_rvs"],
+        rv_sample: Annotated[NDArray[np.float64], "n_samples n_rvs"],
         state: GaussianState,
         model: DSheetPiling,
         config: Dict[str, str | float | int]
 ) -> Tuple[
-    Annotated[NDArray, "n_samples n_points"],
-    Annotated[NDArray, "n_samples n_points"],
-    Annotated[NDArray, "n_samples n_points"]
+    Annotated[NDArray[np.float64], "n_samples n_points"],
+    Annotated[NDArray[np.float64], "n_samples n_points"],
+    Annotated[NDArray[np.float64], "n_samples n_points"]
 ]:
 
     # TODO Use list of geotechnical models. So far, I simulate n_locs locations but only use one model, assuming the
     #  same cross-section everywhere.
 
-    var_pooling = config["var_pooling"]
+    rv_pooling = config["rv_pooling"]
     n_locs = config["n_locs"]
     seed = config["seed"]
     disp_dist_type = config["disp_dist_type"]
     disp_cov = config["disp_cov"]
 
-    if var_pooling == "pooled": rv_sample = rv_sample[:1]
+    if rv_pooling == "pooled": rv_sample = rv_sample[:1]
 
     disp_sample = []
     moment_sample = []
     for rvs in tqdm(rv_sample, desc="Calculating sample"):
-        params = {name: rv for (name, rv) in zip(state.names, rvs)}
-        soil_data = unpack_soil_params(params, list(model.soils.keys()))
-        water_data = unpack_water_params(params, [lvl.name for lvl in model.water.water_lvls])
-        model.update_soils(soil_data)
-        model.update_water(water_data)
-        model.execute()
-        results = model.results
+        results = run_model(rvs, model, state)
         disp_sample.append(results.displacement)
         moment_sample.append(results.moment)
 
@@ -75,7 +83,7 @@ def sample_disp(
     # Drop empty dimension if it exists (only the first one if two empty dimensions exist)
     if disp_sample.ndim > 2: disp_sample = disp_sample[0, ...]
 
-    sample_shape = (n_locs,) + (disp_sample.shape[1:]) if var_pooling == "pooled" else disp_sample.shape
+    sample_shape = (n_locs,) + (disp_sample.shape[1:]) if rv_pooling == "pooled" else disp_sample.shape
 
     np.random.seed(seed)
 
@@ -112,9 +120,9 @@ def draw_sample(
     log = {key: val for (key, val) in config.items()}
     log.update({name: rv.tolist() for (name, rv) in zip(state.names, rv_sample.T)})
     log.update({
-        "disp_sample": disp_sample.tolist(),
-        "disp_noisy": disp_noisy.tolist(),
-        "moment_sample": moment_sample.tolist(),
+        "displacement": disp_sample.tolist(),
+        "displacement_noisy": disp_noisy.tolist(),
+        "moment": moment_sample.tolist(),
     })
 
     with open(path, "w") as f: json.dump(log, f, indent=4)
@@ -131,10 +139,11 @@ if __name__ == "__main__":
     state = GaussianState(rvs=[rv_strength, rv_water])
 
     config = {
-        "var_pooling": "pooled",
+        "rv_pooling": "pooled",
         "n_locs": 1,
         "seed": 42,
-        "disp_dist_type": "lognormal",
+        # "disp_dist_type": "lognormal",
+        "disp_dist_type": "normal",
         "disp_cov": 0.1
     }
 
