@@ -48,7 +48,7 @@ def calculate_mesh(
 
     for name in grids.keys():
         if name not in rv_names:
-            grids[name] = np.asarray(data[name])
+            grids[name] = np.unique(np.asarray(data[name]))
 
     mesh = np.meshgrid(*list(grids.values()))
     mesh = np.c_[[m.flatten() for m in mesh]].T
@@ -75,11 +75,16 @@ def apply_bayes(
     n_rvs = len(list(grids.values())) + 1  # +1 for CoV
     n_grid = list(grids.values())[0].size
 
+    if y.ndim == 1: y = np.expand_dims(y, axis=0)
+
     if log_likelihood_type == "normal":
 
-        sigma = y_hat[np.newaxis, ...] * cov_grid[:, *tuple([np.newaxis]*y_hat.ndim)]
-        log_likehoods = stats.norm(loc=y_hat[np.newaxis, ...], scale=sigma).logpdf(y)
-        log_likehood = np.nansum(log_likehoods, axis=-1).squeeze()
+        mean = y_hat[np.newaxis, :, np.newaxis, :]
+        sigma = np.abs(mean) * cov_grid[:, *tuple([np.newaxis]*y_hat.ndim)]
+        sigma = np.clip(sigma, 1e-3, None)
+        log_likehoods = stats.norm(loc=mean, scale=sigma).logpdf(y)
+        # Sum over axis=-1 (point along wall) and axis=-2 (location)
+        log_likehood = np.nansum(log_likehoods, axis=(-2, -1)).squeeze()
         log_likehood = log_likehood.reshape(cov_grid.size, *tuple([n_grid]*(n_rvs-1)))
 
     elif log_likelihood_type == "lognormal":
@@ -143,7 +148,6 @@ def update(
     posterior = posterior.squeeze()
 
     grids.update({"cov": cov_grid})
-
 
     true_params = tuple([data[name][0] for name in rv_names])
 
@@ -259,6 +263,7 @@ def plot_posterior(
 if __name__ == "__main__":
 
     data_path = r"results/sample.json"
+    # data_path = r"results/sample_10_pooled.json"
 
     geomodel_path = os.environ["MODEL_PATH"]  # model_path defined as environment variable
     geomodel = DSheetPiling(geomodel_path)
@@ -276,8 +281,9 @@ if __name__ == "__main__":
         model=geomodel,
         path=data_path,
         use_noisy=False,
+        # use_noisy=False,
         log_likelihood_type="normal",
-        n_grid=40,
+        n_grid=10,
         grid_lims=(1e-1, 1-1e-1),
         export_path=r"results"
     )

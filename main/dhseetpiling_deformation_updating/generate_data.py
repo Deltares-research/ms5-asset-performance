@@ -13,7 +13,6 @@ from tqdm import tqdm
 def sample_rvs(
         state: GaussianState,
         config: Dict[str, str | float| int],
-        path: Optional[str | Path] = None
 ) -> Annotated[NDArray[np.float64], "n_samples n_rvs"]:
 
     rv_pooling = config["rv_pooling"]
@@ -79,9 +78,13 @@ def sample_disp(
         disp_sample.append(results.displacement)
         moment_sample.append(results.moment)
 
-    disp_sample = np.asarray(disp_sample)
+    # For some samples, DSheetpiling returns fewer points along the wall. Reject these samples.
+    max_n_points = max(len(disp[0]) for disp in disp_sample)
+    disp_sample = [disp if len(disp[0]) == max_n_points else [[np.nan]*max_n_points] for disp in disp_sample]
+    disp_sample = np.asarray(disp_sample).squeeze()
     # Drop empty dimension if it exists (only the first one if two empty dimensions exist)
-    if disp_sample.ndim > 2: disp_sample = disp_sample[0, ...]
+    # if disp_sample.ndim > 2: disp_sample = disp_sample[0, ...]
+
 
     sample_shape = (n_locs,) + (disp_sample.shape[1:]) if rv_pooling == "pooled" else disp_sample.shape
 
@@ -97,9 +100,12 @@ def sample_disp(
     else:
         raise NotImplementedError(f"Distribution '{disp_dist_type}' not implemented.")
 
-    moment_sample = np.asarray(moment_sample)
+
+    max_n_points = max(len(moment[0]) for moment in moment_sample)
+    moment_sample = [moment if len(moment[0]) == max_n_points else [[np.nan]*max_n_points] for moment in moment_sample]
+    moment_sample = np.asarray(moment_sample).squeeze()
     # Drop empty dimension if it exists (only the first one if two empty dimensions exist)
-    if moment_sample.ndim > 2: moment_sample = moment_sample[0, ...]
+    # if moment_sample.ndim > 2: moment_sample = moment_sample[0, ...]
 
     return disp_sample, disp_noisy, moment_sample
 
@@ -120,9 +126,9 @@ def draw_sample(
     log = {key: val for (key, val) in config.items()}
     log.update({name: rv.tolist() for (name, rv) in zip(state.names, rv_sample.T)})
     log.update({
-        "displacement": disp_sample.tolist(),
-        "displacement_noisy": disp_noisy.tolist(),
-        "moment": moment_sample.tolist(),
+        "displacement": [[None if np.isnan(x) else x for x in row] for row in disp_sample],
+        "displacement_noisy": [[None if np.isnan(x) else x for x in row] for row in disp_noisy],
+        "moment":[[None if np.isnan(x) else x for x in row] for row in moment_sample],
     })
 
     with open(path, "w") as f: json.dump(log, f, indent=4)
@@ -139,13 +145,16 @@ if __name__ == "__main__":
     state = GaussianState(rvs=[rv_strength, rv_water])
 
     config = {
-        "rv_pooling": "pooled",
-        "n_locs": 1,
+        "rv_pooling": "unpooled",
+        "n_locs": 10_000,
         "seed": 42,
         # "disp_dist_type": "lognormal",
         "disp_dist_type": "normal",
         "disp_cov": 0.1
     }
 
-    draw_sample(state, geomodel, config, path=r"results/sample.json")
+    if config["n_locs"] == 1:
+        draw_sample(state, geomodel, config, path=r"results/sample.json")
+    else:
+        draw_sample(state, geomodel, config, path=f"results/sample_{config['n_locs']}_{config['rv_pooling']}.json")
 
