@@ -53,26 +53,27 @@ Based on:
 ---------------------------------------------------------------------------
 """
 
-def aBUS_SuS(N, p0, log_likelihood, distr):
+def aBUS_SuS(N, p0, log_likelihood, get_displacement, distr):
     if (N*p0 != np.fix(N*p0)) or (1/p0 != np.fix(1/p0)):
         raise RuntimeError('N*p0 and 1/p0 must be positive integers. Adjust N and p0 accordingly')
 
     # initial check if there exists a Nataf object
-    # if isinstance(distr, ERANataf):    # use Nataf transform (dependence)
-    n   = len(distr.Marginals)+1   # number of random variables + p Uniform variable of BUS
-    u2x = lambda u: distr.U2X(u)   # from u to x
+    if isinstance(distr, ERANataf):    # use Nataf transform (dependence)
+        n   = len(distr.Marginals)+1   # number of random variables + p Uniform variable of BUS
+        u2x = lambda u: distr.U2X(u)   # from u to x
 
-    # elif isinstance(distr[0], ERADist):   # use distribution information for the transformation (independence)
-    #     # Here we are assuming that all the parameters have the same distribution !!!
-    #     # Adjust accordingly otherwise or use an ERANataf object
-    #     n   = len(distr)+1                # number of random variables + p Uniform variable of BUS
-    #     u2x = lambda u: distr[0].icdf(sp.stats.norm.cdf(u))   # from u to x
-    # else:
-    #     raise RuntimeError('Incorrect distribution. Please create an ERADist/Nataf object!')
+    elif isinstance(distr[0], ERADist):   # use distribution information for the transformation (independence)
+        # Here we are assuming that all the parameters have the same distribution !!!
+        # Adjust accordingly otherwise or use an ERANataf object
+        n   = len(distr)+1                # number of random variables + p Uniform variable of BUS
+        u2x = lambda u: distr[0].icdf(sp.stats.norm.cdf(u))   # from u to x
+    else:
+        raise RuntimeError('Incorrect distribution. Please create an ERADist/Nataf object!')
 
     # limit state funtion for the observation event (Ref.1 Eq.12)
     # log likelihood in standard space
-    log_L_fun = lambda u: log_likelihood(u2x(u[0:n-1]).flatten())
+    displacements_for_u = lambda u: get_displacement(u2x(u[0:n-1]).flatten())
+    log_L_fun = lambda displacements: log_likelihood(displacements)
 
     # LSF
     h_LSF = lambda pi_u, logl_hat, log_L: np.log(sp.stats.norm.cdf(pi_u)) + logl_hat - log_L
@@ -82,13 +83,16 @@ def aBUS_SuS(N, p0, log_likelihood, distr):
     # initialization of variables
     i        = 0                         # number of conditional level
     lam      = 0.6                       # initial scaling parameter \in (0,1)
-    max_it   = 5                        # maximum number of iterations
+    max_it   = 20                        # maximum number of iterations
     samplesU = {'seeds': list(),
                 'total': list()}
     samplesX = list()
     #
     geval = np.empty(N)                # space for the LSF evaluations
     leval = np.empty(N)                # space for the LSF evaluations
+    cur_displacements = np.empty(N)
+    gsort = np.empty((max_it+1, N))   # space for the sorted LSF evaluations
+    displacements = np.empty((max_it+1, N)) # space for the displacements
     h     = np.empty(max_it)           # space for the intermediate leveles
     prob  = np.empty(max_it)           # space for the failure probability at each level
 
@@ -96,26 +100,28 @@ def aBUS_SuS(N, p0, log_likelihood, distr):
     # initial MCS step
     print('Evaluating log-likelihood function ...\t', end='')
     u_j   = np.random.normal(size=(n,N))  # N samples from the prior distribution
-    leval = [log_L_fun(u_j[:,i]) for i in range(N)]
+    for i in range(N):
+        cur_displacements[i] = displacements_for_u(u_j[:,i])
+        leval[i] = log_L_fun(cur_displacements[i])
     leval = np.array(leval)
     print('Done!')
-    print(50*"=")
-    print(f"leval: {leval}")
     logl_hat = max(leval)   # =-log(c) (Ref.1 Alg.5 Part.3)
     print('Initial maximum log-likelihood: ', logl_hat)
 
+    i = 0
     # SuS stage
     h[i] = np.inf
-    while h[i] > 0:
+    # while h[i] > 0:
+    while i < max_it:
         # increase counter
-        i += 1
+        # i += 1
 
         # compute the limit state function (Ref.1 Eq.12)
         geval = h_LSF(u_j[-1,:], logl_hat, leval)   # evaluate LSF (Ref.1 Eq.12)
 
         # sort values in ascending order
         idx = np.argsort(geval)
-        # gsort[j,:] = geval[idx]
+        displacements[i] = cur_displacements[idx].flatten()
 
         # order the samples according to idx
         u_j_sort = u_j[:,idx]
@@ -123,10 +129,6 @@ def aBUS_SuS(N, p0, log_likelihood, distr):
 
         # intermediate level
         h[i] = np.percentile(geval, p0*100, interpolation='midpoint')
-        print(50*"=")
-        print(f"leval: {leval}")
-        print(f"geval: {geval}")
-        print(f"h[i]: {h[i]}")
 
         # number of failure points in the next level
         nF = int(sum(geval <= max(h[i],0)))
@@ -146,7 +148,7 @@ def aBUS_SuS(N, p0, log_likelihood, distr):
         samplesU['seeds'].append(seeds.T)         # store seeds
 
         # sampling process using adaptive conditional sampling
-        u_j, leval, lam, sigma, accrate = aCS_aBUS(N, lam, h[i], rnd_seeds, log_L_fun, logl_hat, h_LSF)
+        u_j, leval, lam, sigma, accrate, cur_displacements = aCS_aBUS(N, lam, h[i], rnd_seeds, log_L_fun, logl_hat, h_LSF, displacements_for_u)
         print('\t*aCS lambda =', lam, '\t*aCS sigma =', sigma[0], '\t*aCS accrate =', accrate)
 
         # update the value of the scaling constant (Ref.1 Alg.5 Part.4d)
@@ -159,17 +161,22 @@ def aBUS_SuS(N, p0, log_likelihood, distr):
         p = np.random.uniform(low=np.zeros(N),
                               high=np.min([np.ones(N), np.exp(leval - logl_hat + h[i])], axis=0))
         u_j[-1,:] = sp.stats.norm.ppf(p)   # to the standard space
-
+        i += 1
+        if h[i-1] <= 0:
+            break
     # number of intermediate levels
-    m = i
+    
 
     # store final posterior samples
     samplesU['total'].append(u_j.T)  # store final failure samples (non-ordered)
+    displacements[i] = cur_displacements
 
     # delete unnecesary data
-    if m < max_it:
+    if i < max_it:
+        m = i + 1
+        displacements = displacements[:m]
         prob = prob[:m]
-        h    = h[:m+1]
+        h    = h[:m]
 
     # acceptance probability and evidence (Ref.1 Alg.5 Part.6and7)
     log_p_acc = np.sum(np.log(prob))
@@ -177,8 +184,8 @@ def aBUS_SuS(N, p0, log_likelihood, distr):
     logcE    = log_p_acc+logl_hat     # exp(l) = max(likelihood)
 
     # transform the samples to the physical (original) space
-    for i in range(m+1):
+    for i in range(m):
         pp = sp.stats.norm.cdf(samplesU['total'][i][:,-1])
         samplesX.append(np.concatenate((u2x(samplesU['total'][i][:,:-1]), pp.reshape(-1,1)), axis=1))
 
-    return h, samplesU, samplesX, logcE, c, sigma
+    return h, samplesU, samplesX, logcE, c, sigma, displacements

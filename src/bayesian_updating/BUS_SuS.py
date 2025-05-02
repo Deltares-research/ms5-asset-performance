@@ -90,9 +90,9 @@ def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr):
     #
     geval = np.empty(N)            # space for the LSF evaluations
     cur_displacements = np.empty(N)
-    gsort = np.empty((max_it,N))   # space for the sorted LSF evaluations
-    displacements = np.empty((max_it, N)) # space for the displacements
-    h     = np.empty(max_it)       # space for the intermediate leveles
+    gsort = np.empty((max_it+1, N))   # space for the sorted LSF evaluations
+    displacements = np.empty((max_it+1, N)) # space for the displacements
+    h     = np.empty(max_it+1)       # space for the intermediate leveles
     prob  = np.empty(max_it)       # space for the failure probability at each level
 
     # BUS-SuS procedure
@@ -108,68 +108,83 @@ def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr):
 
     print('OK!')
 
-    while j < max_it: # h[j] > 0: # and j < max_it):
+    # SuS stage
+    h[j] = np.inf  # Initial threshold
+    
+    # Main SuS loop
+    while j < max_it:
         # sort values in ascending order
-        idx        = np.argsort(geval)
+        idx = np.argsort(geval)
         gsort[j,:] = geval[idx].flatten()  # store the sorted values
-        displacements[j] = cur_displacements.flatten()  # store the sorted values
+        displacements[j,:] = cur_displacements[idx].flatten()  # store the sorted values
+        
         # order the samples according to idx
         u_j_sort = u_j[:,idx]
         samplesU['total'].append(u_j_sort.T)   # store the ordered samples
 
-        h[j] = np.percentile(geval, p0*100, interpolation='midpoint')
         # intermediate level
+        h[j] = np.percentile(geval, p0*100, interpolation='midpoint')
+        print(f"Threshold intermediate level {j} = {h[j]}")
+        
         # number of failure points in the next level
         nF = int(sum(geval <= max(h[j],0)))
-
+        
         # assign conditional probability to the level
         if h[j] <= 0:
-            h[j]      = 0
+            h[j] = 0
             prob[j] = nF/N
+            print(f"Reached zero threshold at level {j}")
         else:
             prob[j] = p0
-        print('\n-Threshold intermediate level ', j, ' = ', h[j])
-
         
+        # Check if we have enough seeds for the next level
+        if nF < 1:
+            print(f"Warning: No seeds found for next level. Stopping at level {j}")
+            break
+            
         # select seeds and randomize the ordering (to avoid bias)
-        seeds     = u_j_sort[:,:nF]
-        idx_rnd   = np.random.permutation(nF)
+        seeds = u_j_sort[:,:nF]
+        idx_rnd = np.random.permutation(nF)
         rnd_seeds = seeds[:,idx_rnd]            # non-ordered seeds
-        samplesU['seeds'].append(seeds.T)         # store seeds
+        samplesU['seeds'].append(seeds.T)       # store seeds
 
         # sampling process using adaptive conditional sampling
-        u_j, geval, lam, sigma, accrate, cur_displacements = aCS(N, lam, h[j], rnd_seeds, h_LSF, displacement_for_u)
-        print('\t*aCS lambda =', lam, '\t*aCS sigma =', sigma[0], '\t*aCS accrate =', accrate)
-        j +=1
-        if h[j-1] == 0:
+        try:
+            u_j, geval, lam, sigma, accrate, cur_displacements = aCS(N, lam, h[j], rnd_seeds, h_LSF, displacement_for_u)
+            print(f"\t*aCS lambda = {lam}, *aCS sigma = {sigma[0]}, *aCS accrate = {accrate}")
+        except Exception as e:
+            print(f"Error in aCS: {e}")
             break
-        
+            
+        j += 1  # Move to next level
+        if h[j-1] <= 0:
+            break
+
     samplesU['total'].append(u_j.T)  # store final failure samples (non-ordered)
 
-    # store the final displacements
-    idx = np.argsort(geval)
-    gsort[j,:] = geval[idx].flatten()  # store the sorted values
-    print(50*"=")
-    print(f"displacements shape before: {displacements.shape}")
-    print(f"j: {j}")
-    displacements[j] = cur_displacements.flatten()  # store the sorted values
-    print(f"displacements shape after: {displacements.shape}")
-    # order the samples according to idx
-    u_j_sort = u_j[:,idx]
-
-    # delete unnecesary data
+    # store the final displacements for the last level
     if j < max_it:
-        m = j + 1
-        gsort = gsort[:m,:]
-        prob  = prob[:m]
-        displacements = displacements[:m]
-        h     = h[:m]
-
+        idx = np.argsort(geval)
+        gsort[j,:] = geval[idx].flatten()  # store the sorted values
+        displacements[j,:] = cur_displacements[idx].flatten()  # store the sorted values
+        
+    # actual number of levels (including prior level)
+    m = j + 1
+    
+    # trim arrays to actual size
+    gsort = gsort[:m,:]
+    displacements = displacements[:m,:]
+    h = h[:m]
+    
+    if j < max_it:
+        prob = prob[:j]
+    
     # acceptance probability and evidence
-    log_p_acc = np.sum(np.log(prob))
-    logcE    = log_p_acc-np.log(c)
-
+    log_p_acc = np.sum(np.log(prob[:j]))
+    logcE = log_p_acc - np.log(c)
+    
     # transform the samples to the physical (original) space
+    samplesX = []
     for i in range(m):
         pp = sp.stats.norm.cdf(samplesU['total'][i][:,-1])
         samplesX.append(np.concatenate((u2x(samplesU['total'][i][:,:-1]), pp.reshape(-1,1)), axis=1))

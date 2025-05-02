@@ -49,7 +49,7 @@ Based on:
 ---------------------------------------------------------------------------
 """
 
-def aCS_aBUS(N, lambd_old, tau, theta_seeds, log_L_fun, logl_hat, h_LSF):
+def aCS_aBUS(N, lambd_old, tau, theta_seeds, log_L_fun, logl_hat, h_LSF, displacements_for_u):
     n, Ns = theta_seeds.shape   # dimension and number of seeds
     
     # number of samples per chain
@@ -59,6 +59,7 @@ def aCS_aBUS(N, lambd_old, tau, theta_seeds, log_L_fun, logl_hat, h_LSF):
     # initialization
     theta_chain = np.zeros((n,N))         # generated samples 
     leval       = np.zeros(N)             # store lsf evaluations
+    displacements = np.zeros(N)
     acc         = np.zeros(N,dtype=int)   # store acceptance
 
     # initialization
@@ -94,7 +95,8 @@ def aCS_aBUS(N, lambd_old, tau, theta_seeds, log_L_fun, logl_hat, h_LSF):
         theta_chain[:,idx] = theta_seeds[:,k-1]
 
         # initial log-like evaluation
-        leval[idx] = log_L_fun(theta_chain[:,idx])
+        displacements[idx] = displacements_for_u(theta_chain[:,idx])
+        leval[idx] = log_L_fun(displacements[idx])
         
         for t in range(1, Nchain[k-1]): 
             # current state
@@ -104,7 +106,8 @@ def aCS_aBUS(N, lambd_old, tau, theta_seeds, log_L_fun, logl_hat, h_LSF):
             v_star = np.random.normal(loc=rho*theta_t, scale=sigma)    
             
             # evaluate loglikelihood function
-            log_l_star = log_L_fun(v_star)
+            displacements_star = displacements_for_u(v_star)
+            log_l_star = log_L_fun(displacements_star)
 
             # evaluate limit state function 
             heval = h_LSF(v_star[-1].reshape(-1), logl_hat, log_l_star)   # evaluate limit state function    
@@ -114,11 +117,12 @@ def aCS_aBUS(N, lambd_old, tau, theta_seeds, log_L_fun, logl_hat, h_LSF):
                 theta_chain[:,idx+t] = v_star       # accept the candidate in observation region           
                 leval[idx+t]         = log_l_star   # store the loglikelihood evaluation
                 acc[idx+t]           = 1            # note the acceptance
+                displacements[idx+t] = displacements_star
             else:
                 theta_chain[:,idx+t] = theta_t          # reject the candidate and use the same state
                 leval[idx+t]         = leval[idx+t-1]   # store the loglikelihood evaluation    
                 acc[idx+t]           = 0                # note the rejection
-
+                displacements[idx+t] = displacements[idx+t-1]
         # average of the accepted samples for each seed 'mu_acc'
         # here the warning "Mean of empty slice" is not an issue        
         with warnings.catch_warnings():
@@ -147,4 +151,4 @@ def aCS_aBUS(N, lambd_old, tau, theta_seeds, log_L_fun, logl_hat, h_LSF):
     # compute mean acceptance rate of all chains
     accrate = np.sum(acc)/(N-Ns)
 
-    return theta_chain, leval, new_lambda, sigma, accrate
+    return theta_chain, leval, new_lambda, sigma, accrate, displacements

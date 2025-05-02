@@ -54,8 +54,14 @@ class PosteriorRetainingStructure:
             self.synthetic_data = pd.read_csv(measurement_path)
         else:
             raise ValueError('Invalid file extension')
-        self.measured_displacement_mean = self.synthetic_data['displacement'].values
-        self.measured_displacement_sigma = self.synthetic_data['sigma'].values
+        # self.measured_displacement_mean = self.synthetic_data['displacement'].values
+        # self.measured_displacement_sigma = self.synthetic_data['sigma'].values
+        self.true_cohesion = 12
+        self.true_phi = 40
+        self.true_water_level = -0.7
+        self.measured_displacement_mean = self.fake_surrogate_function(parameters=[self.true_cohesion, self.true_phi, self.true_water_level])
+        self.measured_displacement_mean = np.array([self.measured_displacement_mean])
+        self.measured_displacement_sigma = [0.3]
 
     def define_parameters(self):
         # soil_layers = {"Klei": ("soilphi", "soilcohesion")}
@@ -63,8 +69,8 @@ class PosteriorRetainingStructure:
         # rv_water = MvnRV(mus=np.array([-0.8]), stds=np.array([0.08]), names=["water_A"])
         # state = GaussianState(rvs=[rv_strength, rv_water])
 
-        soil_cohesion = ERADist('normal', 'PAR', [30, 3])
-        soil_phi = ERADist('normal', 'PAR', [10, 1])
+        soil_cohesion = ERADist('normal', 'PAR', [10, 1])
+        soil_phi = ERADist('normal', 'PAR', [30, 3])
 
         water_level = ERADist('normal', 'PAR', [-0.8, 0.08])
             
@@ -122,37 +128,15 @@ class PosteriorRetainingStructure:
         # - More corrosion increases displacement
         Returns: 
             displacement: estimated displacement in cm
-        """
-        # Unpack parameters
-        cohesion = parameters[0]  # kPa
-        phi = parameters[1]       # degrees
-        water_level = parameters[2]  # m
-        
-        # Add corrosion factor if provided
-        corrosion = 1.0
-        if len(parameters) > 3:
-            corrosion = parameters[3]
-
-        # Base displacement value (cm)
-        base_displacement = 5.0
-        
-        # Parameter influence factors
-        cohesion_factor = 30.0 / (cohesion + 5.0)  # Inversely proportional to cohesion
-        phi_factor = 35.0 / (phi + 2.0)            # Inversely proportional to friction angle
-        water_factor = 1.5 * (water_level + 1.0)   # Directly proportional to water level
-        
-        # Calculate displacement with some non-linearity and parameter interaction
-        displacement = base_displacement * cohesion_factor * phi_factor * water_factor * corrosion
-
-        # Ensure displacement is positive
-        # print(f"Displacement: {displacement}")
-        displacement = max(0.1, displacement)
-        
-        # Add some noise to simulate model error
-        noise = np.random.normal(0, 0.05 * displacement)
-        displacement += noise
-        
-        return displacement
+        """        
+        # # Add some noise to simulate model error
+        # noise = np.random.normal(0, 0.1)
+        a = 12
+        b = 0.6
+        c = 0.4
+        d = 0.2
+        displacement = a + b * parameters[0] + c * parameters[1] + d * parameters[2]
+        return displacement # + noise
 
     
     def get_displacement_from_dsheet_model(self, updated_parameters: list[float], stage_id: int = -1):
@@ -233,7 +217,7 @@ class PosteriorRetainingStructure:
             c = self.find_c(method=1)
             h, samplesU, samplesX, logcE, sigma, displacement_samples = BUS_SuS(N, p0, c, self.log_likelihood_function_for_displacement, self.get_displacement_from_dsheet_model, distr = self.prior_pdf)
         elif approach == 'aBUS':
-            h, samplesU, samplesX, logcE, sigma = aBUS_SuS(N, p0, self.log_likelihood_function_for_parameters, self.prior_pdf)
+            h, samplesU, samplesX, logcE, c, sigma, displacement_samples = aBUS_SuS(N, p0, self.log_likelihood_function_for_displacement, self.get_displacement_from_dsheet_model, self.prior_pdf)
         else:
             raise ValueError('Invalid approach')
         
@@ -280,8 +264,7 @@ class PosteriorRetainingStructure:
         plt.figure(figsize=(12, 10))
         
         # Get prior samples
-        prior_samples = self.prior_pdf.random(1000)
-        
+        prior_samples = self.prior_pdf.random(1000)        
         # Get posterior samples if available
         try:
             posterior_samples = self.samplesX[-1]
@@ -302,37 +285,34 @@ class PosteriorRetainingStructure:
         
         # Plot displacement samples
         plt.subplot(self.dimensions+2, 2, 1)
-        # Prior KDE
-        # kde_prior = gaussian_kde(self.displacement_samples[0])
-        # min_displacement_0 = np.min(self.displacement_samples[0])
-        # max_displacement_0 = np.max(self.displacement_samples[0])
-        # min_displacement_1 = np.min(self.displacement_samples[-1])
-        # max_displacement_1 = np.max(self.displacement_samples[-1])
-        # min_displacement = min(min_displacement_0, min_displacement_1)
-        # max_displacement = max(max_displacement_0, max_displacement_1)
-        # x_range = np.linspace(min_displacement, max_displacement, 200)
-        # prior_density = kde_prior(x_range)
-        # plt.plot(x_range, prior_density, 'b-', linewidth=2, label='Prior')
-        # plt.fill_between(x_range, prior_density, alpha=0.1, color='blue')      
-        plt.hist(self.displacement_samples[0], density=True, stacked=True, alpha=0.5, color='blue', label='Prior')
         
-        # Posterior KDE
-        # kde_post = gaussian_kde(self.displacement_samples[-1])
-        # post_density = kde_post(x_range)
-        # plt.plot(x_range, post_density, 'r-', linewidth=2, label='Posterior')
-        # plt.fill_between(x_range, post_density, alpha=0.3, color='red')
-        plt.hist(self.displacement_samples[-1], density=True, stacked=True, alpha=0.5, color='red', label='Posterior')
-        # Add measured displacement lines
-        for measured_displacement in self.measured_displacement_mean:
-            plt.axvline(measured_displacement, color='blue', linestyle='--', label=f'Measured displacement:{measured_displacement:.2f}')
-        # plt.axvline(np.mean(posterior_samples[:, i]), color='red', linestyle='--', 
-                #    label=f'Posterior mean: {np.mean(posterior_samples[:, i]):.2f}')
+        # Make sure displacement_samples exists and has the right shape
+        if hasattr(self, 'displacement_samples') and len(self.displacement_samples) > 1:
+            # For the prior (first level)
+            prior_displacements = self.displacement_samples[0]
+            plt.hist(prior_displacements, density=True, bins=20, 
+                     alpha=0.5, color='blue', label='Prior')
+            
+            # For the posterior (last level)
+            posterior_displacements = self.displacement_samples[-1]
+            plt.hist(posterior_displacements, density=True, bins=20,
+                     alpha=0.5, color='red', label='Posterior')
+            
+            # Add measured displacement lines
+            for i, measured_displacement in enumerate(self.measured_displacement_mean):
+                plt.axvline(measured_displacement, color='blue', linestyle='--',
+                           label=f'Measured: {measured_displacement:.2f}' if i == 0 else None)
+        else:
+            plt.text(0.5, 0.5, "No displacement samples available", 
+                    horizontalalignment='center', verticalalignment='center')
         
         plt.title(f'Marginal PDF of the displacement')
         plt.xlabel('Displacement [cm]')
         plt.ylabel('Density')
         plt.grid(True, alpha=0.3)
-        # plt.legend()
+        plt.legend()
+
+        true_parameters = [self.true_cohesion, self.true_phi, self.true_water_level]
 
         # Plot each parameter's marginal distribution
         for i in range(self.dimensions):
@@ -350,6 +330,9 @@ class PosteriorRetainingStructure:
             post_density = kde_post(x_range)
             plt.plot(x_range, post_density, 'r-', linewidth=2, label='Posterior')
             plt.fill_between(x_range, post_density, alpha=0.3, color='red')
+
+            # Add mean lines
+            plt.axvline(true_parameters[i], color='blue', linestyle='--', label=f'True {self.parameter_names[i]}')
             # plt.hist(posterior_samples[:, i], density=True, alpha=0.5, color='red', label='Posterior')
             # Add mean lines
             # plt.axvline(np.mean(prior_samples[:, i]), color='blue', linestyle='--', 
