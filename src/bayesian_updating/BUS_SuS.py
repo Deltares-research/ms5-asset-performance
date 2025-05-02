@@ -96,6 +96,7 @@ def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr):
     prob  = np.empty(max_it)       # space for the failure probability at each level
 
     # BUS-SuS procedure
+    
     # initial MCS step
     print('Evaluating performance function:\t', end='')
     u_j   = np.random.normal(0,1,size=(n,N))      # samples in the standard space
@@ -104,22 +105,20 @@ def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr):
         cur_displacements[i] = displacement_for_u(u_j[:,i])
         geval[i] = h_LSF(u_j[-1,i], cur_displacements[i])  # evaluate the LSF
     geval = np.array(geval)
+
     print('OK!')
 
-    # SuS stage
-    h[j] = np.inf
     while j < max_it: # h[j] > 0: # and j < max_it):
         # sort values in ascending order
         idx        = np.argsort(geval)
         gsort[j,:] = geval[idx].flatten()  # store the sorted values
-        displacements[j,:] = cur_displacements.flatten()  # store the sorted values
+        displacements[j] = cur_displacements.flatten()  # store the sorted values
         # order the samples according to idx
         u_j_sort = u_j[:,idx]
         samplesU['total'].append(u_j_sort.T)   # store the ordered samples
 
-        # intermediate level
         h[j] = np.percentile(geval, p0*100, interpolation='midpoint')
-        print(f"h[j]: {h[j]}")
+        # intermediate level
         # number of failure points in the next level
         nF = int(sum(geval <= max(h[j],0)))
 
@@ -140,30 +139,38 @@ def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr):
 
         # sampling process using adaptive conditional sampling
         u_j, geval, lam, sigma, accrate, cur_displacements = aCS(N, lam, h[j], rnd_seeds, h_LSF, displacement_for_u)
-        # print(50*"=")
-        # print(50*"=")
-        # print(f'acs displacement samples: {cur_displacements}')
         print('\t*aCS lambda =', lam, '\t*aCS sigma =', sigma[0], '\t*aCS accrate =', accrate)
-        if h[j] == 0:
-            break
         j +=1
+        if h[j-1] == 0:
+            break
         
-    m = j
     samplesU['total'].append(u_j.T)  # store final failure samples (non-ordered)
 
+    # store the final displacements
+    idx = np.argsort(geval)
+    gsort[j,:] = geval[idx].flatten()  # store the sorted values
+    print(50*"=")
+    print(f"displacements shape before: {displacements.shape}")
+    print(f"j: {j}")
+    displacements[j] = cur_displacements.flatten()  # store the sorted values
+    print(f"displacements shape after: {displacements.shape}")
+    # order the samples according to idx
+    u_j_sort = u_j[:,idx]
+
     # delete unnecesary data
-    if m < max_it:
+    if j < max_it:
+        m = j + 1
         gsort = gsort[:m,:]
         prob  = prob[:m]
-        displacements = displacements[:m,:]
-        h     = h[:m+1]
+        displacements = displacements[:m]
+        h     = h[:m]
 
     # acceptance probability and evidence
     log_p_acc = np.sum(np.log(prob))
     logcE    = log_p_acc-np.log(c)
 
     # transform the samples to the physical (original) space
-    for i in range(m+1):
+    for i in range(m):
         pp = sp.stats.norm.cdf(samplesU['total'][i][:,-1])
         samplesX.append(np.concatenate((u2x(samplesU['total'][i][:,:-1]), pp.reshape(-1,1)), axis=1))
 

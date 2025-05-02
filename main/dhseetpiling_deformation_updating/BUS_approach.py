@@ -6,39 +6,41 @@ from scipy.stats import norm
 
 import sys
 import os
-# Add the ERAgroup directory to the path if needed
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.append(os.path.join(os.path.dirname(__file__), '..\\..'))
+# Add the project root directory to the path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, '../..'))
+sys.path.append(project_root)
+
+# Import required modules
 from src.bayesian_updating.ERADist import ERADist
 from src.bayesian_updating.ERANataf import ERANataf
 from src.bayesian_updating.BUS_SuS import BUS_SuS
 from src.bayesian_updating.aBUS_SuS import aBUS_SuS
-from src.reliability_models.dsheetpiling.lsf import unpack_soil_params, unpack_water_params
+# from src.reliability_models.dsheetpiling.lsf import unpack_soil_params, unpack_water_params
 # from src.bayesian_updating.aCS import aCS
-from src.geotechnical_models.dsheetpiling.model import DSheetPiling
+# from src.geotechnical_models.dsheetpiling.model import DSheetPiling
 import pandas as pd
 
 
 class PosteriorRetainingStructure:
     
-    def __init__(self, model_path: str, measurement_path: str):
+    def __init__(self, model_path: str, measurement_path: str, use_surrogate: bool = True):
         """
         Initialize the PosteriorRetainingStructure class
 
         Args:
-            input_samples (dict): Dictionary containing input samples with subdictionaries for soil properties, site conditions, and retaining structure properties
-            output_samples (dict): Dictionary containing output samples with subdictionaries for displacement and moments
+            model_path (str): Path to the DSheetPiling model file
+            measurement_path (str): Path to the measurement data file
+            use_surrogate (bool): Whether to use the fake surrogate model instead of DSheetPiling
         """
-        self.model = DSheetPiling(model_path)
-        result_path = r"results/results.json"
-        # soil_data = {"Klei": {"soilcohesion": 10.}}
-        # # water_data = {"A": +1.}
-        # load_data = {"load": (15, 0.)}
-
-        # self.model.update_soils(soil_data)
-        # # self.model.update_water(water_data)
-        # self.model.update_uniform_loads(load_data)
-        # self.model.execute(result_path)
+        self.use_surrogate = use_surrogate
+        
+        if not use_surrogate:
+            # Only import and initialize DSheetPiling if we're not using the surrogate
+            from src.geotechnical_models.dsheetpiling.model import DSheetPiling
+            self.model = DSheetPiling(model_path)
+            result_path = r"results/results.json"
+        
         self.load_synthetic_data(measurement_path)
         self.define_parameters()
 
@@ -102,16 +104,71 @@ class PosteriorRetainingStructure:
         """
         likelihood, displacement = self.likelihood_function_for_parameters(parameters.T)
         return np.log(likelihood), displacement
+
+    def fake_surrogate_function(self, parameters: list[float]):
+        """
+        Fake surrogate function for given parameters
+        parameters: list of parameters
+        parameters[0]: soil cohesion
+        parameters[1]: soil phi (friction angle)
+        parameters[2]: water level
+        Optional: parameters[3]: corrosion
+        
+        # Base displacement value dependent on key parameters
+        # Realistic effects:
+        # - Higher cohesion reduces displacement
+        # - Higher friction angle reduces displacement
+        # - Higher water level (less negative) increases displacement
+        # - More corrosion increases displacement
+        Returns: 
+            displacement: estimated displacement in cm
+        """
+        # Unpack parameters
+        cohesion = parameters[0]  # kPa
+        phi = parameters[1]       # degrees
+        water_level = parameters[2]  # m
+        
+        # Add corrosion factor if provided
+        corrosion = 1.0
+        if len(parameters) > 3:
+            corrosion = parameters[3]
+
+        # Base displacement value (cm)
+        base_displacement = 5.0
+        
+        # Parameter influence factors
+        cohesion_factor = 30.0 / (cohesion + 5.0)  # Inversely proportional to cohesion
+        phi_factor = 35.0 / (phi + 2.0)            # Inversely proportional to friction angle
+        water_factor = 1.5 * (water_level + 1.0)   # Directly proportional to water level
+        
+        # Calculate displacement with some non-linearity and parameter interaction
+        displacement = base_displacement * cohesion_factor * phi_factor * water_factor * corrosion
+
+        # Ensure displacement is positive
+        # print(f"Displacement: {displacement}")
+        displacement = max(0.1, displacement)
+        
+        # Add some noise to simulate model error
+        noise = np.random.normal(0, 0.05 * displacement)
+        displacement += noise
+        
+        return displacement
+
     
     def get_displacement_from_dsheet_model(self, updated_parameters: list[float], stage_id: int = -1):
         """
-        Run the Dsheet analysis for given parameters
+        Run the Dsheet analysis for given parameters or use the surrogate model
         updated_parameters: list of parameters with
         updated_parameters[0]: soil cohesion
         updated_parameters[1]: soil phi
         updated_parameters[2]: water level
         Optional: updated_parameters[3]: corrosion
         """
+        # If surrogate mode is enabled, use the fake surrogate function
+        if hasattr(self, 'use_surrogate') and self.use_surrogate:
+            return self.fake_surrogate_function(updated_parameters)
+            
+        # Otherwise use the actual DSheetPiling model
         # Pair parameters with names
         params = {name: rv for (name, rv) in zip(self.parameter_names, updated_parameters)}
         
@@ -120,10 +177,6 @@ class PosteriorRetainingStructure:
         
         self.model.update_soils(soil_data)
         self.model.update_water(water_data)
-        # mkdir results folder if it does not exist
-        # result_path = r"./results_BUS"
-        # if not os.path.exists(result_path):
-            # os.makedirs(result_path)
         self.model.execute(i_run=0)
         
         #TODO: Get the displacement
@@ -191,9 +244,6 @@ class PosteriorRetainingStructure:
         self.logcE = logcE
         self.sigma = sigma
         self.displacement_samples = displacement_samples
-        
-        print(50*"=")
-        print(f"Displacement samples: {self.displacement_samples}")
 
         # Save all samples in a dictionary
         self.sample_results = {
@@ -263,11 +313,7 @@ class PosteriorRetainingStructure:
         # x_range = np.linspace(min_displacement, max_displacement, 200)
         # prior_density = kde_prior(x_range)
         # plt.plot(x_range, prior_density, 'b-', linewidth=2, label='Prior')
-        # plt.fill_between(x_range, prior_density, alpha=0.1, color='blue') 
-        print(50*"=")
-        print(f"All Displacement samples: {self.displacement_samples}")
-        print(f"Prior Displacement samples: {self.displacement_samples[0]}")
-        print(f"Posterior Displacement samples: {self.displacement_samples[-1]}")       
+        # plt.fill_between(x_range, prior_density, alpha=0.1, color='blue')      
         plt.hist(self.displacement_samples[0], density=True, stacked=True, alpha=0.5, color='blue', label='Prior')
         
         # Posterior KDE
@@ -486,14 +532,35 @@ class PosteriorRetainingStructure:
 
 
 if __name__ == '__main__':    
-    # model_path = "C:\\Users\\cotoarba\\ms5-asset-performance\\examples\\dummy.shi
-    model_path = "C:\\Users\\cotoarba\\OneDrive - Stichting Deltares\\Desktop\\dummy_123.shi"
-    # model_path = "C:\\Users\\cotoarba\\OneDrive - Stichting Deltares\\Desktop\\random-file.shi"
-    # model_path = "C:\\Users\\cotoarba\\OneDrive - Stichting Deltares\\Desktop\\N60_3_5-060514-red-version24.shi"
-    # model_path = os.path(mmodel_path)
-    measurement_path = os.path.join(os.path.dirname(__file__), 'synthetic_measurement_data.json')
-    posterior_retention_structure = PosteriorRetainingStructure(model_path, measurement_path)
+    # Use a dummy model path when using surrogate model
+    model_path = "dummy_model.shi"
+    
+    # Get measurement data path relative to the script
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    measurement_path = os.path.join(current_dir, 'synthetic_measurement_data.json')
+    
+    # Make sure the measurement data file exists
+    if not os.path.exists(measurement_path):
+        print(f"Warning: Measurement data file not found at {measurement_path}")
+        print("Creating a dummy measurement data file...")
+        
+        # Create dummy measurement data
+        import json
+        dummy_data = [
+            {"displacement": 7.5, "sigma": 0.1},
+            # {"displacement": 2.7, "sigma": 0.15},
+            # {"displacement": 2.6, "sigma": 0.12}
+        ]
+        os.makedirs(os.path.dirname(measurement_path), exist_ok=True)
+        with open(measurement_path, 'w') as f:
+            json.dump(dummy_data, f)
+    
+    # Initialize with surrogate model
+    posterior_retention_structure = PosteriorRetainingStructure(
+        model_path, measurement_path, use_surrogate=True
+    )
+    
     posterior_retention_structure.define_parameters()
-    posterior_retention_structure.update_for_new_displacement_data(N=100, p0=0.1, approach='BUS')
+    posterior_retention_structure.update_for_new_displacement_data(N=1000, p0=0.1, approach='BUS')
     posterior_retention_structure.plot_prior_and_posterior_marginal_pdfs()
     # posterior_retention_structure.plot_posterior_samples()
