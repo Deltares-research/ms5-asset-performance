@@ -290,5 +290,5 @@ if __name__ == "__main__":
 
     with open(r"results/posterior_results.json", "r") as f: posterior_dict = json.load(f)
     posterior_results = PosteriorResults(**posterior_dict)
-    plot_posterior(posterior_results, r"results/posterior.png")
+    plot_posterior(posterior_results, r"figs/posterior.png")
 
