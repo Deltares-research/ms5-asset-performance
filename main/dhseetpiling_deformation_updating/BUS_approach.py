@@ -2,8 +2,7 @@ from typing import Optional, Callable
 import numpy as np
 import scipy as sp
 from scipy.stats import multivariate_normal as mvn
-from scipy.stats import norm as norm
-
+from scipy.stats import norm
 
 import sys
 import os
@@ -32,14 +31,14 @@ class PosteriorRetainingStructure:
         """
         self.model = DSheetPiling(model_path)
         result_path = r"results/results.json"
-        soil_data = {"Klei": {"soilcohesion": 10.}}
-        # water_data = {"A": +1.}
-        load_data = {"load": (15, 0.)}
+        # soil_data = {"Klei": {"soilcohesion": 10.}}
+        # # water_data = {"A": +1.}
+        # load_data = {"load": (15, 0.)}
 
-        self.model.update_soils(soil_data)
-        # self.model.update_water(water_data)
-        self.model.update_uniform_loads(load_data)
-        self.model.execute(result_path)
+        # self.model.update_soils(soil_data)
+        # # self.model.update_water(water_data)
+        # self.model.update_uniform_loads(load_data)
+        # self.model.execute(result_path)
         self.load_synthetic_data(measurement_path)
         self.define_parameters()
 
@@ -79,16 +78,15 @@ class PosteriorRetainingStructure:
         """
         Likelihood function for displacement
         """
-        return norm.pdf(displacement_sample, self.measured_displacement_mean, self.measured_displacement_sigma)
+        n = self.measured_displacement_mean.shape[0]
+        w = 1 / n * np.ones(n)  # uniform weights
+        # return norm.pdf(displacement_sample, self.measured_displacement_mean, self.measured_displacement_sigma)    
+        return float(sum(w[i]*norm.pdf(displacement_sample, self.measured_displacement_mean[i], self.measured_displacement_sigma) for i in range(n))[0])
     
     def log_likelihood_function_for_displacement(self, displacement_sample: float):
         """
         Log likelihood function for displacement
         """
-        print(50*"=")
-        print('Displacement sample:', displacement_sample)
-        print("Results of the likelihood function:", self.likelihood_function_for_displacement(displacement_sample))
-        print("Log of the likelihood function:", np.log(self.likelihood_function_for_displacement(displacement_sample)))
         return np.log(self.likelihood_function_for_displacement(displacement_sample))
     
     def likelihood_function_for_parameters(self, parameters: list[float]):
@@ -96,13 +94,14 @@ class PosteriorRetainingStructure:
         Likelihood function for parameters
         """
         displacement = self.get_displacement_from_dsheet_model(parameters)
-        return self.likelihood_function_for_displacement(displacement)
+        return self.likelihood_function_for_displacement(displacement), displacement
     
     def log_likelihood_function_for_parameters(self, parameters: list[float]):
         """
         Log likelihood function for parameters
         """
-        return np.log(self.likelihood_function_for_parameters(parameters))
+        likelihood, displacement = self.likelihood_function_for_parameters(parameters.T)
+        return np.log(likelihood), displacement
     
     def get_displacement_from_dsheet_model(self, updated_parameters: list[float], stage_id: int = -1):
         """
@@ -121,7 +120,11 @@ class PosteriorRetainingStructure:
         
         self.model.update_soils(soil_data)
         self.model.update_water(water_data)
-        self.model.execute()
+        # mkdir results folder if it does not exist
+        # result_path = r"./results_BUS"
+        # if not os.path.exists(result_path):
+            # os.makedirs(result_path)
+        self.model.execute(i_run=0)
         
         #TODO: Get the displacement
         results = self.model.results
@@ -167,7 +170,7 @@ class PosteriorRetainingStructure:
             raise RuntimeError('Finding the scale constant c requires -method- 1, 2 or 3')
 
     def update_for_new_displacement_data(self, N: int = 1000, p0: float = 0.1,
-                                         approach: str = 'aBUS'):
+                                         approach: str = 'BUS'):
         """
         Update the posterior for new data
         """
@@ -175,7 +178,7 @@ class PosteriorRetainingStructure:
         if approach == 'BUS':
             # find c
             c = self.find_c(method=1)
-            h, samplesU, samplesX, logcE, sigma = BUS_SuS(N, p0, c, self.log_likelihood_function_for_displacement, self.prior_pdf)
+            h, samplesU, samplesX, logcE, sigma, displacement_samples = BUS_SuS(N, p0, c, self.log_likelihood_function_for_displacement, self.get_displacement_from_dsheet_model, distr = self.prior_pdf)
         elif approach == 'aBUS':
             h, samplesU, samplesX, logcE, sigma = aBUS_SuS(N, p0, self.log_likelihood_function_for_parameters, self.prior_pdf)
         else:
@@ -187,7 +190,24 @@ class PosteriorRetainingStructure:
         self.samplesX = samplesX
         self.logcE = logcE
         self.sigma = sigma
+        self.displacement_samples = displacement_samples
         
+        print(50*"=")
+        print(f"Displacement samples: {self.displacement_samples}")
+
+        # Save all samples in a dictionary
+        self.sample_results = {
+            'samplesU': samplesU,
+            'samplesX': samplesX,
+            'logcE': logcE,
+            'sigma': sigma,
+            'displacement_samples': displacement_samples
+        }
+        # Create the results directory if it doesn't exist
+        os.makedirs('results', exist_ok=True)
+        # Save the results to a JSON file
+        result_path = r"results/results_run_n100_maxit_5.npz"
+        np.savez(result_path, **self.sample_results)
         # Print summary statistics
         print('\nModel evidence =', np.exp(logcE), '\n')
         for i in range(self.dimensions):
@@ -230,9 +250,47 @@ class PosteriorRetainingStructure:
             padding = 0.1 * (param_max - param_min)
             param_ranges.append([param_min - padding, param_max + padding])
         
+        # Plot displacement samples
+        plt.subplot(self.dimensions+2, 2, 1)
+        # Prior KDE
+        # kde_prior = gaussian_kde(self.displacement_samples[0])
+        # min_displacement_0 = np.min(self.displacement_samples[0])
+        # max_displacement_0 = np.max(self.displacement_samples[0])
+        # min_displacement_1 = np.min(self.displacement_samples[-1])
+        # max_displacement_1 = np.max(self.displacement_samples[-1])
+        # min_displacement = min(min_displacement_0, min_displacement_1)
+        # max_displacement = max(max_displacement_0, max_displacement_1)
+        # x_range = np.linspace(min_displacement, max_displacement, 200)
+        # prior_density = kde_prior(x_range)
+        # plt.plot(x_range, prior_density, 'b-', linewidth=2, label='Prior')
+        # plt.fill_between(x_range, prior_density, alpha=0.1, color='blue') 
+        print(50*"=")
+        print(f"All Displacement samples: {self.displacement_samples}")
+        print(f"Prior Displacement samples: {self.displacement_samples[0]}")
+        print(f"Posterior Displacement samples: {self.displacement_samples[-1]}")       
+        plt.hist(self.displacement_samples[0], density=True, stacked=True, alpha=0.5, color='blue', label='Prior')
+        
+        # Posterior KDE
+        # kde_post = gaussian_kde(self.displacement_samples[-1])
+        # post_density = kde_post(x_range)
+        # plt.plot(x_range, post_density, 'r-', linewidth=2, label='Posterior')
+        # plt.fill_between(x_range, post_density, alpha=0.3, color='red')
+        plt.hist(self.displacement_samples[-1], density=True, stacked=True, alpha=0.5, color='red', label='Posterior')
+        # Add measured displacement lines
+        for measured_displacement in self.measured_displacement_mean:
+            plt.axvline(measured_displacement, color='blue', linestyle='--', label=f'Measured displacement:{measured_displacement:.2f}')
+        # plt.axvline(np.mean(posterior_samples[:, i]), color='red', linestyle='--', 
+                #    label=f'Posterior mean: {np.mean(posterior_samples[:, i]):.2f}')
+        
+        plt.title(f'Marginal PDF of the displacement')
+        plt.xlabel('Displacement [cm]')
+        plt.ylabel('Density')
+        plt.grid(True, alpha=0.3)
+        # plt.legend()
+
         # Plot each parameter's marginal distribution
         for i in range(self.dimensions):
-            plt.subplot(self.dimensions, 2, 2*i+1)
+            plt.subplot(self.dimensions+2, 2, 2*i+3)
             
             # Prior KDE
             kde_prior = gaussian_kde(prior_samples[:, i])
@@ -246,12 +304,12 @@ class PosteriorRetainingStructure:
             post_density = kde_post(x_range)
             plt.plot(x_range, post_density, 'r-', linewidth=2, label='Posterior')
             plt.fill_between(x_range, post_density, alpha=0.3, color='red')
-            
+            # plt.hist(posterior_samples[:, i], density=True, alpha=0.5, color='red', label='Posterior')
             # Add mean lines
-            plt.axvline(np.mean(prior_samples[:, i]), color='blue', linestyle='--', 
-                       label=f'Prior mean: {np.mean(prior_samples[:, i]):.2f}')
-            plt.axvline(np.mean(posterior_samples[:, i]), color='red', linestyle='--', 
-                       label=f'Posterior mean: {np.mean(posterior_samples[:, i]):.2f}')
+            # plt.axvline(np.mean(prior_samples[:, i]), color='blue', linestyle='--', 
+                    #    label=f'Prior mean: {np.mean(prior_samples[:, i]):.2f}')
+            # plt.axvline(np.mean(posterior_samples[:, i]), color='red', linestyle='--', 
+                    #    label=f'Posterior mean: {np.mean(posterior_samples[:, i]):.2f}')
             
             plt.title(f'Marginal PDF of {self.parameter_names[i]}')
             plt.xlabel(self.parameter_names[i])
@@ -260,15 +318,16 @@ class PosteriorRetainingStructure:
             plt.legend()
             
             # Add cumulative distribution function
-            plt.subplot(self.dimensions, 2, 2*i+2)
+            plt.subplot(self.dimensions+2, 2, 2*i+4)
             
             # Sort samples for CDF
             prior_sorted = np.sort(prior_samples[:, i])
             posterior_sorted = np.sort(posterior_samples[:, i])
             p = np.linspace(0, 1, len(prior_sorted))
+            pp = np.linspace(0, 1, len(posterior_sorted))
             
             plt.plot(prior_sorted, p, 'b-', linewidth=2, label='Prior CDF')
-            plt.plot(posterior_sorted, p, 'r-', linewidth=2, label='Posterior CDF')
+            plt.plot(posterior_sorted, pp, 'r-', linewidth=2, label='Posterior CDF')
             
             plt.title(f'Cumulative Distribution of {self.parameter_names[i]}')
             plt.xlabel(self.parameter_names[i])
@@ -427,11 +486,14 @@ class PosteriorRetainingStructure:
 
 
 if __name__ == '__main__':    
-    model_path = "C:\\Users\\cotoarba\\ms5-asset-performance\\examples\\dummy.shi"
+    # model_path = "C:\\Users\\cotoarba\\ms5-asset-performance\\examples\\dummy.shi
+    model_path = "C:\\Users\\cotoarba\\OneDrive - Stichting Deltares\\Desktop\\dummy_123.shi"
+    # model_path = "C:\\Users\\cotoarba\\OneDrive - Stichting Deltares\\Desktop\\random-file.shi"
+    # model_path = "C:\\Users\\cotoarba\\OneDrive - Stichting Deltares\\Desktop\\N60_3_5-060514-red-version24.shi"
     # model_path = os.path(mmodel_path)
     measurement_path = os.path.join(os.path.dirname(__file__), 'synthetic_measurement_data.json')
     posterior_retention_structure = PosteriorRetainingStructure(model_path, measurement_path)
     posterior_retention_structure.define_parameters()
-    posterior_retention_structure.update_for_new_displacement_data(N=10, p0=0.1, approach='aBUS')
+    posterior_retention_structure.update_for_new_displacement_data(N=100, p0=0.1, approach='BUS')
     posterior_retention_structure.plot_prior_and_posterior_marginal_pdfs()
-    posterior_retention_structure.plot_posterior_samples()
+    # posterior_retention_structure.plot_posterior_samples()

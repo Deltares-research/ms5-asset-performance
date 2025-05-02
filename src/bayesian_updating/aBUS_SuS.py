@@ -3,12 +3,12 @@ import scipy as sp
 np.seterr(all='ignore')
 
 # Make sure to include aCS.py in your workspace
-from aCS_aBUS import aCS_aBUS
+from src.bayesian_updating.aCS_aBUS import aCS_aBUS
 
 # Make sure ERADist, ERANataf classes are in the path
 # https://www.bgu.tum.de/era/software/eradist/
-from ERADist import ERADist
-from ERANataf import ERANataf
+from src.bayesian_updating.ERADist import ERADist
+from src.bayesian_updating.ERANataf import ERANataf
 
 """
 ---------------------------------------------------------------------------
@@ -57,9 +57,6 @@ def aBUS_SuS(N, p0, log_likelihood, distr):
     if (N*p0 != np.fix(N*p0)) or (1/p0 != np.fix(1/p0)):
         raise RuntimeError('N*p0 and 1/p0 must be positive integers. Adjust N and p0 accordingly')
 
-    print(50*'-')
-    print('Adaptive Bayesian Updating with Subset Simulation')
-    print(f"Distribution: {distr}")
     # initial check if there exists a Nataf object
     # if isinstance(distr, ERANataf):    # use Nataf transform (dependence)
     n   = len(distr.Marginals)+1   # number of random variables + p Uniform variable of BUS
@@ -126,6 +123,10 @@ def aBUS_SuS(N, p0, log_likelihood, distr):
 
         # intermediate level
         h[i] = np.percentile(geval, p0*100, interpolation='midpoint')
+        print(50*"=")
+        print(f"leval: {leval}")
+        print(f"geval: {geval}")
+        print(f"h[i]: {h[i]}")
 
         # number of failure points in the next level
         nF = int(sum(geval <= max(h[i],0)))

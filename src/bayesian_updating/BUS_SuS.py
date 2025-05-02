@@ -3,15 +3,15 @@ import scipy as sp
 np.seterr(all='ignore')
 
 # Make sure to include aCS.py in your workspace
-import os
-import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
-from aCS import aCS
-
+# import os
+# import sys
+# sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
+from src.bayesian_updating.aCS import aCS
 # Make sure ERADist, ERANataf classes are in the path
 # https://www.bgu.tum.de/era/software/eradist/
-from ERADist import ERADist
-from ERANataf import ERANataf
+from src.bayesian_updating.ERADist import ERADist
+from src.bayesian_updating.ERANataf import ERANataf
+# from ERANataf import ERANataf
 
 """
 ---------------------------------------------------------------------------
@@ -56,7 +56,7 @@ Based on:
 ---------------------------------------------------------------------------
 """
 
-def BUS_SuS(N, p0, c, log_likelihood, distr):
+def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr):
     if (N*p0 != np.fix(N*p0)) or (1/p0 != np.fix(1/p0)):
         raise RuntimeError('N*p0 and 1/p0 must be positive integers. Adjust N and p0 accordingly')
 
@@ -75,18 +75,23 @@ def BUS_SuS(N, p0, c, log_likelihood, distr):
 
     # limit state function in the standard space
     ell   = np.log(1/c)
-    h_LSF = lambda u: np.log(sp.stats.norm.cdf(u[-1])) + ell - log_likelihood(u2x(u[0:n-1]).flatten())
+    displacement_for_u = lambda u: get_displacement(u2x(u[0:n-1]).flatten())
+    h_LSF = lambda u, displacement: np.log(sp.stats.norm.cdf(u)) + ell - log_likelihood(displacement)
+    # h_LSF = lambda u: np.log(sp.stats.norm.cdf(u[-1])) + ell - log_likelihood(u2x(u[0:n-1]).flatten())
 
     # initialization of variables
     j        = 0                         # number of conditional level
     lam      = 0.6                       # initial scaling parameter \in (0,1)
-    max_it   = 5                        # maximum number of iterations
+    max_it   = 20
+    sigma = 0                        # maximum number of iterations
     samplesU = {'seeds': list(),
                 'total': list()}
     samplesX = list()
     #
     geval = np.empty(N)            # space for the LSF evaluations
+    cur_displacements = np.empty(N)
     gsort = np.empty((max_it,N))   # space for the sorted LSF evaluations
+    displacements = np.empty((max_it, N)) # space for the displacements
     h     = np.empty(max_it)       # space for the intermediate leveles
     prob  = np.empty(max_it)       # space for the failure probability at each level
 
@@ -94,38 +99,39 @@ def BUS_SuS(N, p0, c, log_likelihood, distr):
     # initial MCS step
     print('Evaluating performance function:\t', end='')
     u_j   = np.random.normal(0,1,size=(n,N))      # samples in the standard space
-    geval = [h_LSF(u_j[:,i]) for i in range(N)]
+    # geval = [h_LSF(u_j[:,i]) for i in range(N)]
+    for i in range(N):
+        cur_displacements[i] = displacement_for_u(u_j[:,i])
+        geval[i] = h_LSF(u_j[-1,i], cur_displacements[i])  # evaluate the LSF
     geval = np.array(geval)
     print('OK!')
 
     # SuS stage
     h[j] = np.inf
-    while (h[j] > 0 and j < max_it):
-        # next level
-        j += 1
-
+    while j < max_it: # h[j] > 0: # and j < max_it):
         # sort values in ascending order
         idx        = np.argsort(geval)
-        gsort[j,:] = geval[idx]
-
+        gsort[j,:] = geval[idx].flatten()  # store the sorted values
+        displacements[j,:] = cur_displacements.flatten()  # store the sorted values
         # order the samples according to idx
         u_j_sort = u_j[:,idx]
         samplesU['total'].append(u_j_sort.T)   # store the ordered samples
 
         # intermediate level
         h[j] = np.percentile(geval, p0*100, interpolation='midpoint')
-
+        print(f"h[j]: {h[j]}")
         # number of failure points in the next level
         nF = int(sum(geval <= max(h[j],0)))
 
         # assign conditional probability to the level
         if h[j] <= 0:
             h[j]      = 0
-            prob[j-1] = nF/N
+            prob[j] = nF/N
         else:
-            prob[j-1] = p0
-        print('\n-Threshold intermediate level ', j-1, ' = ', h[j])
+            prob[j] = p0
+        print('\n-Threshold intermediate level ', j, ' = ', h[j])
 
+        
         # select seeds and randomize the ordering (to avoid bias)
         seeds     = u_j_sort[:,:nF]
         idx_rnd   = np.random.permutation(nF)
@@ -133,9 +139,15 @@ def BUS_SuS(N, p0, c, log_likelihood, distr):
         samplesU['seeds'].append(seeds.T)         # store seeds
 
         # sampling process using adaptive conditional sampling
-        u_j, geval, lam, sigma, accrate = aCS(N, lam, h[j], rnd_seeds, h_LSF)
+        u_j, geval, lam, sigma, accrate, cur_displacements = aCS(N, lam, h[j], rnd_seeds, h_LSF, displacement_for_u)
+        # print(50*"=")
+        # print(50*"=")
+        # print(f'acs displacement samples: {cur_displacements}')
         print('\t*aCS lambda =', lam, '\t*aCS sigma =', sigma[0], '\t*aCS accrate =', accrate)
-
+        if h[j] == 0:
+            break
+        j +=1
+        
     m = j
     samplesU['total'].append(u_j.T)  # store final failure samples (non-ordered)
 
@@ -143,6 +155,7 @@ def BUS_SuS(N, p0, c, log_likelihood, distr):
     if m < max_it:
         gsort = gsort[:m,:]
         prob  = prob[:m]
+        displacements = displacements[:m,:]
         h     = h[:m+1]
 
     # acceptance probability and evidence
@@ -154,4 +167,4 @@ def BUS_SuS(N, p0, c, log_likelihood, distr):
         pp = sp.stats.norm.cdf(samplesU['total'][i][:,-1])
         samplesX.append(np.concatenate((u2x(samplesU['total'][i][:,:-1]), pp.reshape(-1,1)), axis=1))
 
-    return h, samplesU, samplesX, logcE, sigma
+    return h, samplesU, samplesX, logcE, sigma, displacements
