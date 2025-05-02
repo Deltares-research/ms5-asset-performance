@@ -117,8 +117,6 @@ def draw_sample(
         path: str | Path
 ) -> None:
 
-    if not isinstance(path, Path): path = Path(Path(path).as_posix())
-
     rv_sample = sample_rvs(state, config)
 
     disp_sample, disp_noisy, moment_sample = sample_disp(rv_sample, state, model, config)
@@ -131,6 +129,8 @@ def draw_sample(
         "moment":[[None if np.isnan(x) else x for x in row] for row in moment_sample],
     })
 
+    if not isinstance(path, Path): path = Path(Path(path).as_posix())
+    if not path.exists(): os.mkdir(path)
     with open(path, "w") as f: json.dump(log, f, indent=4)
 
 
@@ -141,12 +141,12 @@ if __name__ == "__main__":
 
     soil_layers = {"Klei": ("soilphi", "soilcohesion")}
     rv_strength = MvnRV(mus=np.array([30, 10]), stds=np.array([3, 1]), names=["Klei_soilphi", "Klei_soilcohesion"])
-    rv_water = MvnRV(mus=np.array([-0.8]), stds=np.array([0.08]), names=["water_A"])
-    state = GaussianState(rvs=[rv_strength, rv_water])
+    # rv_water = MvnRV(mus=np.array([-0.8]), stds=np.array([0.08]), names=["water_A"])
+    state = GaussianState(rvs=[rv_strength])
 
     config = {
         "rv_pooling": "unpooled",
-        "n_locs": 10_000,
+        "n_locs": 1_000,
         "seed": 42,
         # "disp_dist_type": "lognormal",
         "disp_dist_type": "normal",
