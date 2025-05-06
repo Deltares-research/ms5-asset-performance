@@ -56,7 +56,7 @@ Based on:
 ---------------------------------------------------------------------------
 """
 
-def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr, max_it: int = 20):
+def BUS_SuS(N, p0, c, l_class, distr, max_it: int = 20):
     if (N*p0 != np.fix(N*p0)) or (1/p0 != np.fix(1/p0)):
         raise RuntimeError('N*p0 and 1/p0 must be positive integers. Adjust N and p0 accordingly')
 
@@ -75,9 +75,9 @@ def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr, max_it: int = 20)
 
     # limit state function in the standard space
     ell   = np.log(1/c)
-    displacement_for_u = lambda u: get_displacement(u2x(u[0:n-1]).flatten())
-    h_LSF = lambda u, displacement: np.log(sp.stats.norm.cdf(u)) + ell - log_likelihood(displacement)
-    # h_LSF = lambda u: np.log(sp.stats.norm.cdf(u[-1])) + ell - log_likelihood(u2x(u[0:n-1]).flatten())
+    # displacement_for_u = lambda u: get_displacement(u2x(u[0:n-1]).flatten())
+    # h_LSF = lambda u, displacement: np.log(sp.stats.norm.cdf(u)) + ell - log_likelihood(displacement)
+    h_LSF = lambda u, l_class_to_use: np.log(sp.stats.norm.cdf(u[-1])) + ell - l_class_to_use.compute_log_likelihood_for_parameters(u2x(u[0:n-1]).flatten())
 
     # initialization of variables
     j        = 0                         # number of conditional level
@@ -89,9 +89,9 @@ def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr, max_it: int = 20)
     samplesX = list()
     #
     geval = np.empty(N)            # space for the LSF evaluations
-    cur_displacements = np.empty(N)
+    cur_parameter_values = np.empty(N)
     gsort = np.empty((max_it+1, N))   # space for the sorted LSF evaluations
-    displacements = np.empty((max_it+1, N)) # space for the displacements
+    parameter_values = np.empty((max_it+1, N)) # space for the displacements
     h     = np.empty(max_it+1)       # space for the intermediate leveles
     prob  = np.empty(max_it)       # space for the failure probability at each level
 
@@ -102,8 +102,9 @@ def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr, max_it: int = 20)
     u_j   = np.random.normal(0,1,size=(n,N))      # samples in the standard space
     # geval = [h_LSF(u_j[:,i]) for i in range(N)]
     for i in range(N):
-        cur_displacements[i] = displacement_for_u(u_j[:,i])
-        geval[i] = h_LSF(u_j[-1,i], cur_displacements[i])  # evaluate the LSF
+        # cur_displacements[i] = displacement_for_u(u_j[:,i])
+        geval[i] = h_LSF(u_j[:,i], l_class)  # evaluate the LSF
+        cur_parameter_values[i] = l_class.parameter_value
     geval = np.array(geval)
     print('OK!')
 
@@ -115,7 +116,7 @@ def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr, max_it: int = 20)
         # sort values in ascending order
         idx = np.argsort(geval)
         gsort[j,:] = geval[idx].flatten()  # store the sorted values
-        displacements[j,:] = cur_displacements[idx].flatten()  # store the sorted values
+        parameter_values[j,:] = cur_parameter_values[idx].flatten()  # store the sorted values
         
         # order the samples according to idx
         u_j_sort = u_j[:,idx]
@@ -149,7 +150,7 @@ def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr, max_it: int = 20)
 
         # sampling process using adaptive conditional sampling
         try:
-            u_j, geval, lam, sigma, accrate, cur_displacements = aCS(N, lam, h[j], rnd_seeds, h_LSF, displacement_for_u)
+            u_j, geval, lam, sigma, accrate, cur_parameter_values = aCS(N, lam, h[j], rnd_seeds, h_LSF, l_class)
             print(f"\t*aCS lambda = {lam}, *aCS sigma = {sigma[0]}, *aCS accrate = {accrate}")
         except Exception as e:
             print(f"Error in aCS: {e}")
@@ -165,14 +166,14 @@ def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr, max_it: int = 20)
     if j < max_it:
         idx = np.argsort(geval)
         gsort[j,:] = geval[idx].flatten()  # store the sorted values
-        displacements[j,:] = cur_displacements[idx].flatten()  # store the sorted values
+        parameter_values[j,:] = cur_parameter_values[idx].flatten()  # store the sorted values
         
     # actual number of levels (including prior level)
     m = j + 1
     
     # trim arrays to actual size
     gsort = gsort[:m,:]
-    displacements = displacements[:m,:]
+    parameter_values = parameter_values[:m,:]
     h = h[:m]
     
     if j < max_it:
@@ -188,4 +189,4 @@ def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr, max_it: int = 20)
         pp = sp.stats.norm.cdf(samplesU['total'][i][:,-1])
         samplesX.append(np.concatenate((u2x(samplesU['total'][i][:,:-1]), pp.reshape(-1,1)), axis=1))
 
-    return h, samplesU, samplesX, logcE, sigma, displacements
+    return h, samplesU, samplesX, logcE, sigma, parameter_values

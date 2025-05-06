@@ -53,7 +53,7 @@ Based on:
 ---------------------------------------------------------------------------
 """
 
-def aBUS_SuS(N, p0, log_likelihood, get_displacement, distr, max_it: int = 20):
+def aBUS_SuS(N, p0, l_class, distr, max_it: int = 20):
     if (N*p0 != np.fix(N*p0)) or (1/p0 != np.fix(1/p0)):
         raise RuntimeError('N*p0 and 1/p0 must be positive integers. Adjust N and p0 accordingly')
 
@@ -72,8 +72,8 @@ def aBUS_SuS(N, p0, log_likelihood, get_displacement, distr, max_it: int = 20):
 
     # limit state funtion for the observation event (Ref.1 Eq.12)
     # log likelihood in standard space
-    displacements_for_u = lambda u: get_displacement(u2x(u[0:n-1]).flatten())
-    log_L_fun = lambda displacements: log_likelihood(displacements)
+    # displacements_for_u = lambda u: get_displacement(u2x(u[0:n-1]).flatten())
+    log_L_fun = lambda u, l_class_to_use: l_class_to_use.compute_log_likelihood_for_parameters(u2x(u[0:n-1]).flatten())
 
     # LSF
     h_LSF = lambda pi_u, logl_hat, log_L: np.log(sp.stats.norm.cdf(pi_u)) + logl_hat - log_L
@@ -90,9 +90,9 @@ def aBUS_SuS(N, p0, log_likelihood, get_displacement, distr, max_it: int = 20):
     #
     geval = np.empty(N)                # space for the LSF evaluations
     leval = np.empty(N)                # space for the LSF evaluations
-    cur_displacements = np.empty(N)
+    cur_parameter_values = np.empty(N)
     gsort = np.empty((max_it+1, N))   # space for the sorted LSF evaluations
-    displacements = np.empty((max_it+1, N)) # space for the displacements
+    parameter_values = np.empty((max_it+1, N)) # space for the displacements
     h     = np.empty(max_it)           # space for the intermediate leveles
     prob  = np.empty(max_it)           # space for the failure probability at each level
 
@@ -101,8 +101,9 @@ def aBUS_SuS(N, p0, log_likelihood, get_displacement, distr, max_it: int = 20):
     print('Evaluating log-likelihood function ...\t', end='')
     u_j   = np.random.normal(size=(n,N))  # N samples from the prior distribution
     for i in range(N):
-        cur_displacements[i] = displacements_for_u(u_j[:,i])
-        leval[i] = log_L_fun(cur_displacements[i])
+        # cur_displacements[i] = displacements_for_u(u_j[:,i])
+        leval[i] = log_L_fun(u_j[:,i], l_class)
+        cur_parameter_values[i] = l_class.parameter_value
     leval = np.array(leval)
     print('Done!')
     logl_hat = max(leval)   # =-log(c) (Ref.1 Alg.5 Part.3)
@@ -121,7 +122,7 @@ def aBUS_SuS(N, p0, log_likelihood, get_displacement, distr, max_it: int = 20):
 
         # sort values in ascending order
         idx = np.argsort(geval)
-        displacements[i] = cur_displacements[idx].flatten()
+        parameter_values[i] = cur_parameter_values[idx].flatten()
 
         # order the samples according to idx
         u_j_sort = u_j[:,idx]
@@ -148,7 +149,7 @@ def aBUS_SuS(N, p0, log_likelihood, get_displacement, distr, max_it: int = 20):
         samplesU['seeds'].append(seeds.T)         # store seeds
 
         # sampling process using adaptive conditional sampling
-        u_j, leval, lam, sigma, accrate, cur_displacements = aCS_aBUS(N, lam, h[i], rnd_seeds, log_L_fun, logl_hat, h_LSF, displacements_for_u)
+        u_j, leval, lam, sigma, accrate, cur_parameter_values = aCS_aBUS(N, lam, h[i], rnd_seeds, log_L_fun, logl_hat, h_LSF, l_class)
         print('\t*aCS lambda =', lam, '\t*aCS sigma =', sigma[0], '\t*aCS accrate =', accrate)
 
         # update the value of the scaling constant (Ref.1 Alg.5 Part.4d)
@@ -169,12 +170,12 @@ def aBUS_SuS(N, p0, log_likelihood, get_displacement, distr, max_it: int = 20):
 
     # store final posterior samples
     samplesU['total'].append(u_j.T)  # store final failure samples (non-ordered)
-    displacements[i] = cur_displacements
+    parameter_values[i] = cur_parameter_values
 
     # delete unnecesary data
     if i < max_it:
         m = i + 1
-        displacements = displacements[:m]
+        parameter_values = parameter_values[:m]
         prob = prob[:m]
         h    = h[:m]
 
@@ -188,4 +189,4 @@ def aBUS_SuS(N, p0, log_likelihood, get_displacement, distr, max_it: int = 20):
         pp = sp.stats.norm.cdf(samplesU['total'][i][:,-1])
         samplesX.append(np.concatenate((u2x(samplesU['total'][i][:,:-1]), pp.reshape(-1,1)), axis=1))
 
-    return h, samplesU, samplesX, logcE, c, sigma, displacements
+    return h, samplesU, samplesX, logcE, c, sigma, parameter_values

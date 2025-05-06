@@ -23,11 +23,12 @@ from src.bayesian_updating.BUS_SuS import BUS_SuS
 from src.bayesian_updating.aBUS_SuS import aBUS_SuS
 from datetime import datetime
 import pandas as pd
+from main.dhseetpiling_deformation_updating.likelihood_functions import DisplacementLikelihood
 
 
 class PosteriorRetainingStructure:
     
-    def __init__(self, model_path: str, measurement_path: str, use_surrogate: bool = True):
+    def __init__(self, model_path: str, use_surrogate: bool = True):
         """
         Initialize the PosteriorRetainingStructure class
 
@@ -38,35 +39,33 @@ class PosteriorRetainingStructure:
         """
         self.use_surrogate = use_surrogate
         
-        if not use_surrogate:
-            # Only import and initialize DSheetPiling if we're not using the surrogate
-            from src.geotechnical_models.dsheetpiling.model import DSheetPiling
-            self.model = DSheetPiling(model_path)
-            result_path = r"results/results.json"
-        
         self.define_parameters()
-        self.load_synthetic_data(measurement_path)
+        self.load_synthetic_data(model_path)
         
 
-    def load_synthetic_data(self, measurement_path: str):
+    def load_synthetic_data(self, model_path: str):
         """
         Load the synthetic data
         """
-        if measurement_path.endswith('.json'):
-            self.synthetic_data = pd.read_json(measurement_path)
-        elif measurement_path.endswith('.csv'):
-            self.synthetic_data = pd.read_csv(measurement_path)
-        else:
-            raise ValueError('Invalid file extension')
+        # if measurement_path.endswith('.json'):
+        #     self.synthetic_data = pd.read_json(measurement_path)
+        # elif measurement_path.endswith('.csv'):
+        #     self.synthetic_data = pd.read_csv(measurement_path)
+        # else:
+        #     raise ValueError('Invalid file extension')
         # self.measured_displacement_mean = self.synthetic_data['displacement'].values
         # self.measured_displacement_sigma = self.synthetic_data['sigma'].values
-        self.true_cohesion = 7
+        self.true_cohesion = 10
         self.true_phi = 25
         self.true_water_level = -0.7
-        parameters = [self.true_cohesion, self.true_phi, self.true_water_level]
-        self.measured_displacement_mean = np.array([self.get_displacement_from_dsheet_model(parameters)])
-        # self.measured_displacement_mean = np.array([self.measured_displacement_mean])
-        self.measured_displacement_sigma = [0.3]
+        parameters = [[self.true_cohesion, self.true_phi, self.true_water_level]]
+        
+        # Initialize the displacement likelihood function
+        self.l_displacement = DisplacementLikelihood(
+            model_path,
+            use_surrogate=self.use_surrogate
+        )
+        self.l_displacement.generate_synthetic_measurement(parameters)
 
     def define_parameters(self):
         # soil_layers = {"Klei": ("soilphi", "soilcohesion")}
@@ -86,108 +85,80 @@ class PosteriorRetainingStructure:
         self.R = np.eye(self.dimensions)
         self.prior_pdf = ERANataf(self.dist_parameters, self.R)
 
-
-    def likelihood_function_for_displacement(self, displacement_sample: float):
-        """
-        Likelihood function for displacement
-        """
-        n = self.measured_displacement_mean.shape[0]
-        w = 1 / n * np.ones(n)  # uniform weights
-        # return norm.pdf(displacement_sample, self.measured_displacement_mean, self.measured_displacement_sigma)    
-        return float(sum(w[i]*norm.pdf(displacement_sample, self.measured_displacement_mean[i], self.measured_displacement_sigma) for i in range(n))[0])
+    # Removed the old likelihood methods since they're now in the DisplacementLikelihood class
     
-    def log_likelihood_function_for_displacement(self, displacement_sample: float):
-        """
-        Log likelihood function for displacement
-        """
-        return np.log(self.likelihood_function_for_displacement(displacement_sample))
-    
-    def likelihood_function_for_parameters(self, parameters: list[float]):
-        """
-        Likelihood function for parameters
-        """
-        displacement = self.get_displacement_from_dsheet_model(parameters)
-        return self.likelihood_function_for_displacement(displacement), displacement
-    
-    def log_likelihood_function_for_parameters(self, parameters: list[float]):
-        """
-        Log likelihood function for parameters
-        """
-        likelihood, displacement = self.likelihood_function_for_parameters(parameters.T)
-        return np.log(likelihood), displacement
-
-    def fake_surrogate_function(self, parameters: list[float]):
-        """
-        Fake surrogate function for given parameters
-        parameters: list of parameters
-        parameters[0]: soil cohesion
-        parameters[1]: soil phi (friction angle)
-        parameters[2]: water level
-        Optional: parameters[3]: corrosion
+    # def fake_surrogate_function(self, parameters: list[float]):
+    #     """
+    #     Fake surrogate function for given parameters
+    #     parameters: list of parameters
+    #     parameters[0]: soil cohesion
+    #     parameters[1]: soil phi (friction angle)
+    #     parameters[2]: water level
+    #     Optional: parameters[3]: corrosion
         
-        # Base displacement value dependent on key parameters
-        # Realistic effects:
-        # - Higher cohesion reduces displacement
-        # - Higher friction angle reduces displacement
-        # - Higher water level (less negative) increases displacement
-        # - More corrosion increases displacement
-        Returns: 
-            displacement: estimated displacement in cm
-        """        
-        # # Add some noise to simulate model error
-        # noise = np.random.normal(0, 0.1)
-        a = 12
-        b = 0.6
-        c = 0.4
-        d = 0.2
-        displacement = a + b * parameters[0] + c * parameters[1] + d * parameters[2]
-        return displacement # + noise
+    #     # Base displacement value dependent on key parameters
+    #     # Realistic effects:
+    #     # - Higher cohesion reduces displacement
+    #     # - Higher friction angle reduces displacement
+    #     # - Higher water level (less negative) increases displacement
+    #     # - More corrosion increases displacement
+    #     Returns: 
+    #         displacement: estimated displacement in cm
+    #     """        
+    #     # # Add some noise to simulate model error
+    #     # noise = np.random.normal(0, 0.1)
+    #     a = 12
+    #     b = 0.6
+    #     c = 0.4
+    #     d = 0.2
+    #     displacement = a + b * parameters[0] + c * parameters[1] + d * parameters[2]
+    #     return displacement # + noise
 
     
-    def get_displacement_from_dsheet_model(self, updated_parameters: list[float], stage_id: int = -1):
-        """
-        Run the Dsheet analysis for given parameters or use the surrogate model
-        updated_parameters: list of parameters with
-        updated_parameters[0]: soil cohesion
-        updated_parameters[1]: soil phi
-        updated_parameters[2]: water level
-        Optional: updated_parameters[3]: corrosion
-        """
-        # If surrogate mode is enabled, use the fake surrogate function
-        if hasattr(self, 'use_surrogate') and self.use_surrogate:
-            return self.fake_surrogate_function(updated_parameters)
+    # def get_displacement_from_dsheet_model(self, updated_parameters: list[float], stage_id: int = -1):
+    #     """
+    #     Run the Dsheet analysis for given parameters or use the surrogate model
+    #     updated_parameters: list of parameters with
+    #     updated_parameters[0]: soil cohesion
+    #     updated_parameters[1]: soil phi
+    #     updated_parameters[2]: water level
+    #     Optional: updated_parameters[3]: corrosion
+    #     """
+    #     # If surrogate mode is enabled, use the fake surrogate function
+    #     if hasattr(self, 'use_surrogate') and self.use_surrogate:
+    #         return self.fake_surrogate_function(updated_parameters)
         
-        from src.reliability_models.dsheetpiling.lsf import unpack_soil_params, unpack_water_params
-        # Otherwise use the actual DSheetPiling model
-        # Pair parameters with names
-        params = {name: rv for (name, rv) in zip(self.parameter_names, updated_parameters)}
+    #     from src.reliability_models.dsheetpiling.lsf import unpack_soil_params, unpack_water_params
+    #     # Otherwise use the actual DSheetPiling model
+    #     # Pair parameters with names
+    #     params = {name: rv for (name, rv) in zip(self.parameter_names, updated_parameters)}
         
-        soil_data = unpack_soil_params(params, list(self.model.soils.keys()))
-        water_data = unpack_water_params(params, [lvl.name for lvl in self.model.water.water_lvls])
+    #     soil_data = unpack_soil_params(params, list(self.model.soils.keys()))
+    #     water_data = unpack_water_params(params, [lvl.name for lvl in self.model.water.water_lvls])
         
-        self.model.update_soils(soil_data)
-        self.model.update_water(water_data)
-        self.model.execute(i_run=0)
+    #     self.model.update_soils(soil_data)
+    #     self.model.update_water(water_data)
+    #     self.model.execute(i_run=0)
         
-        #TODO: Get the displacement
-        results = self.model.results
+    #     #TODO: Get the displacement
+    #     results = self.model.results
 
-        # return max displacement of the last stage
-        return results.max_displacement[stage_id]
+    #     # return max displacement of the last stage
+    #     return results.max_displacement[stage_id]
 
 
-    def find_c(self, method: int = 1):
+    def find_c(self, method: int = 1, l_class: DisplacementLikelihood = None):
         """
         Find the constant c
         """
         realmin = np.finfo(np.double).tiny
         # use MLE to find c
         if method == 1:    
-            u_start = np.log(self.measured_displacement_mean + realmin)
-            fun     = lambda lnU: -self.log_likelihood_function_for_displacement(np.exp(lnU)) 
+            u_start = np.log(l_class.measured_mean + realmin)
+            fun     = lambda lnU: -l_class.compute_log_likelihood(np.exp(lnU)) 
             MLE_ln  = sp.optimize.fmin(func=fun, x0=u_start)
             MLE     = np.exp(MLE_ln)   # likelihood(MLE) = 1
-            c       = 1/self.likelihood_function_for_displacement(MLE)
+            c       = 1/l_class.compute_likelihood_for_equality_information(MLE)
             return c
         # some likelihood evaluations to find c
         elif method == 2:
@@ -226,8 +197,8 @@ class PosteriorRetainingStructure:
                 sample_results_n[f"n{cur_n}"] = {}
                 if approach == 'BUS' or approach == "both":
                     # find c
-                    c = self.find_c(method=1)
-                    h, samplesU, samplesX, logcE, sigma, displacement_samples = BUS_SuS(cur_n, cur_p0, c, self.log_likelihood_function_for_displacement, self.get_displacement_from_dsheet_model, distr = self.prior_pdf)
+                    c = self.find_c(method=1, l_class=self.l_displacement)
+                    h, samplesU, samplesX, logcE, sigma, displacement_samples = BUS_SuS(cur_n, cur_p0, c, self.l_displacement, distr = self.prior_pdf)
                     sample_results_n[f"n{cur_n}"]["BUS"] = {
                         'h': h,
                         'samplesU': samplesU,
@@ -241,7 +212,7 @@ class PosteriorRetainingStructure:
                     }
                 
                 if approach == 'aBUS' or approach == "both":
-                    h, samplesU, samplesX, logcE, c, sigma, displacement_samples = aBUS_SuS(cur_n, cur_p0, self.log_likelihood_function_for_displacement, self.get_displacement_from_dsheet_model, self.prior_pdf)
+                    h, samplesU, samplesX, logcE, c, sigma, displacement_samples = aBUS_SuS(cur_n, cur_p0, self.l_displacement, self.prior_pdf)
                     sample_results_n[f"n{cur_n}"]["aBUS"] = {
                         'h': h,
                         'samplesU': samplesU,
@@ -257,12 +228,6 @@ class PosteriorRetainingStructure:
                     raise ValueError('Invalid approach')
             self.sample_results[f"p0{cur_p0}"] = sample_results_n
         # Store results as class attributes to make them available for plotting
-        # self.h = h
-        # self.samplesU = samplesU
-        # self.samplesX = samplesX
-        # self.logcE = logcE
-        # self.sigma = sigma
-        # self.displacement_samples = displacement_samples
 
         # Create the results directory if it doesn't exist
         os.makedirs('results', exist_ok=True)
@@ -303,7 +268,7 @@ class PosteriorRetainingStructure:
                 keys = p0_sample_results[cur_N].keys()
                 approaches = ", ".join(keys)
 
-                plt.suptitle(f'Comparison of Approaches for p0 = {cur_p0.split("p0")[1]}\nSample Size N = {cur_N.split("n")[1]}', 
+                plt.suptitle(f'Comparison of {approaches} approaches for p0 = {cur_p0.split("p0")[1]}\nSample Size N = {cur_N.split("n")[1]}', 
                             fontsize=18, fontweight='bold')
                 nr_keys = len(keys)
                 for i_key, key in enumerate(keys):
@@ -323,7 +288,13 @@ class PosteriorRetainingStructure:
                     
                     # Plot displacement samples
                     plt.subplot(self.dimensions+1, nr_keys, i_key+1)
-                
+                    
+                    # Add measured displacement lines
+                    for i, measured_displacement in enumerate(self.l_displacement.measured_mean):
+                        plt.axvline(measured_displacement, color='orange', linestyle='--', 
+                                   label=f'Measured value: {measured_displacement:.2f}' if i == 0 else "_nolegend_")
+                        
+
                     # For the prior (first level)
                     prior_displacements = displacement_samples[0]
                     posterior_displacements = displacement_samples[-1]
@@ -345,11 +316,21 @@ class PosteriorRetainingStructure:
                     plt.fill_between(x_range, posterior_density, alpha=0.3, color='red')
                     # plt.hist(posterior_displacements, density=True, bins=nr_bins,
                     #         alpha=0.5, color='red', label='Posterior')
-                    
-                    # Add measured displacement lines
-                    for i, measured_displacement in enumerate(self.measured_displacement_mean):
-                        plt.axvline(measured_displacement, color='blue', linestyle='--',
-                                label=f'Measured: {measured_displacement:.2f}' if i == 0 else None)
+
+                                        # Plot likelihood as normal distribution for each measurement
+                    for i, (measured_displacement, sigma) in enumerate(zip(self.l_displacement.measured_mean, self.l_displacement.measured_sigma)):
+                        # Create x range around measurement (±4 sigma to capture full distribution)
+                        x_likelihood = np.linspace(measured_displacement - 4*sigma, measured_displacement + 4*sigma, 200)
+                        # Calculate normal distribution values
+                        norm_pdf = norm.pdf(x_likelihood, loc=measured_displacement, scale=sigma)
+                        # Scale to make it visible on the plot
+                        scale_factor = 0.6 * max(prior_density.max(), posterior_density.max()) / norm_pdf.max()
+                        scaled_pdf = norm_pdf * scale_factor
+                        # Plot the normal distribution
+                        plt.plot(x_likelihood, scaled_pdf, color='darkgoldenrod', linestyle='-', linewidth=2,
+                                label=f'Likelihood N({measured_displacement:.2f}, {sigma:.2f})' if i == 0 else "_nolegend_")
+                        plt.fill_between(x_likelihood, scaled_pdf, alpha=0.2, color='darkgoldenrod')
+                
                                 
                     plt.title(f'Marginal PDF of the displacement for {key}')
                     plt.xlabel('Displacement [cm]')
@@ -358,10 +339,9 @@ class PosteriorRetainingStructure:
                     plt.legend()
 
                     true_parameters = [self.true_cohesion, self.true_phi, self.true_water_level]
-
                     # Plot each parameter's marginal distribution
                     for i in range(self.dimensions):
-                        plt.subplot(self.dimensions+1, nr_keys, 2*(i+1)+1+i_key)
+                        plt.subplot(self.dimensions+1, nr_keys, nr_keys*(i+1)+1+i_key)
                         
                         # Prior KDE
                         kde_prior = gaussian_kde(prior_samples[:, i])
@@ -449,29 +429,13 @@ if __name__ == '__main__':
     current_dir = os.path.dirname(os.path.abspath(__file__))
     measurement_path = os.path.join(current_dir, 'synthetic_measurement_data.json')
     
-    # Make sure the measurement data file exists
-    if not os.path.exists(measurement_path):
-        print(f"Warning: Measurement data file not found at {measurement_path}")
-        print("Creating a dummy measurement data file...")
-        
-        # Create dummy measurement data
-        import json
-        dummy_data = [
-            {"displacement": 7.5, "sigma": 0.1},
-            # {"displacement": 2.7, "sigma": 0.15},
-            # {"displacement": 2.6, "sigma": 0.12}
-        ]
-        os.makedirs(os.path.dirname(measurement_path), exist_ok=True)
-        with open(measurement_path, 'w') as f:
-            json.dump(dummy_data, f)
-    
     # Initialize with surrogate model
     posterior_retention_structure = PosteriorRetainingStructure(
-        model_path, measurement_path, use_surrogate=True
+        model_path, use_surrogate=True
     )
     
     posterior_retention_structure.define_parameters()
-    posterior_retention_structure.update_for_new_displacement_data(p0=[0.1, 0.2, 0.25], approach='both')
+    posterior_retention_structure.update_for_new_displacement_data(list_of_N=[100, 1000], p0=[0.1, 0.2, 0.25], approach='both')
     # make plot directory
     os.makedirs('plots', exist_ok=True)
     posterior_retention_structure.plot_prior_and_posterior_marginal_pdfs(plot_dir='plots')

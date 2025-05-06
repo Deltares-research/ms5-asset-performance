@@ -48,7 +48,7 @@ Based on:
 ---------------------------------------------------------------------------
 """
 
-def aCS(N, lambd_old, tau, theta_seeds, h_LSF, displacement_for_u):
+def aCS(N, lambd_old, tau, theta_seeds, h_LSF, l_class):
     n, Ns = theta_seeds.shape   # dimension and number of seeds
     
     # number of samples per chain
@@ -58,7 +58,7 @@ def aCS(N, lambd_old, tau, theta_seeds, h_LSF, displacement_for_u):
     # initialization
     theta_chain = np.zeros((n,N))         # generated samples 
     geval       = np.zeros(N)             # store lsf evaluations
-    displacements = np.zeros(N)       # store displacements
+    parameter_values = np.zeros(N)       # store displacements
     acc         = np.zeros(N,dtype=int)   # store acceptance
 
     # initialization
@@ -94,13 +94,8 @@ def aCS(N, lambd_old, tau, theta_seeds, h_LSF, displacement_for_u):
         theta_chain[:,idx] = theta_seeds[:,k-1]
 
         # initial LSF evaluation
-        # print(50*"=")
-        # print(f"u: {theta_chain[:,idx]}")
-        displacements[idx] = displacement_for_u(theta_chain[:,idx])
-        geval[idx] = h_LSF(theta_chain[-1,idx], displacements[idx])  # evaluate the LSF
-        # geval[idx] = h_LSF(theta_chain[:,idx])
-        # print(f"displacement: {displacements[idx]}")
-        # print(f"geval: {geval[idx]}")
+        geval[idx] = h_LSF(theta_chain[:,idx], l_class)  # evaluate the LSF
+        parameter_values[idx] = l_class.parameter_value
         
         for t in range(1, Nchain[k-1]):  
             # current state
@@ -110,20 +105,19 @@ def aCS(N, lambd_old, tau, theta_seeds, h_LSF, displacement_for_u):
             v_star = np.random.normal(loc=rho*theta_t, scale=sigma)     
             
             # evaluate limit state function
-            displacement_star = displacement_for_u(v_star) 
-            geval_star = h_LSF(v_star[-1], displacement_star)  # evaluate the LSF
+            geval_star = h_LSF(v_star, l_class)  # evaluate the LSF
 
             # accept or reject sample
             if geval_star <= tau:
                 theta_chain[:,idx+t] = v_star       # accept the candidate in observation region           
                 geval[idx+t]         = geval_star   # store the loglikelihood evaluation
                 acc[idx+t]           = 1            # note the acceptance
-                displacements[idx+t] = displacement_star # store the sorted values
+                parameter_values[idx+t] = l_class.parameter_value # store the sorted values
             else:
                 theta_chain[:,idx+t] = theta_t          # reject the candidate and use the same state
                 geval[idx+t]         = geval[idx+t-1]   # store the loglikelihood evaluation    
                 acc[idx+t]           = 0                # note the rejection
-                displacements[idx+t] = displacements[idx+t-1] # store the sorted values
+                parameter_values[idx+t] = parameter_values[idx+t-1] # store the sorted values
 
         # average of the accepted samples for each seed 'mu_acc'
         # here the warning "Mean of empty slice" is not an issue        
@@ -153,4 +147,4 @@ def aCS(N, lambd_old, tau, theta_seeds, h_LSF, displacement_for_u):
     # compute mean acceptance rate of all chains
     accrate = sum(acc)/(N-Ns)
         
-    return theta_chain, geval, new_lambda, sigma, accrate, displacements
+    return theta_chain, geval, new_lambda, sigma, accrate, parameter_values
