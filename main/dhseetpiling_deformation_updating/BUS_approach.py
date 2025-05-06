@@ -16,9 +16,9 @@ from src.bayesian_updating.ERADist import ERADist
 from src.bayesian_updating.ERANataf import ERANataf
 from src.bayesian_updating.BUS_SuS import BUS_SuS
 from src.bayesian_updating.aBUS_SuS import aBUS_SuS
-# from src.reliability_models.dsheetpiling.lsf import unpack_soil_params, unpack_water_params
+from src.reliability_models.dsheetpiling.lsf import unpack_soil_params, unpack_water_params
 # from src.bayesian_updating.aCS import aCS
-# from src.geotechnical_models.dsheetpiling.model import DSheetPiling
+from src.geotechnical_models.dsheetpiling.model import DSheetPiling
 import pandas as pd
 
 
@@ -41,8 +41,9 @@ class PosteriorRetainingStructure:
             self.model = DSheetPiling(model_path)
             result_path = r"results/results.json"
         
-        self.load_synthetic_data(measurement_path)
         self.define_parameters()
+        self.load_synthetic_data(measurement_path)
+        
 
     def load_synthetic_data(self, measurement_path: str):
         """
@@ -56,11 +57,12 @@ class PosteriorRetainingStructure:
             raise ValueError('Invalid file extension')
         # self.measured_displacement_mean = self.synthetic_data['displacement'].values
         # self.measured_displacement_sigma = self.synthetic_data['sigma'].values
-        self.true_cohesion = 12
-        self.true_phi = 40
+        self.true_cohesion = 7
+        self.true_phi = 25
         self.true_water_level = -0.7
-        self.measured_displacement_mean = self.fake_surrogate_function(parameters=[self.true_cohesion, self.true_phi, self.true_water_level])
-        self.measured_displacement_mean = np.array([self.measured_displacement_mean])
+        parameters = [self.true_cohesion, self.true_phi, self.true_water_level]
+        self.measured_displacement_mean = np.array([self.get_displacement_from_dsheet_model(parameters)])
+        # self.measured_displacement_mean = np.array([self.measured_displacement_mean])
         self.measured_displacement_sigma = [0.3]
 
     def define_parameters(self):
@@ -76,7 +78,7 @@ class PosteriorRetainingStructure:
             
         self.dist_parameters = [soil_cohesion, soil_phi, water_level]
         self.parameter_names = ['Klei_soilcohesion', 'Klei_soilphi', 'water_A']
-        
+
         self.dimensions = len(self.dist_parameters)
         self.R = np.eye(self.dimensions)
         self.prior_pdf = ERANataf(self.dist_parameters, self.R)
@@ -516,7 +518,7 @@ class PosteriorRetainingStructure:
 
 if __name__ == '__main__':    
     # Use a dummy model path when using surrogate model
-    model_path = "dummy_model.shi"
+    model_path = "c:\\Users\\cotoarba\\OneDrive - Stichting Deltares\\Desktop\\dummy_123.shi"
     
     # Get measurement data path relative to the script
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -540,7 +542,7 @@ if __name__ == '__main__':
     
     # Initialize with surrogate model
     posterior_retention_structure = PosteriorRetainingStructure(
-        model_path, measurement_path, use_surrogate=True
+        model_path, measurement_path, use_surrogate=False
     )
     
     posterior_retention_structure.define_parameters()

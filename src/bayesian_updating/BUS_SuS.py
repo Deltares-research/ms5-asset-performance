@@ -105,7 +105,7 @@ def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr):
         cur_displacements[i] = displacement_for_u(u_j[:,i])
         geval[i] = h_LSF(u_j[-1,i], cur_displacements[i])  # evaluate the LSF
     geval = np.array(geval)
-
+    print(f"cur displacements: {cur_displacements}")
     print('OK!')
 
     # SuS stage
@@ -151,6 +151,7 @@ def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr):
         # sampling process using adaptive conditional sampling
         try:
             u_j, geval, lam, sigma, accrate, cur_displacements = aCS(N, lam, h[j], rnd_seeds, h_LSF, displacement_for_u)
+            print("cur displacements: ", cur_displacements)
             print(f"\t*aCS lambda = {lam}, *aCS sigma = {sigma[0]}, *aCS accrate = {accrate}")
         except Exception as e:
             print(f"Error in aCS: {e}")
