@@ -53,7 +53,7 @@ Based on:
 ---------------------------------------------------------------------------
 """
 
-def aBUS_SuS(N, p0, log_likelihood, get_displacement, distr):
+def aBUS_SuS(N, p0, log_likelihood, get_displacement, distr, max_it: int = 20):
     if (N*p0 != np.fix(N*p0)) or (1/p0 != np.fix(1/p0)):
         raise RuntimeError('N*p0 and 1/p0 must be positive integers. Adjust N and p0 accordingly')
 
@@ -83,7 +83,7 @@ def aBUS_SuS(N, p0, log_likelihood, get_displacement, distr):
     # initialization of variables
     i        = 0                         # number of conditional level
     lam      = 0.6                       # initial scaling parameter \in (0,1)
-    max_it   = 20                        # maximum number of iterations
+    # max_it   = 20                        # maximum number of iterations
     samplesU = {'seeds': list(),
                 'total': list()}
     samplesX = list()

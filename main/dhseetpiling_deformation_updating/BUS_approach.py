@@ -1,8 +1,13 @@
-from typing import Optional, Callable
+from typing import Optional, Callable, List
 import numpy as np
 import scipy as sp
 from scipy.stats import multivariate_normal as mvn
 from scipy.stats import norm
+
+
+import matplotlib.pyplot as plt
+from scipy.stats import gaussian_kde
+import numpy as np
 
 import sys
 import os
@@ -16,9 +21,7 @@ from src.bayesian_updating.ERADist import ERADist
 from src.bayesian_updating.ERANataf import ERANataf
 from src.bayesian_updating.BUS_SuS import BUS_SuS
 from src.bayesian_updating.aBUS_SuS import aBUS_SuS
-from src.reliability_models.dsheetpiling.lsf import unpack_soil_params, unpack_water_params
-# from src.bayesian_updating.aCS import aCS
-from src.geotechnical_models.dsheetpiling.model import DSheetPiling
+from datetime import datetime
 import pandas as pd
 
 
@@ -153,7 +156,8 @@ class PosteriorRetainingStructure:
         # If surrogate mode is enabled, use the fake surrogate function
         if hasattr(self, 'use_surrogate') and self.use_surrogate:
             return self.fake_surrogate_function(updated_parameters)
-            
+        
+        from src.reliability_models.dsheetpiling.lsf import unpack_soil_params, unpack_water_params
         # Otherwise use the actual DSheetPiling model
         # Pair parameters with names
         params = {name: rv for (name, rv) in zip(self.parameter_names, updated_parameters)}
@@ -208,41 +212,64 @@ class PosteriorRetainingStructure:
         else:
             raise RuntimeError('Finding the scale constant c requires -method- 1, 2 or 3')
 
-    def update_for_new_displacement_data(self, N: int = 1000, p0: float = 0.1,
-                                         approach: str = 'BUS'):
+    def update_for_new_displacement_data(self, list_of_N: List[int] = [100, 200, 500, 1000, 2000], p0: List[float] = [0.1, 0.2, 0.25],
+                                         approach: str = 'BUS', max_it: int = 20):
         """
         Update the posterior for new data
-        """
-        
-        if approach == 'BUS':
-            # find c
-            c = self.find_c(method=1)
-            h, samplesU, samplesX, logcE, sigma, displacement_samples = BUS_SuS(N, p0, c, self.log_likelihood_function_for_displacement, self.get_displacement_from_dsheet_model, distr = self.prior_pdf)
-        elif approach == 'aBUS':
-            h, samplesU, samplesX, logcE, c, sigma, displacement_samples = aBUS_SuS(N, p0, self.log_likelihood_function_for_displacement, self.get_displacement_from_dsheet_model, self.prior_pdf)
-        else:
-            raise ValueError('Invalid approach')
-        
+        """        
+        # test_n = [100, 200, 500, 1000, 2000]
+        self.sample_results = {}
+        for cur_p0 in p0:
+            # self.sample_results[f"p0{cur_p0}"] = {}
+            sample_results_n = {}  
+            for cur_n in list_of_N:
+                sample_results_n[f"n{cur_n}"] = {}
+                if approach == 'BUS' or approach == "both":
+                    # find c
+                    c = self.find_c(method=1)
+                    h, samplesU, samplesX, logcE, sigma, displacement_samples = BUS_SuS(cur_n, cur_p0, c, self.log_likelihood_function_for_displacement, self.get_displacement_from_dsheet_model, distr = self.prior_pdf)
+                    sample_results_n[f"n{cur_n}"]["BUS"] = {
+                        'h': h,
+                        'samplesU': samplesU,
+                        'samplesX': samplesX,
+                        'logcE': logcE,
+                        'sigma': sigma,
+                        'displacement_samples': displacement_samples,
+                        'n': cur_n,
+                        'p0': cur_p0,
+                        'max_it': max_it
+                    }
+                
+                if approach == 'aBUS' or approach == "both":
+                    h, samplesU, samplesX, logcE, c, sigma, displacement_samples = aBUS_SuS(cur_n, cur_p0, self.log_likelihood_function_for_displacement, self.get_displacement_from_dsheet_model, self.prior_pdf)
+                    sample_results_n[f"n{cur_n}"]["aBUS"] = {
+                        'h': h,
+                        'samplesU': samplesU,
+                        'samplesX': samplesX,
+                        'logcE': logcE,
+                        'sigma': sigma,
+                        'displacement_samples': displacement_samples,
+                        'n': cur_n,
+                        'p0': cur_p0,
+                        'max_it': max_it
+                    }
+                if approach != 'BUS' and approach != 'aBUS' and approach != 'both':
+                    raise ValueError('Invalid approach')
+            self.sample_results[f"p0{cur_p0}"] = sample_results_n
         # Store results as class attributes to make them available for plotting
-        self.h = h
-        self.samplesU = samplesU
-        self.samplesX = samplesX
-        self.logcE = logcE
-        self.sigma = sigma
-        self.displacement_samples = displacement_samples
+        # self.h = h
+        # self.samplesU = samplesU
+        # self.samplesX = samplesX
+        # self.logcE = logcE
+        # self.sigma = sigma
+        # self.displacement_samples = displacement_samples
 
-        # Save all samples in a dictionary
-        self.sample_results = {
-            'samplesU': samplesU,
-            'samplesX': samplesX,
-            'logcE': logcE,
-            'sigma': sigma,
-            'displacement_samples': displacement_samples
-        }
         # Create the results directory if it doesn't exist
         os.makedirs('results', exist_ok=True)
         # Save the results to a JSON file
-        result_path = r"results/results_run_n100_maxit_5.npz"
+        # Create runID based on the current date and time
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")   
+        result_path = f"results/results_{approach}_p0{p0}_maxit{max_it}_runID{run_id}.npz"
         np.savez(result_path, **self.sample_results)
         # Print summary statistics
         print('\nModel evidence =', np.exp(logcE), '\n')
@@ -250,134 +277,131 @@ class PosteriorRetainingStructure:
             print(f'Mean value of {self.parameter_names[i]} =', np.mean(samplesX[-1][:, i]))
             print(f'Std of {self.parameter_names[i]} =', np.std(samplesX[-1][:, i]), '\n')
 
-    def plot_prior_and_posterior_marginal_pdfs(self):
+    def plot_prior_and_posterior_marginal_pdfs(self, plot_dir: str = None):
         """
         Plot the prior and posterior marginal pdfs
         """
-        import matplotlib.pyplot as plt
-        from scipy.stats import gaussian_kde
         
         # Options for font-family and font-size
         plt.rc('font', size=12)
         plt.rc('axes', titlesize=16)  # fontsize of the axes title
         plt.rc('axes', labelsize=14)  # fontsize of the x and y labels
         plt.rc('figure', titlesize=18)  # fontsize of the figure title
-        
-        plt.figure(figsize=(12, 10))
         
         # Get prior samples
         prior_samples = self.prior_pdf.random(1000)        
         # Get posterior samples if available
-        try:
-            posterior_samples = self.samplesX[-1]
-            has_posterior = True
-        except (AttributeError, IndexError):
-            has_posterior = False
-            print("No posterior samples available. Run update_for_new_displacement_data first.")
-            return
-        
-        param_ranges = []
-        for i in range(self.dimensions):
-            # Determine range for each parameter
-            param_min = min(np.min(prior_samples[:, i]), np.min(posterior_samples[:, i]))
-            param_max = max(np.max(prior_samples[:, i]), np.max(posterior_samples[:, i]))
-            # Add some padding
-            padding = 0.1 * (param_max - param_min)
-            param_ranges.append([param_min - padding, param_max + padding])
-        
-        # Plot displacement samples
-        plt.subplot(self.dimensions+2, 2, 1)
-        
-        # Make sure displacement_samples exists and has the right shape
-        if hasattr(self, 'displacement_samples') and len(self.displacement_samples) > 1:
-            # For the prior (first level)
-            prior_displacements = self.displacement_samples[0]
-            plt.hist(prior_displacements, density=True, bins=20, 
-                     alpha=0.5, color='blue', label='Prior')
-            
-            # For the posterior (last level)
-            posterior_displacements = self.displacement_samples[-1]
-            plt.hist(posterior_displacements, density=True, bins=20,
-                     alpha=0.5, color='red', label='Posterior')
-            
-            # Add measured displacement lines
-            for i, measured_displacement in enumerate(self.measured_displacement_mean):
-                plt.axvline(measured_displacement, color='blue', linestyle='--',
-                           label=f'Measured: {measured_displacement:.2f}' if i == 0 else None)
-        else:
-            plt.text(0.5, 0.5, "No displacement samples available", 
-                    horizontalalignment='center', verticalalignment='center')
-        
-        plt.title(f'Marginal PDF of the displacement')
-        plt.xlabel('Displacement [cm]')
-        plt.ylabel('Density')
-        plt.grid(True, alpha=0.3)
-        plt.legend()
 
-        true_parameters = [self.true_cohesion, self.true_phi, self.true_water_level]
+        list_of_p0 = self.sample_results.keys()
+        # list_of_N = self.sample_results.keys()
+        for i_p0, cur_p0 in enumerate(list_of_p0): 
+            p0_sample_results = self.sample_results[cur_p0]
+            list_of_N = p0_sample_results.keys()
+            for i_N, cur_N in enumerate(list_of_N):
+                plt.figure(figsize=(12, 10))
+                # Get keys from self.sample_results and format them nicely
+                keys = p0_sample_results[cur_N].keys()
+                approaches = ", ".join(keys)
 
-        # Plot each parameter's marginal distribution
-        for i in range(self.dimensions):
-            plt.subplot(self.dimensions+2, 2, 2*i+3)
-            
-            # Prior KDE
-            kde_prior = gaussian_kde(prior_samples[:, i])
-            x_range = np.linspace(param_ranges[i][0], param_ranges[i][1], 200)
-            prior_density = kde_prior(x_range)
-            plt.plot(x_range, prior_density, 'b-', linewidth=2, label='Prior')
-            plt.fill_between(x_range, prior_density, alpha=0.1, color='blue')
-            
-            # Posterior KDE
-            kde_post = gaussian_kde(posterior_samples[:, i])
-            post_density = kde_post(x_range)
-            plt.plot(x_range, post_density, 'r-', linewidth=2, label='Posterior')
-            plt.fill_between(x_range, post_density, alpha=0.3, color='red')
+                plt.suptitle(f'Comparison of Approaches for p0 = {cur_p0.split("p0")[1]}\nSample Size N = {cur_N.split("n")[1]}', 
+                            fontsize=18, fontweight='bold')
+                nr_keys = len(keys)
+                for i_key, key in enumerate(keys):
+                    curN = p0_sample_results[cur_N][key]["n"]
+                    nr_bins = 50 if int(curN) > 499 else 20
+                    posterior_samples = p0_sample_results[cur_N][key]["samplesX"][-1]
+                    displacement_samples = p0_sample_results[cur_N][key]["displacement_samples"]
+                    
+                    param_ranges = []
+                    for i in range(self.dimensions):
+                        # Determine range for each parameter
+                        param_min = min(np.min(prior_samples[:, i]), np.min(posterior_samples[:, i]))
+                        param_max = max(np.max(prior_samples[:, i]), np.max(posterior_samples[:, i]))
+                        # Add some padding
+                        padding = 0.1 * (param_max - param_min)
+                        param_ranges.append([param_min - padding, param_max + padding])
+                    
+                    # Plot displacement samples
+                    plt.subplot(self.dimensions+1, nr_keys, i_key+1)
+                
+                    # For the prior (first level)
+                    prior_displacements = displacement_samples[0]
+                    posterior_displacements = displacement_samples[-1]
 
-            # Add mean lines
-            plt.axvline(true_parameters[i], color='blue', linestyle='--', label=f'True {self.parameter_names[i]}')
-            # plt.hist(posterior_samples[:, i], density=True, alpha=0.5, color='red', label='Posterior')
-            # Add mean lines
-            # plt.axvline(np.mean(prior_samples[:, i]), color='blue', linestyle='--', 
-                    #    label=f'Prior mean: {np.mean(prior_samples[:, i]):.2f}')
-            # plt.axvline(np.mean(posterior_samples[:, i]), color='red', linestyle='--', 
-                    #    label=f'Posterior mean: {np.mean(posterior_samples[:, i]):.2f}')
-            
-            plt.title(f'Marginal PDF of {self.parameter_names[i]}')
-            plt.xlabel(self.parameter_names[i])
-            plt.ylabel('Density')
-            plt.grid(True, alpha=0.3)
-            plt.legend()
-            
-            # Add cumulative distribution function
-            plt.subplot(self.dimensions+2, 2, 2*i+4)
-            
-            # Sort samples for CDF
-            prior_sorted = np.sort(prior_samples[:, i])
-            posterior_sorted = np.sort(posterior_samples[:, i])
-            p = np.linspace(0, 1, len(prior_sorted))
-            pp = np.linspace(0, 1, len(posterior_sorted))
-            
-            plt.plot(prior_sorted, p, 'b-', linewidth=2, label='Prior CDF')
-            plt.plot(posterior_sorted, pp, 'r-', linewidth=2, label='Posterior CDF')
-            
-            plt.title(f'Cumulative Distribution of {self.parameter_names[i]}')
-            plt.xlabel(self.parameter_names[i])
-            plt.ylabel('Probability')
-            plt.grid(True, alpha=0.3)
-            plt.legend()
-        
-        plt.tight_layout()
-        plt.savefig('marginal_pdfs.png', dpi=300)
-        plt.show()
+                    kde_prior = gaussian_kde(prior_displacements)
+                    min_displacement = min(np.min(prior_displacements), np.min(posterior_displacements))
+                    max_displacement = max(np.max(prior_displacements), np.max(posterior_displacements))
+                    x_range = np.linspace(min_displacement, max_displacement, 200)
+                    prior_density = kde_prior(x_range)
+                    plt.plot(x_range, prior_density, 'b-', linewidth=2, label='Prior')
+                    plt.fill_between(x_range, prior_density, alpha=0.1, color='blue')
+                    # plt.hist(prior_displacements, density=True, bins=nr_bins, 
+                    #         alpha=0.5, color='blue', label='Prior')
+                    
+                    # For the posterior (last level)
+                    kde_posterior = gaussian_kde(posterior_displacements)
+                    posterior_density = kde_posterior(x_range)
+                    plt.plot(x_range, posterior_density, 'r-', linewidth=2, label='Posterior')
+                    plt.fill_between(x_range, posterior_density, alpha=0.3, color='red')
+                    # plt.hist(posterior_displacements, density=True, bins=nr_bins,
+                    #         alpha=0.5, color='red', label='Posterior')
+                    
+                    # Add measured displacement lines
+                    for i, measured_displacement in enumerate(self.measured_displacement_mean):
+                        plt.axvline(measured_displacement, color='blue', linestyle='--',
+                                label=f'Measured: {measured_displacement:.2f}' if i == 0 else None)
+                                
+                    plt.title(f'Marginal PDF of the displacement for {key}')
+                    plt.xlabel('Displacement [cm]')
+                    plt.ylabel('Density')
+                    plt.grid(True, alpha=0.3)
+                    plt.legend()
 
-    def plot_posterior_samples(self):
+                    true_parameters = [self.true_cohesion, self.true_phi, self.true_water_level]
+
+                    # Plot each parameter's marginal distribution
+                    for i in range(self.dimensions):
+                        plt.subplot(self.dimensions+1, nr_keys, 2*(i+1)+1+i_key)
+                        
+                        # Prior KDE
+                        kde_prior = gaussian_kde(prior_samples[:, i])
+                        x_range = np.linspace(param_ranges[i][0], param_ranges[i][1], 200)
+                        prior_density = kde_prior(x_range)
+                        plt.plot(x_range, prior_density, 'b-', linewidth=2, label='Prior')
+                        plt.fill_between(x_range, prior_density, alpha=0.1, color='blue')
+                        # plt.hist(prior_samples[:, i], density=True, alpha=0.5, color='blue', label='Prior', bins=nr_bins)
+                        
+                        # Posterior KDE
+                        kde_post = gaussian_kde(posterior_samples[:, i])
+                        post_density = kde_post(x_range)
+                        plt.plot(x_range, post_density, 'r-', linewidth=2, label='Posterior')
+                        plt.fill_between(x_range, post_density, alpha=0.3, color='red')
+                        # plt.hist(posterior_samples[:, i], density=True, alpha=0.5, color='red', label='Posterior', bins=nr_bins)
+
+                        # Add mean lines
+                        plt.axvline(true_parameters[i], color='blue', linestyle='--', label=f'True {self.parameter_names[i]}')
+                        # plt.hist(posterior_samples[:, i], density=True, alpha=0.5, color='red', label='Posterior')
+                        # Add mean lines
+                        # plt.axvline(np.mean(prior_samples[:, i]), color='blue', linestyle='--', 
+                                #    label=f'Prior mean: {np.mean(prior_samples[:, i]):.2f}')
+                        # plt.axvline(np.mean(posterior_samples[:, i]), color='red', linestyle='--', 
+                                #    label=f'Posterior mean: {np.mean(posterior_samples[:, i]):.2f}')
+                        
+                        plt.title(f'Marginal PDF of {self.parameter_names[i]}')
+                        plt.xlabel(self.parameter_names[i])
+                        plt.ylabel('Density')
+                        plt.grid(True, alpha=0.3)
+                        plt.legend()
+
+
+                plt.tight_layout()
+                plt.savefig(f'{plot_dir}/marginal_pdfs_for_{cur_p0}_N{cur_N}.png', dpi=300)
+        # plt.show()  
+
+    def plot_threshold_progression(self, plot_dir: str = None):
         """
         Plot the posterior samples
         """
-        import matplotlib.pyplot as plt
-        import matplotlib.colors as mcolors
-        from scipy.stats import gaussian_kde
-        import numpy as np
         
         # Options for font-family and font-size
         plt.rc('font', size=12)
@@ -385,135 +409,36 @@ class PosteriorRetainingStructure:
         plt.rc('axes', labelsize=14)  # fontsize of the x and y labels
         plt.rc('figure', titlesize=18)  # fontsize of the figure title
         
-        # Check if posterior samples exist
-        try:
-            samplesX = self.samplesX
-            h = self.h
-            nsub = len(h.flatten())  # number of levels + final posterior
-        except (AttributeError, IndexError):
-            print("No posterior samples available. Run update_for_new_displacement_data first.")
-            return
-        
-        # Organize samples by subset level
-        param_samples = []
-        for i in range(nsub):
-            param_samples.append(samplesX[i][:, :self.dimensions])  # Only parameter columns, not p-value
-        
-        # Create titles for each subplot
-        titles = ['Prior']
-        for i in range(1, nsub-1):
-            titles.append(f'Subset {i}: h = {h[i]:.2e}')
-        titles.append('Posterior')
-        
-        # Plot progression of samples through BUS-SuS
-        plt.figure(figsize=(15, 10))
-        plt.suptitle('BUS-SuS: Parameter Estimation Progression')
-        
-        # Plot first two parameters (if available)
-        if self.dimensions >= 2:
-            for i in range(min(nsub, 6)):  # Show at most 6 subplots
-                plt.subplot(2, 3, i+1)
-                
-                # Choose colormap
-                cmap = plt.cm.viridis
-                
-                # Plot the samples with p-value coloring if available
-                if i < len(samplesX) and samplesX[i].shape[1] > self.dimensions:
-                    p_values = samplesX[i][:, -1]  # last column contains p-values
-                    sc = plt.scatter(
-                        param_samples[i][:, 0], 
-                        param_samples[i][:, 1], 
-                        c=p_values, 
-                        cmap=cmap, 
-                        s=20, 
-                        alpha=0.6
-                    )
-                else:
-                    # If no p-values, use default color
-                    sc = plt.scatter(
-                        param_samples[i][:, 0], 
-                        param_samples[i][:, 1], 
-                        s=20, 
-                        alpha=0.6
-                    )
-                
-                # Add measured data location if it exists
-                if hasattr(self, 'measured_params') and i == nsub-1:
-                    plt.scatter(
-                        self.measured_params[:, 0], 
-                        self.measured_params[:, 1], 
-                        color='red', 
-                        marker='x', 
-                        s=100, 
-                        label='True params', 
-                        zorder=10, 
-                        linewidth=2
-                    )
-                    plt.legend(loc='upper right')
-                
-                # For the posterior (last) plot, add contours if possible
-                if i == nsub-1 and self.dimensions >= 2:
-                    try:
-                        # Create a grid for density evaluation
-                        x_min, x_max = plt.xlim()
-                        y_min, y_max = plt.ylim()
-                        x_grid = np.linspace(x_min, x_max, 50)
-                        y_grid = np.linspace(y_min, y_max, 50)
-                        X, Y = np.meshgrid(x_grid, y_grid)
-                        
-                        # Calculate KDE for 2D posterior
-                        positions = np.vstack([X.ravel(), Y.ravel()])
-                        posterior_points = np.vstack([
-                            param_samples[i][:, 0], 
-                            param_samples[i][:, 1]
-                        ])
-                        kernel = gaussian_kde(posterior_points)
-                        Z = np.reshape(kernel(positions), X.shape)
-                        
-                        # Plot contours of density
-                        contour = plt.contour(X, Y, Z, colors='k', alpha=0.3, linewidths=0.5)
-                    except Exception as e:
-                        print(f"Could not generate contour plot: {e}")
-                
-                plt.title(titles[i])
-                plt.xlabel(self.parameter_names[0])
-                plt.ylabel(self.parameter_names[1])
-                
-                # Add colorbar to the last subplot
-                if i == nsub-1:
-                    cbar = plt.colorbar(sc)
-                    cbar.set_label('p value')
-        
         # Plot threshold progression
         plt.figure(figsize=(10, 6))
-        plt.plot(range(nsub), h, 'bo-', linewidth=2)
-        plt.axhline(y=0, color='r', linestyle='--', label='Failure threshold')
-        plt.xlabel('Subset level')
-        plt.ylabel('Threshold value (h)')
-        plt.title('Progression of Intermediate Thresholds')
-        plt.grid(True)
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig('threshold_progression.png', dpi=300)
-        
-        # If we have at least 3 parameters, create pairwise scatter plots
-        if self.dimensions >= 3:
-            import seaborn as sns
+        list_of_p0 = list(self.sample_results.keys())
+        list_of_N = list(self.sample_results[list_of_p0[0]].keys())
+        # generate a list of N colors
+        colors = plt.cm.inferno(np.linspace(0.2, 0.8, len(list_of_N)))
+        list_of_N = list(list_of_N)  # Convert dict_keys to a list so it's subscriptable
+        methods = self.sample_results[list_of_p0[0]][list_of_N[0]].keys()
+        for i_p0, cur_p0 in enumerate(list_of_p0):
+            for i_method, method in enumerate(methods):
+                plt.subplot(len(list_of_p0), len(methods), i_p0*len(methods)+i_method+1)
+                plt.grid(True)    
+                plt.tight_layout()
+                for i_N, cur_N in enumerate(list_of_N):
+                    h = self.sample_results[cur_p0][cur_N][method]["h"]
+                    plt.plot(range(len(h)), h, 'bo-', linewidth=2, label=f'N = {cur_N.split("n")[1]}', color=colors[i_N])
             
-            # Create pairwise plots for posterior samples
-            plt.figure(figsize=(12, 10))
-            plt.suptitle('Pairwise Relationships in Posterior Distribution')
-            
-            # Create a dataframe for the posterior samples
-            import pandas as pd
-            df = pd.DataFrame(param_samples[-1], columns=self.parameter_names)
-            
-            # Create pairwise plots
-            g = sns.pairplot(df, diag_kind='kde')
-            g.fig.subplots_adjust(top=0.95)
-            plt.savefig('pairwise_posterior.png', dpi=300)
-        
-        plt.show()
+                plt.legend()
+                plt.axhline(y=0, color='r', linestyle='--', label='Stopping Condition')
+                plt.xlabel('Subset level')
+                plt.ylabel('Threshold value (h)')
+                plt.title(f'Progression of Intermediate Thresholds\np0 = {cur_p0.split("p0")[1]} and {method}')
+        plt.savefig(f'{plot_dir}/threshold_progression.png', dpi=300)        
+        # plt.show()
+
+def run_bus_approach_comparison():
+    """
+    Run the BUS approach comparison
+    """
+    pass
 
 
 if __name__ == '__main__':    
@@ -542,10 +467,14 @@ if __name__ == '__main__':
     
     # Initialize with surrogate model
     posterior_retention_structure = PosteriorRetainingStructure(
-        model_path, measurement_path, use_surrogate=False
+        model_path, measurement_path, use_surrogate=True
     )
     
     posterior_retention_structure.define_parameters()
-    posterior_retention_structure.update_for_new_displacement_data(N=1000, p0=0.1, approach='BUS')
-    posterior_retention_structure.plot_prior_and_posterior_marginal_pdfs()
-    # posterior_retention_structure.plot_posterior_samples()
+    posterior_retention_structure.update_for_new_displacement_data(p0=[0.1, 0.2, 0.25], approach='both')
+    # make plot directory
+    os.makedirs('plots', exist_ok=True)
+    posterior_retention_structure.plot_prior_and_posterior_marginal_pdfs(plot_dir='plots')
+    posterior_retention_structure.plot_threshold_progression(plot_dir='plots')
+    # plt.show()
+    plt.close()

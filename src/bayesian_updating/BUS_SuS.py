@@ -56,7 +56,7 @@ Based on:
 ---------------------------------------------------------------------------
 """
 
-def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr):
+def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr, max_it: int = 20):
     if (N*p0 != np.fix(N*p0)) or (1/p0 != np.fix(1/p0)):
         raise RuntimeError('N*p0 and 1/p0 must be positive integers. Adjust N and p0 accordingly')
 
@@ -82,7 +82,7 @@ def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr):
     # initialization of variables
     j        = 0                         # number of conditional level
     lam      = 0.6                       # initial scaling parameter \in (0,1)
-    max_it   = 20
+    # max_it   = 20
     sigma = 0                        # maximum number of iterations
     samplesU = {'seeds': list(),
                 'total': list()}
@@ -105,7 +105,6 @@ def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr):
         cur_displacements[i] = displacement_for_u(u_j[:,i])
         geval[i] = h_LSF(u_j[-1,i], cur_displacements[i])  # evaluate the LSF
     geval = np.array(geval)
-    print(f"cur displacements: {cur_displacements}")
     print('OK!')
 
     # SuS stage
@@ -151,7 +150,6 @@ def BUS_SuS(N, p0, c, log_likelihood, get_displacement, distr):
         # sampling process using adaptive conditional sampling
         try:
             u_j, geval, lam, sigma, accrate, cur_displacements = aCS(N, lam, h[j], rnd_seeds, h_LSF, displacement_for_u)
-            print("cur displacements: ", cur_displacements)
             print(f"\t*aCS lambda = {lam}, *aCS sigma = {sigma[0]}, *aCS accrate = {accrate}")
         except Exception as e:
             print(f"Error in aCS: {e}")
