@@ -73,10 +73,12 @@ class PosteriorRetainingStructure:
         # rv_water = MvnRV(mus=np.array([-0.8]), stds=np.array([0.08]), names=["water_A"])
         # state = GaussianState(rvs=[rv_strength, rv_water])
 
-        soil_cohesion = ERADist('normal', 'PAR', [10, 1])
-        soil_phi = ERADist('normal', 'PAR', [30, 3])
-
-        water_level = ERADist('normal', 'PAR', [-0.8, 0.08])
+        # soil_cohesion = ERADist('normal', 'PAR', [10, 1])
+        soil_cohesion = ERADist('uniform', 'PAR', [0, 20])
+        # soil_phi = ERADist('normal', 'PAR', [30, 3])
+        soil_phi = ERADist('uniform', 'PAR', [10, 40])
+        # water_level = ERADist('normal', 'PAR', [-0.8, 0.08])
+        water_level = ERADist('uniform', 'PAR', [-1.2, -0.5])
             
         self.dist_parameters = [soil_cohesion, soil_phi, water_level]
         self.parameter_names = ['Klei_soilcohesion', 'Klei_soilphi', 'water_A']
