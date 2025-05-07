@@ -9,6 +9,7 @@ class BaseLikelihood:
     def __init__(self):
         """Initialize the base likelihood class."""
         self.parameter_value = None
+        self.max_paramater_value = None
         self.measured_mean = None
         self.measured_sigma = None
         pass
@@ -31,6 +32,7 @@ class BaseLikelihood:
 
 
 class DisplacementLikelihood(BaseLikelihood):
+
     """Likelihood function for displacement measurements."""
     def __init__(self,
                  model_path: str,
@@ -56,6 +58,10 @@ class DisplacementLikelihood(BaseLikelihood):
         self.measured_mean = measured_displacement_mean
         self.measured_sigma = measured_displacement_sigma
         return self.measured_mean, self.measured_sigma
+    
+    def set_max_parameter_value(self, max_parameter_value: float):
+        self.max_paramater_value = max_parameter_value
+        return self.max_paramater_value
 
     def generate_synthetic_measurement(self, parameters: List[float], sigma: float = 0.3):
         """
@@ -100,10 +106,32 @@ class DisplacementLikelihood(BaseLikelihood):
             float: Likelihood value
         """
         n = self.measured_mean.shape[0]
-        w = 1 / n * np.ones(n)  # uniform weights
-        return float(sum(w[i] * norm.pdf(displacement_sample, self.measured_mean[i], 
+        w = 1 / n   # uniform weights
+        return float(sum(w * norm.pdf(displacement_sample, self.measured_mean[i], 
                                          self.measured_sigma[i if isinstance(self.measured_sigma, list) else 0])
                          for i in range(n)))
+    
+    def safety_factor(self, displacement_sample: float) -> float:
+        '''
+        Safety factor for the displacement sample given as the ratio of the max parameter value to the measured displacement value
+        '''
+        return self.max_paramater_value / (displacement_sample + 1e-5)
+    
+    def limit_state_function(self, displacement_sample: float, model_uncertainty: Optional[float] = None) -> float:
+        '''
+        Limit state function for the displacement sample given as a log-probability
+        '''
+        if model_uncertainty is not None:
+            return self.performance_function(displacement_sample) * model_uncertainty - 1
+        return self.performance_function(displacement_sample) - 1
+    
+    def survival_function(self, displacement_sample: float, model_uncertainty: Optional[float] = None) -> float:
+        '''
+        Survival function for the displacement sample given as a probability
+        '''
+        if model_uncertainty is not None:
+            return 1 - self.performance_function(displacement_sample) * model_uncertainty
+        return 1 - self.performance_function(displacement_sample)
     
     def compute_likelihood_for_inequality_information(self, displacement_sample: float, performance_function: int) -> float:
         """
@@ -162,12 +190,12 @@ class DisplacementLikelihood(BaseLikelihood):
         # Add some noise to simulate model error
         noise = np.random.normal(0, 0.1)
         a = 12
-        b = 0.6
-        c = 0.4
+        b = 0.8
+        c = 0.5
         d = 0.2
         displacement = a + b * parameters[0] + c * parameters[1] + d * parameters[2]
         return displacement
-        # return parameters[0] # + parameters[1] + parameters[2]
+        # return parameters[0] + parameters[1] + parameters[2]
     
     def get_displacement_from_dsheet_model(self, updated_parameters: list[float], stage_id: int = -1):
         """

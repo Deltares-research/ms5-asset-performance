@@ -21,6 +21,7 @@ from src.bayesian_updating.ERADist import ERADist
 from src.bayesian_updating.ERANataf import ERANataf
 from src.bayesian_updating.BUS_SuS import BUS_SuS
 from src.bayesian_updating.aBUS_SuS import aBUS_SuS
+from src.bayesian_updating.iTMCMC import iTMCMC
 from datetime import datetime
 import pandas as pd
 from main.dhseetpiling_deformation_updating.likelihood_functions import DisplacementLikelihood
@@ -74,12 +75,12 @@ class PosteriorRetainingStructure:
         # rv_water = MvnRV(mus=np.array([-0.8]), stds=np.array([0.08]), names=["water_A"])
         # state = GaussianState(rvs=[rv_strength, rv_water])
 
-        # soil_cohesion = ERADist('normal', 'PAR', [10, 1])
-        soil_cohesion = ERADist('uniform', 'PAR', [0, 20])
-        # soil_phi = ERADist('normal', 'PAR', [30, 3])
-        soil_phi = ERADist('uniform', 'PAR', [10, 40])
-        # water_level = ERADist('normal', 'PAR', [-0.8, 0.08])
-        water_level = ERADist('uniform', 'PAR', [-1.2, -0.5])
+        soil_cohesion = ERADist('normal', 'PAR', [10, 1])
+        # soil_cohesion = ERADist('uniform', 'PAR', [5, 15])
+        soil_phi = ERADist('normal', 'PAR', [30, 3])
+        # soil_phi = ERADist('uniform', 'PAR', [25, 35])
+        water_level = ERADist('normal', 'PAR', [-0.8, 0.08])
+        # water_level = ERADist('uniform', 'PAR', [-0.95, -0.6])
             
         self.dist_parameters = [soil_cohesion, soil_phi, water_level]
         self.parameter_names = ['Klei_soilcohesion', 'Klei_soilphi', 'water_A']
@@ -127,7 +128,7 @@ class PosteriorRetainingStructure:
             raise RuntimeError('Finding the scale constant c requires -method- 1, 2 or 3')
 
     def update_for_new_displacement_data(self, list_of_N: List[int] = [100, 200, 500, 1000, 2000], p0: List[float] = [0.1, 0.2, 0.25],
-                                         approach: str = 'BUS', max_it: int = 20):
+                                         approaches: List[str] = ['BUS', 'aBUS', 'iTMCMC'], max_it: int = 20):
         """
         Update the posterior for new data
         """        
@@ -138,8 +139,11 @@ class PosteriorRetainingStructure:
             sample_results_n = {}  
             for cur_n in list_of_N:
                 sample_results_n[f"n{cur_n}"] = {}
-                if approach == 'BUS' or approach == "both":
+
+                valid_approaches = False
+                if 'BUS' in approaches:
                     # find c
+                    valid_approaches = True
                     c = self.find_c(method=1, l_class=self.l_displacement)
                     h, samplesU, samplesX, logcE, sigma, displacement_samples = BUS_SuS(cur_n, cur_p0, c, self.l_displacement, distr = self.prior_pdf)
                     sample_results_n[f"n{cur_n}"]["BUS"] = {
@@ -154,7 +158,8 @@ class PosteriorRetainingStructure:
                         'max_it': max_it
                     }
                 
-                if approach == 'aBUS' or approach == "both":
+                if 'aBUS' in approaches:
+                    valid_approaches = True
                     h, samplesU, samplesX, logcE, c, sigma, displacement_samples = aBUS_SuS(cur_n, cur_p0, self.l_displacement, self.prior_pdf)
                     sample_results_n[f"n{cur_n}"]["aBUS"] = {
                         'h': h,
@@ -167,8 +172,24 @@ class PosteriorRetainingStructure:
                         'p0': cur_p0,
                         'max_it': max_it
                     }
-                if approach != 'BUS' and approach != 'aBUS' and approach != 'both':
-                    raise ValueError('Invalid approach')
+
+                if 'iTMCMC' in approaches:
+                    valid_approaches = True
+                    samplesU, samplesX, q, logcE, displacement_samples = iTMCMC(cur_n, int(0.1*cur_n), self.l_displacement, self.prior_pdf)
+                    sample_results_n[f"n{cur_n}"]["iTMCMC"] = {
+                        'samplesU': samplesU,
+                        'samplesX': samplesX,
+                        'q': q,
+                        'logcE': logcE,
+                        'displacement_samples': displacement_samples,
+                        'n': cur_n,
+                        'p0': cur_p0,
+                        'max_it': max_it
+                    }
+
+                if not valid_approaches:
+                    raise ValueError(f'No valid approaches found. Currently implemented approaches are: BUS, aBUS, iTMCMC')
+
             self.sample_results[f"p0{cur_p0}"] = sample_results_n
         # Store results as class attributes to make them available for plotting
 
@@ -177,7 +198,7 @@ class PosteriorRetainingStructure:
         # Save the results to a JSON file
         # Create runID based on the current date and time
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")   
-        result_path = f"results/results_{approach}_p0{p0}_maxit{max_it}_runID{run_id}.npz"
+        result_path = f"results/results_{'_'.join(approaches)}_p0{p0}_maxit{max_it}_runID{run_id}.npz"
         np.savez(result_path, **self.sample_results)
         # Print summary statistics
         print('\nModel evidence =', np.exp(logcE), '\n')
@@ -268,6 +289,7 @@ class PosteriorRetainingStructure:
                         norm_pdf = norm.pdf(x_likelihood, loc=measured_displacement, scale=sigma)
                         # Scale to make it visible on the plot
                         scale_factor = 0.6 * max(prior_density.max(), posterior_density.max()) / norm_pdf.max()
+                        # scale_factor = 0.6
                         scaled_pdf = norm_pdf * scale_factor
                         # Plot the normal distribution
                         plt.plot(x_likelihood, scaled_pdf, color='darkgoldenrod', linestyle='-', linewidth=2,
@@ -340,6 +362,7 @@ class PosteriorRetainingStructure:
         colors = plt.cm.inferno(np.linspace(0.2, 0.8, len(list_of_N)))
         list_of_N = list(list_of_N)  # Convert dict_keys to a list so it's subscriptable
         methods = self.sample_results[list_of_p0[0]][list_of_N[0]].keys()
+        methods = [method for method in methods if method != "iTMCMC"]
         for i_p0, cur_p0 in enumerate(list_of_p0):
             for i_method, method in enumerate(methods):
                 plt.subplot(len(list_of_p0), len(methods), i_p0*len(methods)+i_method+1)
@@ -374,11 +397,11 @@ if __name__ == '__main__':
     
     # Initialize with surrogate model
     posterior_retention_structure = PosteriorRetainingStructure(
-        model_path, use_surrogate=False
+        model_path, use_surrogate=True
     )
     
     posterior_retention_structure.define_parameters()
-    posterior_retention_structure.update_for_new_displacement_data(list_of_N=[100], p0=[0.1], approach='both')
+    posterior_retention_structure.update_for_new_displacement_data(list_of_N=[1000], p0=[0.1])
     # make plot directory
     os.makedirs('plots', exist_ok=True)
     posterior_retention_structure.plot_prior_and_posterior_marginal_pdfs(plot_dir='plots')
