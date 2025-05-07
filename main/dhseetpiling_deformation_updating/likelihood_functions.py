@@ -34,6 +34,7 @@ class DisplacementLikelihood(BaseLikelihood):
     """Likelihood function for displacement measurements."""
     def __init__(self,
                  model_path: str,
+                 parameter_names: List[str] = None,
                  use_surrogate: bool = False):
         """
         Initialize the displacement likelihood.
@@ -48,6 +49,7 @@ class DisplacementLikelihood(BaseLikelihood):
             # Only import and initialize DSheetPiling if we're not using the surrogate
             from src.geotechnical_models.dsheetpiling.model import DSheetPiling
             self.model = DSheetPiling(model_path)
+            self.parameter_names = parameter_names
 
     def set_measured_mean_and_sigma(self, measured_displacement_mean: np.ndarray, 
                                     measured_displacement_sigma: Union[float, List[float]]):

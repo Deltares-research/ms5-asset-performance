@@ -63,7 +63,8 @@ class PosteriorRetainingStructure:
         # Initialize the displacement likelihood function
         self.l_displacement = DisplacementLikelihood(
             model_path,
-            use_surrogate=self.use_surrogate
+            use_surrogate=self.use_surrogate,
+            parameter_names=self.parameter_names,
         )
         self.l_displacement.generate_synthetic_measurement(parameters)
 
@@ -89,66 +90,6 @@ class PosteriorRetainingStructure:
 
     # Removed the old likelihood methods since they're now in the DisplacementLikelihood class
     
-    # def fake_surrogate_function(self, parameters: list[float]):
-    #     """
-    #     Fake surrogate function for given parameters
-    #     parameters: list of parameters
-    #     parameters[0]: soil cohesion
-    #     parameters[1]: soil phi (friction angle)
-    #     parameters[2]: water level
-    #     Optional: parameters[3]: corrosion
-        
-    #     # Base displacement value dependent on key parameters
-    #     # Realistic effects:
-    #     # - Higher cohesion reduces displacement
-    #     # - Higher friction angle reduces displacement
-    #     # - Higher water level (less negative) increases displacement
-    #     # - More corrosion increases displacement
-    #     Returns: 
-    #         displacement: estimated displacement in cm
-    #     """        
-    #     # # Add some noise to simulate model error
-    #     # noise = np.random.normal(0, 0.1)
-    #     a = 12
-    #     b = 0.6
-    #     c = 0.4
-    #     d = 0.2
-    #     displacement = a + b * parameters[0] + c * parameters[1] + d * parameters[2]
-    #     return displacement # + noise
-
-    
-    # def get_displacement_from_dsheet_model(self, updated_parameters: list[float], stage_id: int = -1):
-    #     """
-    #     Run the Dsheet analysis for given parameters or use the surrogate model
-    #     updated_parameters: list of parameters with
-    #     updated_parameters[0]: soil cohesion
-    #     updated_parameters[1]: soil phi
-    #     updated_parameters[2]: water level
-    #     Optional: updated_parameters[3]: corrosion
-    #     """
-    #     # If surrogate mode is enabled, use the fake surrogate function
-    #     if hasattr(self, 'use_surrogate') and self.use_surrogate:
-    #         return self.fake_surrogate_function(updated_parameters)
-        
-    #     from src.reliability_models.dsheetpiling.lsf import unpack_soil_params, unpack_water_params
-    #     # Otherwise use the actual DSheetPiling model
-    #     # Pair parameters with names
-    #     params = {name: rv for (name, rv) in zip(self.parameter_names, updated_parameters)}
-        
-    #     soil_data = unpack_soil_params(params, list(self.model.soils.keys()))
-    #     water_data = unpack_water_params(params, [lvl.name for lvl in self.model.water.water_lvls])
-        
-    #     self.model.update_soils(soil_data)
-    #     self.model.update_water(water_data)
-    #     self.model.execute(i_run=0)
-        
-    #     #TODO: Get the displacement
-    #     results = self.model.results
-
-    #     # return max displacement of the last stage
-    #     return results.max_displacement[stage_id]
-
-
     def find_c(self, method: int = 1, l_class: DisplacementLikelihood = None):
         """
         Find the constant c
@@ -433,11 +374,11 @@ if __name__ == '__main__':
     
     # Initialize with surrogate model
     posterior_retention_structure = PosteriorRetainingStructure(
-        model_path, use_surrogate=True
+        model_path, use_surrogate=False
     )
     
     posterior_retention_structure.define_parameters()
-    posterior_retention_structure.update_for_new_displacement_data(list_of_N=[100, 1000], p0=[0.1, 0.2, 0.25], approach='both')
+    posterior_retention_structure.update_for_new_displacement_data(list_of_N=[100], p0=[0.1], approach='both')
     # make plot directory
     os.makedirs('plots', exist_ok=True)
     posterior_retention_structure.plot_prior_and_posterior_marginal_pdfs(plot_dir='plots')
