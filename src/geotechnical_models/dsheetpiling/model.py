@@ -44,6 +44,7 @@ class DSheetPiling(GeoModelBase):
         self.soils = self.get_soils()
         self.water = self.get_water()
         self.uniform_loads = self.get_uniform_loads()
+        self.wall = self.get_wall_properties()
 
     def get_soils(self) -> dict[str, SoilCollection]:
         return {soil.name: soil for soil in deepcopy(self.geomodel.input.input_data.soil_collection.soil)}
@@ -87,6 +88,16 @@ class DSheetPiling(GeoModelBase):
             else:
                 raise AttributeError(f"Uniform load name {load_name} not found in Uniform load list.")
         self.geomodel.input.input_data.uniform_loads.loads = list(self.uniform_loads.values())
+
+    def get_wall_properties(self) -> None:
+
+        sheet_piling_data = self.geomodel.input.input_data.sheet_piling
+        sheet_piling_lines = sheet_piling_data.splitlines()[6:-1]
+        sheet_piling_props = {
+            key: float(value) if value != "" else 0.
+            for (key, value) in [line.split("=") for line in sheet_piling_lines]
+        }
+        return 0
 
     def execute(self, result_path: Optional[str | Path] = None, i_run: Optional[int] = None) -> None:
         if i_run is None:
