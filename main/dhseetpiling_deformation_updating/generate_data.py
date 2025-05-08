@@ -81,10 +81,9 @@ def sample_disp(
     # For some samples, DSheetpiling returns fewer points along the wall. Reject these samples.
     max_n_points = max(len(disp[0]) for disp in disp_sample)
     disp_sample = [disp if len(disp[0]) == max_n_points else [[np.nan]*max_n_points] for disp in disp_sample]
-    disp_sample = np.asarray(disp_sample).squeeze()
+    disp_sample = np.asarray(disp_sample)
     # Drop empty dimension if it exists (only the first one if two empty dimensions exist)
-    # if disp_sample.ndim > 2: disp_sample = disp_sample[0, ...]
-
+    if disp_sample.ndim > 2: disp_sample = disp_sample[:, 0]
 
     sample_shape = (n_locs,) + (disp_sample.shape[1:]) if rv_pooling == "pooled" else disp_sample.shape
 
@@ -103,9 +102,9 @@ def sample_disp(
 
     max_n_points = max(len(moment[0]) for moment in moment_sample)
     moment_sample = [moment if len(moment[0]) == max_n_points else [[np.nan]*max_n_points] for moment in moment_sample]
-    moment_sample = np.asarray(moment_sample).squeeze()
+    moment_sample = np.asarray(moment_sample)
     # Drop empty dimension if it exists (only the first one if two empty dimensions exist)
-    # if moment_sample.ndim > 2: moment_sample = moment_sample[0, ...]
+    if moment_sample.ndim > 2: moment_sample = moment_sample[:, 0]
 
     return disp_sample, disp_noisy, moment_sample
 
@@ -145,8 +144,8 @@ if __name__ == "__main__":
     state = GaussianState(rvs=[rv_strength])
 
     config = {
-        "rv_pooling": "unpooled",
-        "n_locs": 1_000,
+        "rv_pooling": "pooled",
+        "n_locs": 1,
         "seed": 42,
         # "disp_dist_type": "lognormal",
         "disp_dist_type": "normal",
