@@ -44,6 +44,19 @@ class WallProperties(NamedTuple):
     WoodenSheetPilingElementKModE: float | int
 
 
+class AnchorProperties(NamedTuple):
+    Nr: int
+    Level: float
+    Emod: float
+    Cross_sect: float
+    Length: float
+    YieldF: float
+    Angle: float
+    Height: float
+    Side: int
+    Name: str
+
+
 class WaterLevel(NamedTuple):
     name: str
     lvl: float

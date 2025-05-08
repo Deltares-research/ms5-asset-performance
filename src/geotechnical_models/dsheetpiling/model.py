@@ -46,6 +46,7 @@ class DSheetPiling(GeoModelBase):
         self.water = self.get_water()
         self.uniform_loads = self.get_uniform_loads()
         self.wall = self.get_wall()
+        self.anchor = self.get_anchor()
 
     def get_soils(self) -> dict[str, SoilCollection]:
         return {soil.name: soil for soil in deepcopy(self.geomodel.input.input_data.soil_collection.soil)}
@@ -84,7 +85,7 @@ class DSheetPiling(GeoModelBase):
                 raise AttributeError(f"Uniform load name {load_name} not found in Uniform load list.")
         self.geomodel.input.input_data.uniform_loads.loads = list(self.uniform_loads.values())
 
-    def get_wall(self) -> None:
+    def get_wall(self) -> WallProperties:
 
         sheet_piling_data = self.geomodel.input.input_data.sheet_piling
         sheet_piling_lines = sheet_piling_data.splitlines()[6:-1]
@@ -99,22 +100,66 @@ class DSheetPiling(GeoModelBase):
         wall_props = WallProperties(**sheet_piling_props)
         return wall_props
 
-    def update_wall(self, additional_wall_props: Dict[str, float]) -> None:
+    def update_wall(self, new_wall_props: Dict[str, float]) -> None:
+
         updated_wall_props = self.wall._asdict()
-        for (key, new_val) in additional_wall_props.items():
+        for (key, new_val) in new_wall_props.items():
             updated_wall_props[key] = new_val
         self.wall = WallProperties(**updated_wall_props)
+
         sheet_piling_data = self.geomodel.input.input_data.sheet_piling
         sheet_piling_lines = sheet_piling_data.splitlines()
-        # value_types = [type(line.split("=")[-1]) for line in sheet_piling_lines[6:-1]]
 
         wall_lines = [key+"="+str(value) for (key, value) in updated_wall_props.items()]
         wall_lines = sheet_piling_lines[:6] + wall_lines + [sheet_piling_lines[-1]]
         wall_data = "\n".join(wall_lines)
 
-        # wall_data = sheet_piling_data[:6] + wall_data + sheet_piling_data[-1]
-        # pass
         self.geomodel.input.input_data.sheet_piling = wall_data
+
+    def get_anchor(self) -> AnchorProperties:
+        anchor_data = self.geomodel.input.input_data.anchors
+        anchor_lines = anchor_data.splitlines()
+        anchor_props_names = anchor_lines[1].split()
+        idx = anchor_props_names.index("Cross")
+        anchor_props_names[idx] = "Cross_sect"
+        anchor_props_names.remove("sect.")
+        idx = anchor_props_names.index("E-mod")
+        anchor_props_names[idx] = "Emod"
+        anchor_props_values = []
+        for value in anchor_lines[2].split():
+            try:
+                value = float(value)
+                value = int(value) if value.is_integer() else value
+            except:
+                pass
+            anchor_props_values.append(value)
+        anchor_props = {key: value for (key, value) in zip(anchor_props_names, anchor_props_values)}
+        anchor_props = AnchorProperties(**anchor_props)
+        return anchor_props
+
+    def update_anchor(self, new_anchor_props: Dict[str, float]) -> None:
+
+        updated_anchor_props = self.anchor._asdict()
+        for (key, new_val) in new_anchor_props.items():
+            updated_anchor_props[key] = new_val
+        self.anchor = AnchorProperties(**updated_anchor_props)
+
+        anchor_data = self.geomodel.input.input_data.anchors
+        anchor_lines = anchor_data.splitlines()
+
+        anchor_props_names = anchor_lines[1].split()
+        idx = anchor_props_names.index("Cross")
+        anchor_props_names[idx] = "Cross_sect"
+        anchor_props_names.remove("sect.")
+        idx = anchor_props_names.index("E-mod")
+        anchor_props_names[idx] = "Emod"
+
+        updated_anchor_line = [str(updated_anchor_props[name]) for name in anchor_props_names]
+        updated_anchor_line = " " + " ".join(updated_anchor_line)
+        updated_anchor_lines = anchor_lines[:2] + [updated_anchor_line]
+        updated_anchor_data = "\n".join(updated_anchor_lines)
+
+        self.geomodel.input.input_data.anchors = updated_anchor_data
 
     def execute(self, result_path: Optional[str | Path] = None, i_run: Optional[int] = None) -> None:
         if i_run is None:
