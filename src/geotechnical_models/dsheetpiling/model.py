@@ -1,11 +1,11 @@
 import os
-from src.geotechnical_models.dsheetpiling.utils import DSheetPilingResults, DSheetPilingStageResults, WaterData
+from src.geotechnical_models.dsheetpiling.utils import *
 from copy import deepcopy
 from src.geotechnical_models.base import GeoModelBase
 from geolib.models.dsheetpiling import DSheetPilingModel
 from geolib.models.dsheetpiling.internal import SoilCollection, UniformLoad
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict
 import json
 import warnings
 from datetime import datetime
@@ -45,7 +45,7 @@ class DSheetPiling(GeoModelBase):
         self.soils = self.get_soils()
         self.water = self.get_water()
         self.uniform_loads = self.get_uniform_loads()
-        self.wall = self.get_wall_properties()
+        self.wall = self.get_wall()
 
     def get_soils(self) -> dict[str, SoilCollection]:
         return {soil.name: soil for soil in deepcopy(self.geomodel.input.input_data.soil_collection.soil)}
@@ -68,12 +68,6 @@ class DSheetPiling(GeoModelBase):
         water_lines = self.water.write()
         self.geomodel.input.input_data.waterlevels = water_lines
 
-    def get_wall(self) -> float:
-        raise NotImplementedError("Adjusting the structural properties of the wall is not possible yet.")
-
-    def update_wall(self) -> float:
-        raise NotImplementedError("Adjusting the structural properties of the wall is not possible yet.")
-
     def get_uniform_loads(self) -> dict[str, UniformLoad]:
         return {
             uniform_load.name: uniform_load
@@ -90,7 +84,7 @@ class DSheetPiling(GeoModelBase):
                 raise AttributeError(f"Uniform load name {load_name} not found in Uniform load list.")
         self.geomodel.input.input_data.uniform_loads.loads = list(self.uniform_loads.values())
 
-    def get_wall_properties(self) -> None:
+    def get_wall(self) -> None:
 
         sheet_piling_data = self.geomodel.input.input_data.sheet_piling
         sheet_piling_lines = sheet_piling_data.splitlines()[6:-1]
@@ -98,7 +92,29 @@ class DSheetPiling(GeoModelBase):
             key: float(value) if value != "" else 0.
             for (key, value) in [line.split("=") for line in sheet_piling_lines]
         }
-        return 0
+        sheet_piling_props = {
+            key: int(value) if value.is_integer() else value
+            for (key, value) in sheet_piling_props.items()
+        }
+        wall_props = WallProperties(**sheet_piling_props)
+        return wall_props
+
+    def update_wall(self, additional_wall_props: Dict[str, float]) -> None:
+        updated_wall_props = self.wall._asdict()
+        for (key, new_val) in additional_wall_props.items():
+            updated_wall_props[key] = new_val
+        self.wall = WallProperties(**updated_wall_props)
+        sheet_piling_data = self.geomodel.input.input_data.sheet_piling
+        sheet_piling_lines = sheet_piling_data.splitlines()
+        # value_types = [type(line.split("=")[-1]) for line in sheet_piling_lines[6:-1]]
+
+        wall_lines = [key+"="+str(value) for (key, value) in updated_wall_props.items()]
+        wall_lines = sheet_piling_lines[:6] + wall_lines + [sheet_piling_lines[-1]]
+        wall_data = "\n".join(wall_lines)
+
+        # wall_data = sheet_piling_data[:6] + wall_data + sheet_piling_data[-1]
+        # pass
+        self.geomodel.input.input_data.sheet_piling = wall_data
 
     def execute(self, result_path: Optional[str | Path] = None, i_run: Optional[int] = None) -> None:
         if i_run is None:
