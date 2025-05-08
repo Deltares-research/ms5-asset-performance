@@ -6,6 +6,57 @@ from numpy.typing import NDArray
 from typing import Optional, Annotated, NamedTuple
 
 
+class WallProperties(NamedTuple):
+    SheetPilingElementMaterialType: float | int
+    SheetPilingElementEI: float | int
+    SheetPilingElementWidth: float | int
+    SheetPilingElementLevel: float | int
+    SheetPilingElementHeight: float | int
+    SheetPilingPileWidth: float | int
+    SheetPilingElementSectionArea: float | int
+    SheetPilingElementResistingMoment: float | int
+    SheetPilingElementReductionFactorEI: float | int
+    SheetPilingElementNote: float | int
+    SheetPilingElementMaxCharacteristicMoment: float | int
+    SheetPilingElementMaxPlasticCharacteristicMoment: float | int
+    SheetPilingElementKMod: float | int
+    SheetPilingElementMaterialFactor: float | int
+    sSheetPilingElementReductionFactorMaxMoment: float | int
+    DiaphragmWallIsSymmetric: float | int
+    DiaphragmWallPosEIElastoPlastic1: float | int
+    DiaphragmWallNegEIElastoPlastic1: float | int
+    DiaphragmWallPosMomElastic: float | int
+    DiaphragmWallNegMomElastic: float | int
+    DiaphragmWallPosMomPlastic: float | int
+    DiaphragmWallNegMomPlastic: float | int
+    DiaphragmWallPosEIElastoPlastic2: float | int
+    DiaphragmWallPosMomElastoPlastic: float | int
+    DiaphragmWallNegEIElastoPlastic2: float | int
+    DiaphragmWallNegMomElastoPlastic: float | int
+    WoodenSheetPilingElementE: float | int
+    WoodenSheetPilingElementCharacFlexuralStrength: float | int
+    WoodenSheetPilingElementKSys: float | int
+    WoodenSheetPilingElementKDef: float | int
+    WoodenSheetPilingElementPsi2Eff: float | int
+    WoodenSheetPilingElementMaterialFactor: float | int
+    WoodenSheetPilingElementKModFShort: float | int
+    WoodenSheetPilingElementKModFLong: float | int
+    WoodenSheetPilingElementKModE: float | int
+
+
+class AnchorProperties(NamedTuple):
+    Nr: int
+    Level: float
+    Emod: float
+    Cross_sect: float
+    Length: float
+    YieldF: float
+    Angle: float
+    Height: float
+    Side: int
+    Name: str
+
+
 class WaterLevel(NamedTuple):
     name: str
     lvl: float
