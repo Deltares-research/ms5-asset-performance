@@ -1,9 +1,8 @@
 import json
-import os
 from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
-from typing import Tuple
+from typing import Tuple, Optional
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
@@ -14,12 +13,13 @@ from flax.training.train_state import TrainState
 import optax
 from jax_tqdm import scan_tqdm
 from jaxtyping import Array, Float
+from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import pickle
 
 
-class PlateNeuralNetwork(nn.Module):
+class NeuralNetwork(nn.Module):
     output_dim: Sequence[int]
 
     @nn.compact
@@ -55,7 +55,14 @@ def _epoch(runner: tuple, epoch: int) -> Tuple[tuple, float]:
 
 
 def train(nn_model: nn.Module, x: Float[Array, "n_obs n_input"], y: Float[Array, "n_obs n_output"],
-          n_epochs: int = 20_000, lr: float = 1e-4) -> Tuple[dict, list]:
+          n_epochs: int = 20_000, lr: float = 1e-4, path: Optional[str | Path] = None) -> Tuple[dict, list]:
+
+    save_params = path is not None
+    if save_params:
+        if not isinstance(path, Path): path = Path(Path(path).as_posix())
+
+    if not isinstance(x, jnp.ndarray): x = jnp.asarray(x)
+    if not isinstance(y, jnp.ndarray): y = jnp.asarray(y)
 
     nn_init_rng = jax.random.PRNGKey(42)
     params = nn_model.init(nn_init_rng, jnp.take(x, 0, axis=0))
@@ -69,8 +76,107 @@ def train(nn_model: nn.Module, x: Float[Array, "n_obs n_input"], y: Float[Array,
     runner = (state, x, y)
     runner, losses = lax.scan(scan_tqdm(n_epochs)(_epoch), runner, jnp.arange(n_epochs), n_epochs)
     state, _, _ = runner
+    trained_params = state.params
 
-    return state.params, losses
+    if save_params:
+        with open(path, 'wb') as f: pickle.dump(trained_params, f)
+        print(f"Saved model parmaeters at {path}")
+
+    return trained_params, losses
+
+
+def inference(model, params, x):
+    return np.asarray(model.apply(params, jnp.asarray(x)))
+
+
+def plot_predictions(model, params, x_train, x_test, y_train, y_test, path):
+
+    if not isinstance(path, Path): path = Path(Path(path).as_posix())
+
+    y_hat_train = inference(model, params, x_train)
+    y_hat_test = inference(model, params, x_test)
+
+    figs = []
+    zipped = zip(y_train.T, y_hat_train.T, y_test.T, y_hat_test.T)
+    for i_point, (y_t_train, y_p_train, y_t_test, y_p_test) in enumerate(zipped):
+        fig = plt.figure()
+        fig.suptitle(f"Point #{i_point+1:d} along wall", fontsize=14)
+        plt.scatter(y_t_train, y_p_train, marker='x', c='b', label="Train")
+        plt.scatter(y_t_test, y_p_test, marker='x', c='r', label="Test")
+        plt.axline((0, 0), slope=1, c='k')
+        plt.plot([y_t_train.min(), y_t_train.min()], [y_t_train.max(), y_t_train.max()], c='k')
+        plt.xlabel('Observation', fontsize=12)
+        plt.ylabel('Prediction', fontsize=12)
+        plt.legend(fontsize=12)
+        plt.grid()
+        plt.close()
+        figs.append(fig)
+    pp = PdfPages(path)
+    [pp.savefig(fig) for fig in figs]
+    pp.close()
+
+
+def plot_wall(model, params, x, y, path):
+
+    if not isinstance(path, Path): path = Path(Path(path).as_posix())
+
+    y_hat = inference(model, params, x)
+    residuals = y - y_hat
+    st_residuals = residuals / np.abs(y+1e-8) * 100
+
+    fig = plt.figure()
+    for r in st_residuals:
+        plt.plot(r, np.arange(st_residuals.shape[1]), c='b', alpha=0.3)
+    plt.xlabel('Error [%]', fontsize=12)
+    plt.ylabel('Point # along wall', fontsize=12)
+    plt.gca().invert_yaxis()
+    plt.grid()
+    plt.close()
+    pp = PdfPages(path)
+    pp.savefig(fig)
+    pp.close()
+
+
+def plot_variables(model, params, x, y, path):
+
+    if not isinstance(path, Path): path = Path(Path(path).as_posix())
+
+    y_hat = inference(model, params, x)
+    residuals = y - y_hat
+    st_residuals = residuals / np.abs(y+1e-8) * 100
+
+    figs = []
+    for i_point, r in enumerate(st_residuals.T):
+        fig, axs = plt.subplots(1, 2, sharey=True, figsize=(12, 6))
+        fig.suptitle(f"Point #{i_point+1:d} along wall", fontsize=14)
+        sc = axs[0].scatter(x[:, 0], r, c=x[:, 1])
+        cbar = fig.colorbar(sc, ax=axs[0])
+        cbar.set_label("Cohesion [kPa]", fontsize=10, labelpad=10)
+        axs[0].set_xlabel('Phi [deg]', fontsize=12)
+        axs[0].set_ylabel('Error [%]', fontsize=12)
+        sc = axs[1].scatter(x[:, 1], r, c=x[:, 0])
+        cbar = fig.colorbar(sc, ax=axs[1])
+        cbar.set_label("Phi [deg]", fontsize=10, labelpad=10)
+        axs[1].set_xlabel('Cohesion [kPa]', fontsize=12)
+        axs[1].set_ylabel('Error [%]', fontsize=12)
+        axs[0].set_ylim(residuals.min(), residuals.max())
+        axs[1].set_ylim(residuals.min(), residuals.max())
+        axs[0].grid()
+        axs[1].grid()
+        plt.close()
+        figs.append(fig)
+    pp = PdfPages(path)
+    [pp.savefig(fig) for fig in figs]
+    pp.close()
+
+
+def plot(model, params, x_train, x_test, y_train, y_test, path):
+
+    if not isinstance(path, Path): path = Path(Path(path).as_posix())
+
+    plot_predictions(model, params, x_train, x_test, y_train, y_test, path/"predictions.pdf")
+    plot_wall(model, params, x_train, y_train, path/"variables.pdf")
+    plot_variables(model, params, x_train, y_train, path/"variables.pdf")
 
 
 if __name__ == "__main__":
@@ -84,35 +190,18 @@ if __name__ == "__main__":
     y = np.asarray(y)
     idx = np.where(~np.any(np.isnan(y), axis=-1))[0]
 
-    x = (data["Klei_soilphi"], data["Klei_soilcohesion"])
-    x = tuple([jnp.asarray(item) for item in x])
-    x = jnp.stack(x, axis=-1)
+    X = (data["Klei_soilphi"], data["Klei_soilcohesion"])
+    X = tuple([np.asarray(item) for item in X])
+    X = np.stack(X, axis=-1)
 
-    x = jnp.asarray(x[idx])
-    y = jnp.asarray(y[idx])
+    X = X[idx]
+    y = y[idx]
 
-    model = PlateNeuralNetwork(y.shape[-1])
-    params, losses = train(model, x, y, lr=1e-4, n_epochs=20_000)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    with open(r'results/nn_surrogate.pkl', 'wb') as f: pickle.dump(params, f)
+    model = NeuralNetwork(y.shape[-1])
+    params, losses = train(model, X_train, y_train, lr=1e-4, n_epochs=20_000, path=r'results/nn_surrogate.pkl')
     # with open(r'results/nn_surrogate.pkl', 'rb') as f: params = pickle.load(f)
 
-    figs = []
-    y_hat = model.apply(params, x)
-    y = np.asarray(y)
-    y_hat = np.asarray(y_hat)
-    for i_loc, (y_t, y_p) in enumerate(zip(y.T, y_hat.T)):
-
-        fig = plt.figure()
-        plt.scatter(y_t, y_p, marker='x', c='b')
-        plt.axline((0, 0), slope=1, c='k')
-        plt.plot([y_t.min(), y_t.min()], [y_t.max(), y_t.max()], c='k')
-        plt.xlabel('Observation', fontsize=12)
-        plt.ylabel('Prediction', fontsize=12)
-        plt.close()
-        figs.append(fig)
-
-    pp = PdfPages(r'figures/surrogate/plots.pdf')
-    [pp.savefig(fig) for fig in figs]
-    pp.close()
+    plot(model, params, X_train, X_test, y_train, y_test, r'figures/surrogate')
 
