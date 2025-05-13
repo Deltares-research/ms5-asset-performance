@@ -1,11 +1,11 @@
 import os
-from src.geotechnical_models.dsheetpiling.utils import DSheetPilingResults, DSheetPilingStageResults, WaterData
+from src.geotechnical_models.dsheetpiling.utils import *
 from copy import deepcopy
 from src.geotechnical_models.base import GeoModelBase
 from geolib.models.dsheetpiling import DSheetPilingModel
 from geolib.models.dsheetpiling.internal import SoilCollection, UniformLoad
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict
 import json
 import warnings
 from datetime import datetime
@@ -32,7 +32,8 @@ class DSheetPiling(GeoModelBase):
             if not isinstance(exe_path, Path): exe_path = Path(Path(exe_path).as_posix())
             if not exe_path.exists(): os.mkdir(exe_path)
         else:
-            exe_path = self.model_path.parent
+            exe_path = Path(self.model_path).parent / "execution"
+            if not exe_path.exists(): os.mkdir(exe_path)
         self.exe_path = Path(exe_path.as_posix())
 
     def parse_model(self, path: str | Path) -> None:
@@ -44,6 +45,8 @@ class DSheetPiling(GeoModelBase):
         self.soils = self.get_soils()
         self.water = self.get_water()
         self.uniform_loads = self.get_uniform_loads()
+        self.wall = self.get_wall()
+        self.anchor = self.get_anchor()
 
     def get_soils(self) -> dict[str, SoilCollection]:
         return {soil.name: soil for soil in deepcopy(self.geomodel.input.input_data.soil_collection.soil)}
@@ -66,12 +69,6 @@ class DSheetPiling(GeoModelBase):
         water_lines = self.water.write()
         self.geomodel.input.input_data.waterlevels = water_lines
 
-    def get_wall(self) -> float:
-        raise NotImplementedError("Adjusting the structural properties of the wall is not possible yet.")
-
-    def update_wall(self) -> float:
-        raise NotImplementedError("Adjusting the structural properties of the wall is not possible yet.")
-
     def get_uniform_loads(self) -> dict[str, UniformLoad]:
         return {
             uniform_load.name: uniform_load
@@ -87,6 +84,82 @@ class DSheetPiling(GeoModelBase):
             else:
                 raise AttributeError(f"Uniform load name {load_name} not found in Uniform load list.")
         self.geomodel.input.input_data.uniform_loads.loads = list(self.uniform_loads.values())
+
+    def get_wall(self) -> WallProperties:
+
+        sheet_piling_data = self.geomodel.input.input_data.sheet_piling
+        sheet_piling_lines = sheet_piling_data.splitlines()[6:-1]
+        sheet_piling_props = {
+            key: float(value) if value != "" else 0.
+            for (key, value) in [line.split("=") for line in sheet_piling_lines]
+        }
+        sheet_piling_props = {
+            key: int(value) if value.is_integer() else value
+            for (key, value) in sheet_piling_props.items()
+        }
+        wall_props = WallProperties(**sheet_piling_props)
+        return wall_props
+
+    def update_wall(self, new_wall_props: Dict[str, float]) -> None:
+
+        updated_wall_props = self.wall._asdict()
+        for (key, new_val) in new_wall_props.items():
+            updated_wall_props[key] = new_val
+        self.wall = WallProperties(**updated_wall_props)
+
+        sheet_piling_data = self.geomodel.input.input_data.sheet_piling
+        sheet_piling_lines = sheet_piling_data.splitlines()
+
+        wall_lines = [key+"="+str(value) for (key, value) in updated_wall_props.items()]
+        wall_lines = sheet_piling_lines[:6] + wall_lines + [sheet_piling_lines[-1]]
+        wall_data = "\n".join(wall_lines)
+
+        self.geomodel.input.input_data.sheet_piling = wall_data
+
+    def get_anchor(self) -> AnchorProperties:
+        anchor_data = self.geomodel.input.input_data.anchors
+        anchor_lines = anchor_data.splitlines()
+        anchor_props_names = anchor_lines[1].split()
+        idx = anchor_props_names.index("Cross")
+        anchor_props_names[idx] = "Cross_sect"
+        anchor_props_names.remove("sect.")
+        idx = anchor_props_names.index("E-mod")
+        anchor_props_names[idx] = "Emod"
+        anchor_props_values = []
+        for value in anchor_lines[2].split():
+            try:
+                value = float(value)
+                value = int(value) if value.is_integer() else value
+            except:
+                pass
+            anchor_props_values.append(value)
+        anchor_props = {key: value for (key, value) in zip(anchor_props_names, anchor_props_values)}
+        anchor_props = AnchorProperties(**anchor_props)
+        return anchor_props
+
+    def update_anchor(self, new_anchor_props: Dict[str, float]) -> None:
+
+        updated_anchor_props = self.anchor._asdict()
+        for (key, new_val) in new_anchor_props.items():
+            updated_anchor_props[key] = new_val
+        self.anchor = AnchorProperties(**updated_anchor_props)
+
+        anchor_data = self.geomodel.input.input_data.anchors
+        anchor_lines = anchor_data.splitlines()
+
+        anchor_props_names = anchor_lines[1].split()
+        idx = anchor_props_names.index("Cross")
+        anchor_props_names[idx] = "Cross_sect"
+        anchor_props_names.remove("sect.")
+        idx = anchor_props_names.index("E-mod")
+        anchor_props_names[idx] = "Emod"
+
+        updated_anchor_line = [str(updated_anchor_props[name]) for name in anchor_props_names]
+        updated_anchor_line = " " + " ".join(updated_anchor_line)
+        updated_anchor_lines = anchor_lines[:2] + [updated_anchor_line]
+        updated_anchor_data = "\n".join(updated_anchor_lines)
+
+        self.geomodel.input.input_data.anchors = updated_anchor_data
 
     def execute(self, result_path: Optional[str | Path] = None, i_run: Optional[int] = None) -> None:
         if i_run is None:
