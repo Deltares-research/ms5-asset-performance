@@ -202,10 +202,10 @@ if __name__ == "__main__":
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
     model = NeuralNetwork(y.shape[-1])
-    params, losses = train(model, X_train, y_train, lr=1e-4, n_epochs=20_000, path=r'results/nn_surrogate.pkl')
-    # with open(r'results/nn_surrogate.pkl', 'rb') as f: params = pickle.load(f)
+    params, losses = train(model, X_train, y_train, lr=1e-4, n_epochs=20_000, path=r'results/mlp_surrogate.pkl')
+    # with open(r'results/mlp_surrogate.pkl', 'rb') as f: params = pickle.load(f)
 
-    plot(model, params, X_train, X_test, y_train, y_test, r'figures/surrogate_nn')
+    plot(model, params, X_train, X_test, y_train, y_test, r'figures/surrogate_mlp')
 
     y_hat = inference(model, params, X)
     residuals = y - y_hat

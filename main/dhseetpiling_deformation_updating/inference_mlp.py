@@ -1,6 +1,6 @@
 import numpy as np
 import jax.numpy as jnp
-from surrogate_nn import NeuralNetwork
+from surrogate_mlp import NeuralNetwork
 import pickle
 from pathlib import Path
 import json
@@ -15,7 +15,7 @@ y = [[item if item is not None else np.nan for item in row] for row in y]
 y = np.asarray(y)
 
 model = NeuralNetwork(y.shape[-1])
-with open(r'results/nn_surrogate.pkl', 'rb') as f: params = pickle.load(f)
+with open(r'results/mlp_surrogate.pkl', 'rb') as f: params = pickle.load(f)
 
 def inference(model, x):
     return np.asarray(model.apply(params, jnp.asarray(x)))
