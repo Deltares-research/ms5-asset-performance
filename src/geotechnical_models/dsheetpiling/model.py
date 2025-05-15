@@ -116,6 +116,23 @@ class DSheetPiling(GeoModelBase):
 
         self.geomodel.input.input_data.sheet_piling = wall_data
 
+    def apply_corrosion(self, corrosion: float, start_thickness: float) -> None:
+
+        if isinstance(corrosion, np.ndarray): corrosion = corrosion.item()
+        if isinstance(corrosion, list) or isinstance(corrosion, tuple): corrosion = corrosion[0]
+
+        reduction_factor = corrosion / start_thickness
+        EI = self.wall.SheetPilingElementEI * (1 - reduction_factor)
+        M = self.wall.SheetPilingElementResistingMoment * (1 - reduction_factor)
+        width = self.wall.SheetPilingPileWidth - corrosion
+
+        wall_dict = self.wall._asdict()
+        wall_dict["SheetPilingElementEI"] = EI
+        wall_dict["SheetPilingElementResistingMoment"] = M
+        wall_dict["SheetPilingPileWidth"] = width
+
+        self.update_wall(wall_dict)
+
     def get_anchor(self) -> AnchorProperties:
         anchor_data = self.geomodel.input.input_data.anchors
         anchor_lines = anchor_data.splitlines()
