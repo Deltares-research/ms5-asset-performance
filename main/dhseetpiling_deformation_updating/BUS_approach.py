@@ -11,6 +11,7 @@ import numpy as np
 
 import sys
 import os
+import json
 # Add the project root directory to the path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, '../..'))
@@ -47,43 +48,64 @@ class PosteriorRetainingStructure:
     def load_synthetic_data(self, model_path: str):
         """
         Load the synthetic data
-        """
-        # if measurement_path.endswith('.json'):
-        #     self.synthetic_data = pd.read_json(measurement_path)
-        # elif measurement_path.endswith('.csv'):
-        #     self.synthetic_data = pd.read_csv(measurement_path)
-        # else:
-        #     raise ValueError('Invalid file extension')
-        # self.measured_displacement_mean = self.synthetic_data['displacement'].values
-        # self.measured_displacement_sigma = self.synthetic_data['sigma'].values
-        self.true_cohesion = 10
-        self.true_phi = 25
-        self.true_water_level = -0.7
-        parameters = [[self.true_cohesion, self.true_phi, self.true_water_level]]
-        
+        """ 
+        # parameters = [[self.true_cohesion, self.true_phi, self.true_water_level]]
+        synthetic_parameter_name = self.parameter_names
+        # if not self.use_surrogate:
+        #     for i_par, parameter_name in enumerate(self.parameter_names):
+        #         if 'soilcurkb1' in parameter_name:
+        #             synthetic_parameter_name.append(parameter_name.replace('soilcurkb1', 'soilcurkb2'))
+        #             synthetic_parameter_name.append(parameter_name.replace('soilcurkb1', 'soilcurkb3'))
+        #             synthetic_parameter_name.append(parameter_name.replace('soilcurkb1', 'soilcurko1'))
+        #             synthetic_parameter_name.append(parameter_name.replace('soilcurkb1', 'soilcurko2'))
+        #             synthetic_parameter_name.append(parameter_name.replace('soilcurkb1', 'soilcurko3'))
+        #             self.synthetic_values.append(np.round(self.synthetic_values[i_par]*0.5))
+        #             self.synthetic_values.append(np.round(self.synthetic_values[i_par]*0.25))
+        #             self.synthetic_values.append(np.round(self.synthetic_values[i_par]))
+        #             self.synthetic_values.append(np.round(self.synthetic_values[i_par]*0.5))
+        #             self.synthetic_values.append(np.round(self.synthetic_values[i_par]*0.25))
         # Initialize the displacement likelihood function
         self.l_displacement = DisplacementLikelihood(
             model_path,
             use_surrogate=self.use_surrogate,
-            parameter_names=self.parameter_names,
+            parameter_names=synthetic_parameter_name,
         )
-        self.l_displacement.generate_synthetic_measurement(parameters)
-
+        self.l_displacement.generate_synthetic_measurement([self.synthetic_values])
+        
+    
     def define_parameters(self):
-        # soil_layers = {"Klei": ("soilphi", "soilcohesion")}
-        # rv_strength = MvnRV(mus=np.array([30, 10]), stds=np.array([3, 1]), names=["Klei_soilphi", "Klei_soilcohesion"])
-        # rv_water = MvnRV(mus=np.array([-0.8]), stds=np.array([0.08]), names=["water_A"])
-        # state = GaussianState(rvs=[rv_strength, rv_water])
+        # load parameters from json file
+        with open('examples/deterministic_parameters.json', 'r') as f:
+            parameters = json.load(f)
 
-        soil_cohesion = ERADist('normal', 'PAR', [10, 1])
-        # soil_cohesion = ERADist('uniform', 'PAR', [5, 15])
-        soil_phi = ERADist('normal', 'PAR', [30, 3])
-        # soil_phi = ERADist('uniform', 'PAR', [25, 35])
-        water_level = ERADist('normal', 'PAR', [-0.8, 0.08])
-        # water_level = ERADist('uniform', 'PAR', [-0.95, -0.6])
-            
-        self.dist_parameters = [soil_cohesion, soil_phi, water_level]
-        self.parameter_names = ['Klei_soilcohesion', 'Klei_soilphi', 'water_A']
+        material_properties = parameters['material_properties']
+        # sheet_piling_walls = parameters['sheet_piling_walls']
+        # anchors = parameters['anchors']
+        # water_levels = parameters['water_levels']
+
+        distributions = []
+        parameter_names = []
+        self.synthetic_values = []
+        scale = 1.2
+        for material_name, material_values in material_properties.items():
+            if material_values['cohesion'] != 0:
+                cohesion = ERADist('normal', 'PAR', [material_values['cohesion'], 0.1*material_values['cohesion']])
+                distributions.append(cohesion)
+                parameter_names.append(f'{material_name}_soilcohesion')
+                self.synthetic_values.append(material_values['cohesion']*scale)
+            if material_values['phi'] != 0:
+                phi = ERADist('normal', 'PAR', [material_values['phi'], 0.1*material_values['phi']])
+                distributions.append(phi)
+                parameter_names.append(f'{material_name}_soilphi')
+                self.synthetic_values.append(material_values['phi']*scale)
+            if material_values['k_top']['kh1'] != 0:
+                kh1 = ERADist('normal', 'PAR', [material_values['k_top']['kh1'], 0.1*material_values['k_top']['kh1']])
+                distributions.append(kh1)
+                parameter_names.append(f'{material_name}_soilcurkb1') # b van boven?
+                self.synthetic_values.append(material_values['k_top']['kh1']*scale)
+
+        self.dist_parameters = distributions
+        self.parameter_names = parameter_names
 
         self.dimensions = len(self.dist_parameters)
         self.R = np.eye(self.dimensions)
@@ -218,7 +240,7 @@ class PosteriorRetainingStructure:
         plt.rc('figure', titlesize=18)  # fontsize of the figure title
         
         # Get prior samples
-        prior_samples = self.prior_pdf.random(1000)        
+        prior_samples = self.prior_pdf.random(1000) 
         # Get posterior samples if available
 
         list_of_p0 = self.sample_results.keys()
@@ -227,7 +249,7 @@ class PosteriorRetainingStructure:
             p0_sample_results = self.sample_results[cur_p0]
             list_of_N = p0_sample_results.keys()
             for i_N, cur_N in enumerate(list_of_N):
-                plt.figure(figsize=(12, 10))
+                plt.figure(figsize=(12, 2*self.dimensions))
                 # Get keys from self.sample_results and format them nicely
                 keys = p0_sample_results[cur_N].keys()
                 approaches = ", ".join(keys)
@@ -260,9 +282,10 @@ class PosteriorRetainingStructure:
                         
 
                     # For the prior (first level)
+                    # print(f"displacement_samples: {displacement_samples}")
+                    # print(f"shape of displaceme/nt_samples: {np.shape(displacement_samples)} ")
                     prior_displacements = displacement_samples[0]
                     posterior_displacements = displacement_samples[-1]
-
                     kde_prior = gaussian_kde(prior_displacements)
                     min_displacement = min(np.min(prior_displacements), np.min(posterior_displacements))
                     max_displacement = max(np.max(prior_displacements), np.max(posterior_displacements))
@@ -303,7 +326,7 @@ class PosteriorRetainingStructure:
                     plt.grid(True, alpha=0.3)
                     plt.legend()
 
-                    true_parameters = [self.true_cohesion, self.true_phi, self.true_water_level]
+                    # true_parameters = [self.true_cohesion, self.true_phi, self.true_water_level]
                     # Plot each parameter's marginal distribution
                     for i in range(self.dimensions):
                         plt.subplot(self.dimensions+1, nr_keys, nr_keys*(i+1)+1+i_key)
@@ -324,7 +347,7 @@ class PosteriorRetainingStructure:
                         # plt.hist(posterior_samples[:, i], density=True, alpha=0.5, color='red', label='Posterior', bins=nr_bins)
 
                         # Add mean lines
-                        plt.axvline(true_parameters[i], color='blue', linestyle='--', label=f'True {self.parameter_names[i]}')
+                        plt.axvline(self.synthetic_values[i], color='blue', linestyle='--', label=f'True {self.parameter_names[i]}')
                         # plt.hist(posterior_samples[:, i], density=True, alpha=0.5, color='red', label='Posterior')
                         # Add mean lines
                         # plt.axvline(np.mean(prior_samples[:, i]), color='blue', linestyle='--', 
@@ -401,7 +424,7 @@ if __name__ == '__main__':
     )
     
     posterior_retention_structure.define_parameters()
-    posterior_retention_structure.update_for_new_displacement_data(list_of_N=[1000], p0=[0.1])
+    posterior_retention_structure.update_for_new_displacement_data(list_of_N=[1000], p0=[0.1], approaches=['BUS', 'aBUS'])
     # make plot directory
     os.makedirs('plots', exist_ok=True)
     posterior_retention_structure.plot_prior_and_posterior_marginal_pdfs(plot_dir='plots')

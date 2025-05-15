@@ -63,7 +63,7 @@ class DisplacementLikelihood(BaseLikelihood):
         self.max_paramater_value = max_parameter_value
         return self.max_paramater_value
 
-    def generate_synthetic_measurement(self, parameters: List[float], sigma: float = 0.3):
+    def generate_synthetic_measurement(self, parameters: List[float], sigma: float = 0.01):
         """
         Generate a synthetic measurement for given parameters and sigma
         """
@@ -72,7 +72,7 @@ class DisplacementLikelihood(BaseLikelihood):
         for parameter in parameters:
             displacement = self.get_displacement_from_dsheet_model(parameter)
             self.measured_mean.append(displacement)
-            self.measured_sigma.append(sigma)
+            self.measured_sigma.append(displacement*sigma)
 
         self.measured_mean = np.array(self.measured_mean)
         self.measured_sigma = np.array(self.measured_sigma)
@@ -107,8 +107,7 @@ class DisplacementLikelihood(BaseLikelihood):
         """
         n = self.measured_mean.shape[0]
         w = 1 / n   # uniform weights
-        return float(sum(w * norm.pdf(displacement_sample, self.measured_mean[i], 
-                                         self.measured_sigma[i if isinstance(self.measured_sigma, list) else 0])
+        return float(sum(w * norm.pdf(displacement_sample, self.measured_mean[i], self.measured_sigma[i])
                          for i in range(n)))
     
     def safety_factor(self, displacement_sample: float) -> float:
@@ -153,7 +152,8 @@ class DisplacementLikelihood(BaseLikelihood):
             tuple: (likelihood value, displacement)
         """
         self.parameter_value = self.get_displacement_from_dsheet_model(parameters)
-        return self.compute_likelihood_for_equality_information(self.parameter_value)
+        likelihood = self.compute_likelihood_for_equality_information(self.parameter_value)
+        return likelihood
     
     def compute_log_likelihood_for_parameters(self, parameters: List[float]) -> tuple:
         """
@@ -186,15 +186,14 @@ class DisplacementLikelihood(BaseLikelihood):
         # - More corrosion increases displacement
         Returns: 
             displacement: estimated displacement in cm
-        """        
-        # Add some noise to simulate model error
-        noise = np.random.normal(0, 0.1)
-        a = 12
-        b = 0.8
-        c = 0.5
-        d = 0.2
-        displacement = a + b * parameters[0] + c * parameters[1] + d * parameters[2]
+        """ 
+        displacement = 0       
+        for par in parameters:
+            displacement += par
         return displacement
+        # noise = np.random.normal(0, 5)
+        # return 10 + noise
+
         # return parameters[0] + parameters[1] + parameters[2]
     
     def get_displacement_from_dsheet_model(self, updated_parameters: list[float], stage_id: int = -1):
@@ -214,12 +213,22 @@ class DisplacementLikelihood(BaseLikelihood):
         # Otherwise use the actual DSheetPiling model
         # Pair parameters with names
         params = {name: rv for (name, rv) in zip(self.parameter_names, updated_parameters)}
+        # if k1 in params, add k2=0.5*k1 and k3=0.2*k1
+        for key, value in params.items():
+            # check if key contains 'k1' -> key of type: soilname_k1
+            if 'soilcurkb1' in key:
+                params[key.replace('soilcurkb1', 'soilcurkb2')] = 0.5 * value
+                params[key.replace('soilcurkb1', 'soilcurkb3')] = 0.25 * value
+                params[key.replace('soilcurkb1', 'soilcurko1')] = value
+                params[key.replace('soilcurkb1', 'soilcurko2')] = 0.5 * value
+                params[key.replace('soilcurkb1', 'soilcurko3')] = 0.25 * value
+
         
         soil_data = unpack_soil_params(params, list(self.model.soils.keys()))
         water_data = unpack_water_params(params, [lvl.name for lvl in self.model.water.water_lvls])
-        
         self.model.update_soils(soil_data)
         self.model.update_water(water_data)
+
         self.model.execute(i_run=0)
         
         #TODO: Get the displacement

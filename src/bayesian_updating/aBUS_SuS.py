@@ -103,7 +103,10 @@ def aBUS_SuS(N, p0, l_class, distr, max_it: int = 20):
     for i in range(N):
         # cur_displacements[i] = displacements_for_u(u_j[:,i])
         leval[i] = log_L_fun(u_j[:,i], l_class)
+        # print(20*'-')
+        # print(f"leval: {leval[i]}")
         cur_parameter_values[i] = l_class.parameter_value
+        # print(f"cur_parameter_values: {cur_parameter_values[i]}")
     leval = np.array(leval)
     print('Done!')
     logl_hat = max(leval)   # =-log(c) (Ref.1 Alg.5 Part.3)
