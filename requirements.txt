@@ -24,6 +24,7 @@ decorator==5.2.1
 defusedxml==0.7.1
 docutils==0.21.2
 executing==2.2.0
+fastapi==0.115.12
 fastjsonschema==2.21.1
 fonttools==4.56.0
 fqdn==1.5.1
@@ -77,11 +78,12 @@ patsy==1.0.1
 pillow==11.1.0
 platformdirs==4.3.7
 pluggy==1.5.0
-#probabilistic-library @ file:///C:/Users/mavritsa/Repositories/ms5-asset-performance/probabilistic_library-25.1.1-py3-none-any.whl#sha256=27ce4fbe6f67b74e8eee1c5067e602090b5cf9d7a61179bff1a7cc8fad10b632
+probabilistic-library @ file:///C:/Users/mavritsa/Stichting%20Deltares/Sito-IS%202023%20SO%20Emerging%20Topics%20-%20Moonshot%205%20-%2002_Asset%20performance/ARK%20case%20study/PTK/probabilistic_library-25.1.1-py3-none-any.whl#sha256=27ce4fbe6f67b74e8eee1c5067e602090b5cf9d7a61179bff1a7cc8fad10b632
 prometheus_client==0.21.1
 prompt_toolkit==3.0.50
 psutil==7.0.0
 pure_eval==0.2.3
+py4j==0.10.9.7
 pycparser==2.22
 pydantic==1.10.21
 Pygments==2.19.1
@@ -123,6 +125,7 @@ sphinxcontrib-jsmath==1.0.1
 sphinxcontrib-qthelp==2.0.0
 sphinxcontrib-serializinghtml==2.0.0
 stack-data==0.6.3
+starlette==0.46.2
 statsmodels==0.14.4
 terminado==0.18.1
 threadpoolctl==3.6.0

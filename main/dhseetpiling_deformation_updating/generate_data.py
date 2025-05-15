@@ -144,8 +144,8 @@ if __name__ == "__main__":
     state = GaussianState(rvs=[rv_strength])
 
     config = {
-        "rv_pooling": "pooled",
-        "n_locs": 1,
+        "rv_pooling": "unpooled",
+        "n_locs": 1_000,
         "seed": 42,
         # "disp_dist_type": "lognormal",
         "disp_dist_type": "normal",
