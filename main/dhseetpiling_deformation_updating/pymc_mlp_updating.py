@@ -8,6 +8,7 @@ import arviz as az
 from pathlib import Path
 import json
 from typing import Optional
+from scipy.interpolate import UnivariateSpline
 
 import pytensor
 import pytensor.tensor as pt
@@ -55,45 +56,69 @@ class InferenceModel(Sampler):
     def predict(self, idata: az.InferenceData, type: str = "posterior") -> az.InferenceData:
 
         (obs, wall_props) = self.data
+        _, _, wall_locs, _ = wall_props
+        _, keep_idx = np.unique(wall_locs, return_index=True)
+        keep_idx = np.sort(keep_idx)
+        wall_locs = wall_locs[keep_idx]
 
-        if type == "posterior":
-            x = idata.posterior.x.values
+        if type == "posterior": x = idata.posterior.x.values
+        if type == "prior": x = idata.prior.x.values
 
-        if type == "prior":
-            x = idata.prior.x.values
+        y_hat_monitoring = np.asarray(self.nn_model_fn(x)).reshape(x.shape[0], x.shape[1], -1)
 
         # Use surrogate for all points along wall for smoother prediction plots.
         model = NeuralNetwork(150)
         trainer = Trainer(model)
         trainer.load(r"results/mlp_surrogate_150locs.pkl")
         y_hat = np.asarray(trainer.predict(x)).reshape(x.shape[0], x.shape[1], -1)
+        y_hat = y_hat[..., keep_idx]
 
-        # y_hat = np.asarray(self.nn_model_fn(x)).reshape(x.shape[0], x.shape[1], -1)
         moments = self._moments(y_hat, wall_props)
         fos = self._fos(y_hat, wall_props)
-        data_pred = {"y_prediction": y_hat, "moments": moments, "fos": fos}
+        data_pred = {
+            "y_prediction": y_hat,
+            "y_monitoring_prediction": y_hat_monitoring,
+            "moments": moments,
+            "fos": fos
+        }
         idata_pred = az.convert_to_inference_data(data_pred, group="prediction")
 
         return idata_pred
 
     def _curvature(self, displacements, dLs):
-        padding = (
-            (0, 0),  # no padding on axis 0
-            (0, 0),  # no padding on axis 1
-            (2, 2),  # pad two columns on axis 2 -> double derivative -> moments have the shape of displacements
-        )
-        displacements_padded = np.pad(displacements, pad_width=padding, mode='edge')
 
-        dy2_dx2 = np.diff(displacements_padded, n=2, axis=-1)[..., 1:-1] / dLs ** 2
+        displacements = displacements.copy() / 1_000
+
+        # padding = (
+        #     (0, 0),  # no padding on axis 0
+        #     (0, 0),  # no padding on axis 1
+        #     (2, 2),  # pad two columns on axis 2 -> double derivative -> moments have the shape of displacements
+        # )
+        # displacements_padded = np.pad(displacements.copy(), pad_width=padding, mode='edge')
+        # dy2_dx2 = np.diff(displacements_padded, n=2, axis=-1)[..., 1:-1] / (dLs ** 2 + 1e-6)
+
+        #TODO: Fix moment estimation using simple double derivative calculation
+        x = np.cumsum(dLs)
+        dy2_dx2 = np.zeros_like(displacements)
+        for i, disp_chain in enumerate(displacements):
+            for j, disp_chain_sample in enumerate(disp_chain):
+                spline = UnivariateSpline(x, disp_chain_sample, s=1e-8)
+                dy2_dx2[i, j] = spline.derivative(n=2)(x)
 
         return dy2_dx2
 
     def _moments(self, displacements, wall_props):
 
-        EI, _, dLs = wall_props
+        EI, _, wall_locs, monitoring_locs = wall_props
+
+        _, keep_idx = np.unique(wall_locs, return_index=True)
+        keep_idx = np.sort(keep_idx)
+        wall_locs = wall_locs[keep_idx]
+
+        dLs = np.abs(np.diff(wall_locs))
+        dLs = np.append(dLs[0], dLs)
 
         dy2_dx2 = self._curvature(displacements, dLs)
-        dy2_dx2 /= 1_000  # [mm] -> [m]
 
         moments = - EI * dy2_dx2  # Minus for proper sign in moment convention
 
@@ -101,7 +126,7 @@ class InferenceModel(Sampler):
 
     def _fos(self, displacements, wall_props):
         
-        _, moment_cap, _ = wall_props
+        _, moment_cap, _, _ = wall_props
         
         moments = self._moments(displacements, wall_props)
         
@@ -112,8 +137,10 @@ class InferenceModel(Sampler):
     def plot_model(self, path):
 
         (y_data, wall_props) = self.data
-        _, moment_cap, dLs = wall_props
-        depths = np.cumsum(dLs)
+        _, moment_cap, wall_locs, monitoring_locs = wall_props
+        _, keep_idx = np.unique(wall_locs, return_index=True)
+        keep_idx = np.sort(keep_idx)
+        wall_locs = wall_locs[keep_idx]
 
         fig, axs = plt.subplots(1, 2, sharex=True, sharey=True, figsize=(12, 6))
 
@@ -125,16 +152,16 @@ class InferenceModel(Sampler):
         y = y.reshape(-1, y.shape[-1])
         y_pi = np.quantile(y, [0.05, 0.95], axis=0)
 
-        x_data = np.linspace(0, depths.max(), y_data.shape[-1])
-        x_hat = depths
+        x_data = monitoring_locs
+        x_hat = wall_locs
 
         axs[0].fill_betweenx(x_data, y_pi[0], y_pi[1], color="b", alpha=0.3, label="90% PI")
         axs[0].fill_betweenx(x_hat, y_hat_ci[0], y_hat_ci[1], color="b", alpha=0.6, label="90% CI")
         axs[0].plot(y_hat_mean, x_hat, c="b", label="Mean model")
         axs[0].scatter(y_data, x_data, c="k", marker="x", label="Data")
         axs[0].set_xlabel("Displacement [mm]", fontsize=14)
-        axs[0].set_ylabel("# of point along wall", fontsize=14)
-        axs[0].invert_yaxis()
+        axs[0].set_ylabel("Depth along wall [m]", fontsize=14)
+        # axs[0].invert_yaxis()
         handles, labels = axs[0].get_legend_handles_labels()
         axs[0].legend(handles[::-1], labels[::-1], fontsize=10)
         axs[0].grid()
@@ -148,8 +175,8 @@ class InferenceModel(Sampler):
         y = y.reshape(-1, y.shape[-1])
         y_pi = np.quantile(y, [0.05, 0.95], axis=0)
 
-        x_data = np.linspace(0, depths.max(), y_data.shape[-1])
-        x_hat = depths
+        x_data = monitoring_locs
+        x_hat = wall_locs
 
         axs[1].fill_betweenx(x_data, y_pi[0], y_pi[1], color="r", alpha=0.3, label="90% PI")
         axs[1].fill_betweenx(x_hat, y_hat_ci[0], y_hat_ci[1], color="r", alpha=0.6, label="90% CI")
@@ -174,9 +201,13 @@ class InferenceModel(Sampler):
     def plot_moments(self, path):
 
         (y_data, wall_props) = self.data
-        _, moment_cap, dLs = wall_props
-        depths = np.cumsum(dLs)
-
+        _, moment_cap, wall_locs, monitoring_locs = wall_props
+        _, keep_idx = np.unique(wall_locs, return_index=True)
+        keep_idx = np.sort(keep_idx)
+        wall_locs = wall_locs[keep_idx]
+        
+        x = wall_locs
+        
         fig, axs = plt.subplots(1, 2, sharex=True, sharey=True, figsize=(12, 6))
 
         moments = self.idata.prior_prediction.moments.values
@@ -188,11 +219,11 @@ class InferenceModel(Sampler):
         pf = np.mean(fos<1)
 
         axs[0].axvline(moment_cap, c="k", linestyle="--", label="Capacity")
-        axs[0].fill_betweenx(depths, moments_ci[0], moments_ci[1], color="b", alpha=0.6, label="90% CI")
-        axs[0].plot(moments_mean, depths, c="b", label="Mean model")
+        axs[0].fill_betweenx(x, moments_ci[0], moments_ci[1], color="b", alpha=0.6, label="90% CI")
+        axs[0].plot(moments_mean, x, c="b", label="Mean model")
         axs[0].set_xlabel("Moment [kNm]", fontsize=14)
-        axs[0].set_ylabel("# of point along wall", fontsize=14)
-        axs[0].invert_yaxis()
+        axs[0].set_ylabel("Depth along wall [m]", fontsize=14)
+        # axs[0].invert_yaxis()
         handles, labels = axs[0].get_legend_handles_labels()
         axs[0].legend(handles[::-1], labels[::-1], fontsize=10)
         axs[0].grid()
@@ -207,8 +238,8 @@ class InferenceModel(Sampler):
         pf = np.mean(fos<1)
 
         axs[1].axvline(moment_cap, c="k", linestyle="--", label="Capacity")
-        axs[1].fill_betweenx(depths, moments_ci[0], moments_ci[1], color="r", alpha=0.6, label="90% CI")
-        axs[1].plot(moments_mean, depths, c="r", label="Mean model")
+        axs[1].fill_betweenx(x, moments_ci[0], moments_ci[1], color="r", alpha=0.6, label="90% CI")
+        axs[1].plot(moments_mean, x, c="r", label="Mean model")
         axs[1].set_xlabel("Moment [kNm]", fontsize=14)
         handles, labels = axs[1].get_legend_handles_labels()
         axs[1].legend(handles[::-1], labels[::-1], fontsize=10)
@@ -246,6 +277,8 @@ class InferenceModel(Sampler):
         ci = np.quantile(fos_posterior, [0.025, 0.975])
         counts, _, _ = plt.hist(fos_posterior, bins=100, density=True, color="r", alpha=0.6, label=label)
         plt.errorbar(mean, 0.55*max(counts), xerr=[[mean - ci.min()], [ci.max() - mean]], fmt='o', color='r', capsize=5)
+
+        plt.axvline(1, c="k", linestyle="--")
 
         plt.xlabel("FoS [-]", fontsize=14)
         plt.ylabel("Density [-]", fontsize=14)
@@ -297,21 +330,26 @@ def load_data(path: str | Path, use_noisy: bool = True, idx: Optional[int] = Non
 if __name__ == "__main__":
 
     points_idx = np.arange(0, 150, 10)  # idx of locations along wall where measurements are collected
-    # wall_props = (1e+4, 15., np.ones(points_idx.size) * 0.1)
-    wall_props = (1e+4, 15., np.ones(150) * 0.1)
-
     data_path = r"results/sample.json"
     data, true_params = load_data(data_path, use_noisy=True, idx=points_idx)
-    data = (
-        data[0][0],  # Use monitoring of one wall cross-section
-        wall_props
-    )
+    y_data = data[0][0]  # Use monitoring of one wall cross-section
+
+    with open(r"results/wall_locations.json", "r") as f: wall_locs = json.load(f)
+    wall_locs = np.asarray(wall_locs)
+    monitoring_locs = wall_locs[::wall_locs.size//y_data.shape[-1]]
+    wall_props = (1e+4, 15., wall_locs, monitoring_locs)
+
+    data = (y_data, wall_props)
 
     trainer = create_trainer(points_idx)
     sampler = InferenceModel(trainer.model, trainer.params, data)
     # sampler.sample(n_chains=4, n_samples=1_000, n_warmup=1_000, target_accept=0.95, path=r"results/idata_mlp.netcdf")
+
     sampler.load_idata(path=r"results/idata_mlp.netcdf")
-    # sampler.predict(sampler.idata, "posterior")
+    idata_new = sampler.predict(sampler.idata, "prior")
+    sampler.idata.prior_prediction = idata_new.prediction
+    idata_new = sampler.predict(sampler.idata, "posterior")
+    sampler.idata.posterior_prediction = idata_new.prediction
 
     plot_path = Path(Path(r"figures/pymc_mlp").as_posix())
     plot_path.mkdir(parents=True, exist_ok=True)
