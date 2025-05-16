@@ -57,6 +57,14 @@ def unpack_water_params(params: Dict[str, float], water_lvls: List[str]) -> Dict
         water_data[water_lvl_name] = float(val)
     return water_data
 
+def unpack_wall_data(params: Dict[str, float], wall_dict: Dict[str, float]) -> Dict[str, float]:
+    wall_names = list(wall_dict.keys())
+    for (key, val) in params.items():
+        name = key.split("_")[-1]
+        if not name in wall_names:
+            continue
+        wall_dict[name] = float(val)
+    return wall_dict
 
 def safety_fn(
         params: Dict[str, float],
