@@ -25,7 +25,9 @@ class NeuralNetwork(nn.Module):
     @nn.compact
     def __call__(self, x: Float[Array, "n_obs n_input"]) -> Float[Array, "n_obs n_output"]:
 
-        y = nn.Dense(512, kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0))(x)
+        y = nn.Dense(1024, kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0))(x)
+        y = nn.relu(y)
+        y = nn.Dense(512, kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0))(y)
         y = nn.relu(y)
         y = nn.Dense(256, kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0))(y)
         y = nn.relu(y)
@@ -125,16 +127,49 @@ def plot_wall(model, params, x, y, path):
     st_residuals = residuals / np.abs(y+1e-8) * 100
 
     fig = plt.figure()
+    for disp in y:
+        plt.plot(disp, np.arange(1, y_hat.shape[1]+1), c='b', alpha=0.3)
+    for i, y_depth in enumerate(y_hat.T):
+        mean = y_depth.mean()
+        ci = np.quantile(y_depth, [0.025, 0.975])
+        plt.errorbar(mean, [i+1], xerr=[[mean - ci.min()], [ci.max() - mean]], fmt='o', color='r', capsize=5)
+    plt.xlabel('Displacement [mm]', fontsize=12)
+    plt.ylabel('Point # along wall', fontsize=12)
+    plt.gca().invert_yaxis()
+    plt.grid()
+    plt.close()
+
+    if path.suffix == ".png":
+        fig.savefig(path)
+    else:
+        pp = PdfPages(path)
+        pp.savefig(fig)
+        pp.close()
+
+
+def plot_wall_error(model, params, x, y, path):
+
+    if not isinstance(path, Path): path = Path(Path(path).as_posix())
+
+    y_hat = inference(model, params, x)
+    residuals = y - y_hat
+    st_residuals = residuals / np.abs(y+1e-8) * 100
+
+    fig = plt.figure()
     for r in st_residuals:
-        plt.plot(r, np.arange(st_residuals.shape[1]), c='b', alpha=0.3)
+        plt.plot(r, np.arange(1, y_hat.shape[1]+1), c='b', alpha=0.3)
     plt.xlabel('Error [%]', fontsize=12)
     plt.ylabel('Point # along wall', fontsize=12)
     plt.gca().invert_yaxis()
     plt.grid()
     plt.close()
-    pp = PdfPages(path)
-    pp.savefig(fig)
-    pp.close()
+
+    if path.suffix == ".png":
+        fig.savefig(path)
+    else:
+        pp = PdfPages(path)
+        pp.savefig(fig)
+        pp.close()
 
 
 def plot_variables(model, params, x, y, path):
@@ -189,13 +224,14 @@ def plot(model, params, x_train, x_test, y_train, y_test, path):
     if not isinstance(path, Path): path = Path(Path(path).as_posix())
 
     plot_predictions(model, params, x_train, x_test, y_train, y_test, path/"predictions.pdf")
-    plot_wall(model, params, x_train, y_train, path/"wall.pdf")
+    plot_wall(model, params, x_train, y_train, path/"wall.png")
+    plot_wall_error(model, params, x_train, y_train, path/"wall_error.png")
     plot_variables(model, params, x_train, y_train, path/"variables.pdf")
 
 
 if __name__ == "__main__":
 
-    data_path = r"data/sample_1000_unpooled.json"
+    data_path = r"data/sample_20000_unpooled.json"
     data_path = Path(Path(data_path).as_posix())
     with open(data_path, "r") as f: data = json.load(f)
 
@@ -226,5 +262,5 @@ if __name__ == "__main__":
     corr_mat = np.corrcoef(residuals.T)
     np.save(r"results/corr_mat.npy", corr_mat)
 
-    # plot_losses(lossesses, r"figures/surrogate_mlp/losses.png")
+    # plot_losses(losses, r"figures/surrogate_mlp/losses.png")
 

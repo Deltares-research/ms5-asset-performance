@@ -146,7 +146,7 @@ if __name__ == "__main__":
 
     config = {
         "rv_pooling": "unpooled",
-        "n_locs": 3_000,
+        "n_locs": 20_000,
         "seed": 42,
         # "disp_dist_type": "lognormal",
         "disp_dist_type": "normal",
