@@ -190,9 +190,12 @@ class DSheetPiling(GeoModelBase):
         geomodel.serialize(exe_path)  # _executed model is used from now on.
         geomodel.execute()  # Make sure to add 'geolib.env' in run directory
         self.results = self.read_dsheet_results(geomodel)
+        for extension in [".log", ".shi", ".shd"]:
+            file_path = exe_path.with_suffix(extension)
+            if file_path.exists(): file_path.unlink()
 
         if result_path is not None:
-            if not isinstance(result_path, Path): result_path = Path(Path(result_path).as_posix())
+            if not isinstance(result_path, Path): result_path = Path(result_path)
             result_path = Path(result_path.as_posix())
             result_folder = result_path.parent
             if not result_folder.exists():
