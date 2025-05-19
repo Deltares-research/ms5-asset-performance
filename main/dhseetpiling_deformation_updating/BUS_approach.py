@@ -93,20 +93,15 @@ class PosteriorRetainingStructure:
                 sample_dict["samples"][parameter_name.replace('soilcurkb1', 'soilcurko2')] = samples[:, i_par] * 0.5
                 sample_dict["samples"][parameter_name.replace('soilcurkb1', 'soilcurko3')] = samples[:, i_par] * 0.25  
      
-        # print(f"sample_dict: {sample_dict}")
-        # plot histogram of samples
-        # plt.figure(figsize=(10, 5))
+        # print(f"sample_dict: {sample_dict['samples'].keys()}")
+        param_names = list(sample_dict['samples'].keys())
         # Create a single DataFrame with all parameters
         print("Creating dataframe with all parameters...")
-        df = pd.DataFrame({param: sample_dict["samples"][param] for param in self.parameter_names})
+        df = pd.DataFrame({param: sample_dict["samples"][param] for param in param_names})
+        # print(f"df: {df}")
         print("Saving dataframe to csv file...")
-        df.to_csv('parameter_samples.csv', index=False)
+        df.to_csv('1M_parameter_samples.csv', index=False)
         print("Done!")
-        #     plt.subplot(self.dimensions, 1, i_par+1)
-        #     plt.hist(sample_dict["samples"][parameter_name], bins=50, density=True, alpha=0.5, label=parameter_name)
-        #     plt.legend()
-        # print(f"sample_dict: {sample_dict}")
-        # plt.show()
 
         # save sample_dict to json file
         # with open('sample_dict.json', 'w') as f:
@@ -133,6 +128,8 @@ class PosteriorRetainingStructure:
         lower_bound = 0.3
         upper_bound = 1.8
         for material_name, material_values in material_properties.items():
+            if material_name == 'klei siltig' or material_name == 'Zand lost (18)':
+                continue
             if material_values['cohesion'] != 0:
                 # cohesion = ERADist('normal', 'PAR', [material_values['cohesion'], 0.1*material_values['cohesion']])
                 cohesion = ERADist('uniform', 'PAR', [material_values['cohesion']*lower_bound, material_values['cohesion']*upper_bound])
@@ -481,7 +478,7 @@ if __name__ == '__main__':
     ############################################################
     # Generate samples for surrogate model
     posterior_retention_structure.define_parameters(wall_properties=True)
-    posterior_retention_structure.generate_samples(n_samples=1000000)
+    posterior_retention_structure.generate_samples(n_samples=1_000_000)
     
     # ############################################################
     # # Run updating
