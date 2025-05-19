@@ -71,9 +71,52 @@ class PosteriorRetainingStructure:
             parameter_names=synthetic_parameter_name,
         )
         self.l_displacement.generate_synthetic_measurement([self.synthetic_values])
+
+    def generate_samples(self, n_samples: int = 1000):
+        """
+        Generate samples from the posterior distribution
+        """
+        samples = self.prior_pdf.random(n_samples)
+        print(f"shape of samples: {np.shape(samples)}")
+        # remove duplicate rows
+        samples = np.unique(samples, axis=0)
+        print(f"shape of samples: {np.shape(samples)}")
+        
+        sample_dict = {"n_samples": n_samples,
+                       "samples": {}}
+        for i_par, parameter_name in enumerate(self.parameter_names):
+            sample_dict["samples"][parameter_name] = samples[:, i_par]
+            if 'soilcurkb1' in parameter_name:
+                sample_dict["samples"][parameter_name.replace('soilcurkb1', 'soilcurkb2')] = samples[:, i_par] * 0.5
+                sample_dict["samples"][parameter_name.replace('soilcurkb1', 'soilcurkb3')] = samples[:, i_par] * 0.25
+                sample_dict["samples"][parameter_name.replace('soilcurkb1', 'soilcurko1')] = samples[:, i_par]
+                sample_dict["samples"][parameter_name.replace('soilcurkb1', 'soilcurko2')] = samples[:, i_par] * 0.5
+                sample_dict["samples"][parameter_name.replace('soilcurkb1', 'soilcurko3')] = samples[:, i_par] * 0.25  
+     
+        # print(f"sample_dict: {sample_dict}")
+        # plot histogram of samples
+        # plt.figure(figsize=(10, 5))
+        # Create a single DataFrame with all parameters
+        print("Creating dataframe with all parameters...")
+        df = pd.DataFrame({param: sample_dict["samples"][param] for param in self.parameter_names})
+        print("Saving dataframe to csv file...")
+        df.to_csv('parameter_samples.csv', index=False)
+        print("Done!")
+        #     plt.subplot(self.dimensions, 1, i_par+1)
+        #     plt.hist(sample_dict["samples"][parameter_name], bins=50, density=True, alpha=0.5, label=parameter_name)
+        #     plt.legend()
+        # print(f"sample_dict: {sample_dict}")
+        # plt.show()
+
+        # save sample_dict to json file
+        # with open('sample_dict.json', 'w') as f:
+            # json.dump(sample_dict, f)
+
+    
+        return sample_dict
         
     
-    def define_parameters(self):
+    def define_parameters(self, wall_properties: bool = False):
         # load parameters from json file
         with open('examples/deterministic_parameters.json', 'r') as f:
             parameters = json.load(f)
@@ -87,22 +130,33 @@ class PosteriorRetainingStructure:
         parameter_names = []
         self.synthetic_values = []
         scale = 1.2
+        lower_bound = 0.3
+        upper_bound = 1.8
         for material_name, material_values in material_properties.items():
             if material_values['cohesion'] != 0:
-                cohesion = ERADist('normal', 'PAR', [material_values['cohesion'], 0.1*material_values['cohesion']])
+                # cohesion = ERADist('normal', 'PAR', [material_values['cohesion'], 0.1*material_values['cohesion']])
+                cohesion = ERADist('uniform', 'PAR', [material_values['cohesion']*lower_bound, material_values['cohesion']*upper_bound])
                 distributions.append(cohesion)
                 parameter_names.append(f'{material_name}_soilcohesion')
                 self.synthetic_values.append(material_values['cohesion']*scale)
             if material_values['phi'] != 0:
-                phi = ERADist('normal', 'PAR', [material_values['phi'], 0.1*material_values['phi']])
+                # phi = ERADist('normal', 'PAR', [material_values['phi'], 0.1*material_values['phi']])
+                phi = ERADist('uniform', 'PAR', [material_values['phi']*lower_bound, material_values['phi']*upper_bound])
                 distributions.append(phi)
                 parameter_names.append(f'{material_name}_soilphi')
                 self.synthetic_values.append(material_values['phi']*scale)
             if material_values['k_top']['kh1'] != 0:
-                kh1 = ERADist('normal', 'PAR', [material_values['k_top']['kh1'], 0.1*material_values['k_top']['kh1']])
+                # kh1 = ERADist('normal', 'PAR', [material_values['k_top']['kh1'], 0.1*material_values['k_top']['kh1']])
+                kh1 = ERADist('uniform', 'PAR', [material_values['k_top']['kh1']*lower_bound, material_values['k_top']['kh1']*upper_bound])
                 distributions.append(kh1)
                 parameter_names.append(f'{material_name}_soilcurkb1') # b van boven?
                 self.synthetic_values.append(material_values['k_top']['kh1']*scale)
+
+        if wall_properties == True:
+            wall_eis = ERADist('uniform', 'PAR', [5000, 50000])
+            distributions.append(wall_eis)
+            parameter_names.append(f'Wall_SheetPilingElementEI')
+            # self.synthetic_values.append(5000*scale)
 
         self.dist_parameters = distributions
         self.parameter_names = parameter_names
@@ -423,11 +477,19 @@ if __name__ == '__main__':
         model_path, use_surrogate=True
     )
     
-    posterior_retention_structure.define_parameters()
-    posterior_retention_structure.update_for_new_displacement_data(list_of_N=[1000], p0=[0.1], approaches=['BUS', 'aBUS'])
-    # make plot directory
-    os.makedirs('plots', exist_ok=True)
-    posterior_retention_structure.plot_prior_and_posterior_marginal_pdfs(plot_dir='plots')
-    posterior_retention_structure.plot_threshold_progression(plot_dir='plots')
-    # plt.show()
-    plt.close()
+
+    ############################################################
+    # Generate samples for surrogate model
+    posterior_retention_structure.define_parameters(wall_properties=True)
+    posterior_retention_structure.generate_samples(n_samples=1000000)
+    
+    # ############################################################
+    # # Run updating
+    # posterior_retention_structure.define_parameters(wall_properties=False)
+    # posterior_retention_structure.update_for_new_displacement_data(list_of_N=[1000], p0=[0.1], approaches=['BUS', 'aBUS'])
+    # # make plot directory
+    # os.makedirs('plots', exist_ok=True)
+    # posterior_retention_structure.plot_prior_and_posterior_marginal_pdfs(plot_dir='plots')
+    # posterior_retention_structure.plot_threshold_progression(plot_dir='plots')
+    # # plt.show()
+    # plt.close()
