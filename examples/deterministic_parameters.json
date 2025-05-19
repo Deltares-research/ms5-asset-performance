@@ -60,7 +60,7 @@
         "kh3": 800
       }
     },
-    "Zand vast": {
+    "Zandvast": {
       "unit_weight": 18.5,
       "unit_weight_sat": 20.5,
       "cohesion": 0,
@@ -71,36 +71,16 @@
       "grain_type": "fine",
       "k_top": {
         "kh1": 30000,
-        "kh2": 1500,
-        "kh3": 750
+        "kh2": 15000,
+        "kh3": 7500
       },
       "k_bottom": {
         "kh1": 30000,
-        "kh2": 1500,
-        "kh3": 750
+        "kh2": 15000,
+        "kh3": 7500
       }
     },
-    "Zand los (18)": {
-      "unit_weight": 17,
-      "unit_weight_sat": 18,
-      "cohesion": 0,
-      "phi": 28,
-      "delta_friction": 18.67,
-      "shell_factor": 1.0,
-      "OCR": 1.0,
-      "grain_type": "fine",
-      "k_top": {
-        "kh1": 12000,
-        "kh2": 6000,
-        "kh3": 3000
-      },
-      "k_bottom": {
-        "kh1": 12000,
-        "kh2": 6000,
-        "kh3": 3000
-      }
-    },
-    "Zand los": {
+    "Zandlos": {
       "unit_weight": 17,
       "unit_weight_sat": 19,
       "cohesion": 0,
