@@ -152,7 +152,7 @@ if __name__ == "__main__":
 
     # split_packages(samples_path, samples_per_split=1_000)
 
-    packages = list(range(1, 3))
+    packages = list(range(528, 535))
     data_path = r"data/data_packages"
     result_path = r"data/result_packages"
     draw_sample(geomodel, rv_names, packages=packages, result_path=result_path, data_path=data_path)

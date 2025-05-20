@@ -1,3 +1,4 @@
+import os
 import json
 from pathlib import Path
 import numpy as np
@@ -17,6 +18,7 @@ from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import pickle
+import pandas as pd
 
 
 class NeuralNetwork(nn.Module):
@@ -231,36 +233,38 @@ def plot(model, params, x_train, x_test, y_train, y_test, path):
 
 if __name__ == "__main__":
 
-    data_path = r"data/sample_20000_unpooled.json"
-    data_path = Path(Path(data_path).as_posix())
-    with open(data_path, "r") as f: data = json.load(f)
+    path = os.environ["SRG_DATA_PATH"]
+    path = Path(Path(path).as_posix())
 
-    y = data["displacement"]
-    y = [[item if item is not None else np.nan for item in row] for row in y]
-    y = np.asarray(y)
-    idx = np.where(~np.any(np.isnan(y), axis=-1))[0]
+    df_path = path / "compiled_data"
+    df_files = [f for f in df_path.iterdir()]
+    dates = [int("".join(f.stem.split("_")[-2:])) for f in df_files]
+    df_file = df_files[dates.index(max(dates))]
+    df = pd.read_csv(df_file)
 
-    X = (data["Klei_soilphi"], data["Klei_soilcohesion"], data["Zand_soilphi"], data["Wall_SheetPilingElementEI"])
-    X = tuple([np.asarray(item) for item in X])
-    X = np.stack(X, axis=-1)
+    X_cols = [col for col in df.columns if col.split("_")[0] != "disp" and col != "index"]
+    X_cols = [col for col in X_cols if "soilcurko2" not in col and "soilcurko3" not in col]
+    X = df[X_cols].values
 
-    X = X[idx]
-    y = y[idx]
+    idx_locs = list(range(1, 151, 10))
+    y_cols = [col for col in df.columns if col.split("_")[0] == "disp" and int(col.split("_")[-1]) in idx_locs]
+    y = df[y_cols].values
 
-    y = y[:, np.arange(0, 150, 10)]
+    quartiles = np.quantile(y, [0.25, 0.75], axis=0)
+    iqr = np.diff(quartiles, axis=0).squeeze()
+    # Used to remove extreme outliers which probably correspond to numerical error
+    bnd_distance = 1.5
+    bounds = quartiles + np.array([-bnd_distance, +bnd_distance])[:, np.newaxis] * iqr[np.newaxis, :]
+    outliers = np.all(np.logical_and(bounds[0]<=y, y<=bounds[1]), axis=1)
+    X, y = X[~outliers], y[~outliers]
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
     model = NeuralNetwork(y.shape[-1])
-    # params, losses = train(model, X_train, y_train, lr=1e-5, n_epochs=20_000, path=r'results/mlp_surrogate.pkl')
-    with open(r'results/mlp_surrogate.pkl', 'rb') as f: params = pickle.load(f)
+    params, losses = train(model, X_train, y_train, lr=1e-5, n_epochs=1_000, path=r'results/mlp.pkl')
+    # with open(r'results/mlp_surrogate.pkl', 'rb') as f: params = pickle.load(f)
 
-    plot(model, params, X_train, X_test, y_train, y_test, r'figures/surrogate_mlp')
+    plot(model, params, X_train, X_test, y_train, y_test, r'figures/srg_mlp')
 
-    y_hat = inference(model, params, X)
-    residuals = y - y_hat
-    corr_mat = np.corrcoef(residuals.T)
-    np.save(r"results/corr_mat.npy", corr_mat)
-
-    # plot_losses(losses, r"figures/surrogate_mlp/losses.png")
+    plt.plot(losses)
+    plt.show()
 
