@@ -268,33 +268,25 @@ def plot(model, params, x_train, x_test, y_train, y_test, path, losses=None):
     plot_wall_error(model, params, x_train, y_train, path/"wall_error.png")
     plot_variables(model, params, x_train, y_train, path/"variables.pdf")
 
-    plot_losses = losses is not None
-    if plot_losses:
-        fig = plt.figure()
-        plt.plot(losses)
-        plt.xlabel("Training step")
-        plt.ylabel("Loss [${mm}^{2}")
-        fig.savefig(path/"losses.png")
+    if losses is not None: plot_losses(losses, path/"losses.png")
 
 
 if __name__ == "__main__":
 
-    # path = os.environ["SRG_DATA_PATH"]
-    # path = Path(Path(path).as_posix())
-    #
-    # df_path = path / "compiled_data"
-    # df_files = [f for f in df_path.iterdir()]
-    # dates = [int("".join(f.stem.split("_")[-2:])) for f in df_files]
-    # df_file = df_files[dates.index(max(dates))]
-    # df = pd.read_csv(df_file)
-    df = pd.read_csv(r"data/srg_data_20250520_094244.csv")
+    path = os.environ["SRG_DATA_PATH"]
+    path = Path(Path(path).as_posix())
+
+    df_path = path / "compiled_data"
+    df_files = [f for f in df_path.iterdir()]
+    dates = [int("".join(f.stem.split("_")[-2:])) for f in df_files]
+    df_file = df_files[dates.index(max(dates))]
+    df = pd.read_csv(df_file)
 
     X_cols = [col for col in df.columns if col.split("_")[0] != "disp" and col != "index"]
     X_cols = [col for col in X_cols if "soilcurko2" not in col and "soilcurko3" not in col]
     X = df[X_cols].values
 
     idx_locs = list(range(1, 151, 10))
-    idx_locs = [60]
     y_cols = [col for col in df.columns if col.split("_")[0] == "disp" and int(col.split("_")[-1]) in idx_locs]
     y = df[y_cols].values
 
@@ -304,7 +296,7 @@ if __name__ == "__main__":
     bnd_distance = 0.01
     bounds = quartiles + np.array([-bnd_distance, +bnd_distance])[:, np.newaxis] * iqr[np.newaxis, :]
     # outliers = np.all(np.logical_and(bounds[0]<=y, y<=bounds[1]), axis=1)
-    outliers = np.any(np.abs(y)>=30, axis=1)
+    outliers = np.any(np.abs(y)>=1_000, axis=1)
     X, y = X[~outliers], y[~outliers]
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -319,7 +311,7 @@ if __name__ == "__main__":
             x=X_train,
             y=y_train,
             lr=1e-6,
-            n_epochs=10_000,
+            n_epochs=3_000,
             path=r'results/mlp.pkl',
             verbose=True
         )
