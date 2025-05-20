@@ -82,7 +82,7 @@ def draw_sample(
 ) -> None:
 
     if not isinstance(result_path, Path): result_path = Path(Path(result_path).as_posix())
-    if result_path.exists(): shutil.rmtree(result_path)  # Delete files
+    # if result_path.exists(): shutil.rmtree(result_path)  # Delete files
     result_path.mkdir(parents=True, exist_ok=True)
 
     if not isinstance(data_path, Path): data_path = Path(Path(data_path).as_posix())
@@ -96,8 +96,6 @@ def draw_sample(
         path = path.with_suffix(".json")
 
         rv_samples = np.load(package)
-
-        # rv_samples = rv_samples[:5]  # TODO: @Dafydd check this first
 
         run_index = rv_samples[:, 0].tolist()
         rv_samples = rv_samples[:, 1:]
