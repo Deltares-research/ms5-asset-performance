@@ -17,7 +17,7 @@ def load_data(path):
     # Remove extreme outliers which probably correspond to numerical error in DSheetPiling
     # quartiles = np.quantile(y, [0.25, 0.75], axis=0)
     # iqr = np.diff(quartiles, axis=0).squeeze()
-    # bnd_distance = 0.05
+    # bnd_distance = 0.1
     # bounds = quartiles + np.array([-bnd_distance, +bnd_distance])[:, np.newaxis] * iqr[np.newaxis, :]
     # outliers = np.all(np.logical_and(bounds[0]<=y, y<=bounds[1]), axis=1)
 
