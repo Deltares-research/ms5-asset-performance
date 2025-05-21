@@ -5,7 +5,9 @@ import numpy as np
 from numpy.typing import NDArray
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
 from srg_data_loader import load_data
+from srg_torch import plot
 
 import torch
 import torch.nn as nn
@@ -18,6 +20,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 import joblib
 from tqdm import tqdm
 import typer
+from datetime import datetime
 
 
 app = typer.Typer()
@@ -25,6 +28,7 @@ app = typer.Typer()
 
 class MLP(nn.Module):
     def __init__(self, input_dim, hidden_dims, output_dim):
+
         super().__init__()
         layers = []
 
@@ -43,10 +47,16 @@ class MLP(nn.Module):
 
 
 @app.command()
-def train(model, X, y, epochs, lr):
+def train(epochs: int = 1_000, lr: float = 1e-4, quiet: bool = False):
 
-    data_path = r"data/srg_data_20250520_094244.csv"
-    path = Path(Path(data_path).as_posix())
+    base_dir = Path(__file__).resolve().parent
+    data_dir = base_dir / "data"
+    data_dir.mkdir(exist_ok=True)
+
+    data_path = data_dir / "srg_data_20250520_094244.csv"
+
+    output_path = base_dir / f"torch_results/lr_{lr:.1e}_epochs_{epochs:d}"
+    output_path.mkdir(parents=True, exist_ok=True)
 
     X, y = load_data(data_path)
 
@@ -75,12 +85,19 @@ def train(model, X, y, epochs, lr):
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
+    
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=10
+    )
 
-    x_torch = torch.tensor(X, dtype=torch.float32, device=device)
-    y_torch = torch.tensor(y, dtype=torch.float32, device=device)
+    x_torch = torch.tensor(X_train_scaled, dtype=torch.float32, device=device)
+    y_torch = torch.tensor(y_train_scaled, dtype=torch.float32, device=device)
 
     epoch_losses = []
-    for epoch in tqdm(range(1, epochs + 1)):
+
+    print("Training...")
+    pbar = tqdm(range(1, epochs + 1)) if not quiet else range(1, epochs + 1)
+    for epoch in pbar:
         model.train()
         optimizer.zero_grad()
         preds = model(x_torch)
@@ -88,6 +105,7 @@ def train(model, X, y, epochs, lr):
         loss.backward()
         optimizer.step()
         epoch_loss = loss.item()
+        scheduler.step(epoch_loss)
         epoch_losses.append(epoch_loss)
 
     epoch_losses = np.asarray(epoch_losses)
@@ -96,10 +114,22 @@ def train(model, X, y, epochs, lr):
 
     with torch.no_grad():
         y_hat = inference(model, X_test, scaler_x, scaler_y)
-        rmse = nn.MSELoss()(y_hat, y_test).item()
+        rmse = mean_squared_error(y_hat, y_test)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    message = f"lr={lr:.1e} | {epochs:d} epochs | RMSE: {rmse:.2f}"
+    with open(output_path/"training_log.txt", "a") as f:
+        f.write(f"{timestamp} | " + message)
+
+    print("Training completed! ✅")
+    
+    print("[SUMMARY] "+message)
 
     print("Plotting results...")
-    plot(model, X_train, X_test, y_train, y_test, scaler_x, scaler_y, r'figures/srg_torch', epoch_losses)
+
+    plot(model, X_train, X_test, y_train, y_test, scaler_x, scaler_y, output_path, epoch_losses)
+
+    print("Results plotted! ✅")
 
 
 def inference(model, x, scaler_x, scaler_y, device=None):
@@ -114,154 +144,6 @@ def inference(model, x, scaler_x, scaler_y, device=None):
     return y_hat
 
 
-def plot_predictions(model, x_train, x_test, y_train, y_test, scaler_x, scaler_y, path):
-
-    if not isinstance(path, Path): path = Path(Path(path).as_posix())
-
-    y_hat_train = inference(model, x_train, scaler_x, scaler_y)
-    y_hat_test = inference(model, x_test, scaler_x, scaler_y)
-
-    figs = []
-    zipped = zip(y_train.T, y_hat_train.T, y_test.T, y_hat_test.T)
-    for i_point, (y_t_train, y_p_train, y_t_test, y_p_test) in enumerate(zipped):
-        fig = plt.figure()
-        fig.suptitle(f"Point #{i_point+1:d} along wall", fontsize=14)
-        plt.scatter(y_t_train, y_p_train, marker='x', c='b', label="Train")
-        plt.scatter(y_t_test, y_p_test, marker='x', c='r', label="Test")
-        plt.axline((0, 0), slope=1, c='k')
-        plt.plot([y_t_train.min(), y_t_train.min()], [y_t_train.max(), y_t_train.max()], c='k')
-        plt.xlabel('Observation', fontsize=12)
-        plt.ylabel('Prediction', fontsize=12)
-        plt.legend(fontsize=12)
-        plt.grid()
-        plt.close()
-        figs.append(fig)
-    pp = PdfPages(path)
-    [pp.savefig(fig) for fig in figs]
-    pp.close()
-
-
-def plot_wall(model, x, y, scaler_x, scaler_y, path):
-
-    if not isinstance(path, Path): path = Path(Path(path).as_posix())
-
-    y_hat = inference(model, x, scaler_x, scaler_y)
-    residuals = y - y_hat
-    st_residuals = residuals / np.abs(y+1e-8) * 100
-
-    fig = plt.figure()
-    for disp in y:
-        plt.plot(disp, np.arange(1, y_hat.shape[1]+1), c='b', alpha=0.3)
-    for i, y_depth in enumerate(y_hat.T):
-        mean = y_depth.mean()
-        ci = np.quantile(y_depth, [0.025, 0.975])
-        xerr = np.array([
-            np.maximum(ci.min(), 2e-3)-1e-3,
-            np.maximum(ci.max(), 2e-3)+1e-3,
-        ]).squeeze()
-        plt.errorbar([mean], [i+1], xerr=xerr[:, np.newaxis], fmt='o', color='r', capsize=5)
-    plt.xlabel('Displacement [mm]', fontsize=12)
-    plt.ylabel('Point # along wall', fontsize=12)
-    plt.gca().invert_yaxis()
-    plt.grid()
-    plt.close()
-
-    if path.suffix == ".png":
-        fig.savefig(path)
-    else:
-        pp = PdfPages(path)
-        pp.savefig(fig)
-        pp.close()
-
-
-def plot_wall_error(model, x, y, scaler_x, scaler_y, path):
-
-    if not isinstance(path, Path): path = Path(Path(path).as_posix())
-
-    y_hat = inference(model, x, scaler_x, scaler_y)
-    residuals = y - y_hat
-    st_residuals = residuals / np.abs(y+1e-8) * 100
-
-    fig = plt.figure()
-    for r in st_residuals:
-        plt.plot(r, np.arange(1, y_hat.shape[1]+1), c='b', alpha=0.3)
-    plt.xlabel('Error [%]', fontsize=12)
-    plt.ylabel('Point # along wall', fontsize=12)
-    plt.gca().invert_yaxis()
-    plt.grid()
-    plt.close()
-
-    if path.suffix == ".png":
-        fig.savefig(path)
-    else:
-        pp = PdfPages(path)
-        pp.savefig(fig)
-        pp.close()
-
-
-def plot_variables(model, x, y, scaler_x, scaler_y, path):
-
-    if not isinstance(path, Path): path = Path(Path(path).as_posix())
-
-    y_hat = inference(model, x, scaler_x, scaler_y)
-    residuals = y - y_hat
-    st_residuals = residuals / np.abs(y+1e-8) * 100
-
-    figs = []
-    for i_point, r in enumerate(st_residuals.T):
-        fig, axs = plt.subplots(1, 2, sharey=True, figsize=(12, 6))
-        fig.suptitle(f"Point #{i_point+1:d} along wall", fontsize=14)
-        sc = axs[0].scatter(x[:, 0], r, c=x[:, 1])
-        cbar = fig.colorbar(sc, ax=axs[0])
-        cbar.set_label("Cohesion [kPa]", fontsize=10, labelpad=10)
-        axs[0].set_xlabel('Phi [deg]', fontsize=12)
-        axs[0].set_ylabel('Error [%]', fontsize=12)
-        sc = axs[1].scatter(x[:, 1], r, c=x[:, 0])
-        cbar = fig.colorbar(sc, ax=axs[1])
-        cbar.set_label("Phi [deg]", fontsize=10, labelpad=10)
-        axs[1].set_xlabel('Cohesion [kPa]', fontsize=12)
-        axs[1].set_ylabel('Error [%]', fontsize=12)
-        axs[0].set_ylim(residuals.min(), residuals.max())
-        axs[1].set_ylim(residuals.min(), residuals.max())
-        axs[0].grid()
-        axs[1].grid()
-        plt.close()
-        figs.append(fig)
-    pp = PdfPages(path)
-    [pp.savefig(fig) for fig in figs]
-    pp.close()
-
-
-def plot_losses(losses, path):
-
-    if not isinstance(path, Path): path = Path(Path(path).as_posix())
-
-    fig = plt.figure(figsize=(12, 6))
-    plt.plot(np.arange(1, losses.size+1), losses, c="b")
-    plt.xlabel('Epoch', fontsize=12)
-    plt.ylabel('Loss [${mm}^{2}$]', fontsize=12)
-    plt.yscale("log")
-    plt.grid()
-    plt.close()
-
-    fig.savefig(path)
-
-
-def plot(model, x_train, x_test, y_train, y_test, scaler_x, scaler_y, path, losses=None):
-
-    if not isinstance(path, Path): path = Path(Path(path).as_posix())
-
-    path.mkdir(parents=True, exist_ok=True)
-
-    plot_predictions(model, x_train, x_test, y_train, y_test, scaler_x, scaler_y, path/"predictions.pdf")
-    plot_wall(model, x_train, y_train, scaler_x, scaler_y, path/"wall.png")
-    plot_wall_error(model, x_train, y_train, scaler_x, scaler_y, path/"wall_error.png")
-    plot_variables(model, x_train, y_train, scaler_x, scaler_y, path/"variables.pdf")
-
-    if losses is not None: plot_losses(losses, path/"losses.png")
-
-
 if __name__ == "__main__":
 
     app()
-

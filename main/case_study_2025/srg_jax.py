@@ -379,5 +379,5 @@ if __name__ == "__main__":
         with open(r'results/mlp.pkl', 'rb') as f: params = pickle.load(f)
         losses = None
 
-    # plot(model, params, X_train, X_test, y_train, y_test, r'figures/srg_mlp', losses)
+    # plot(model, params, X_train, X_test, y_train, y_test, r'figures/srg_jax', losses)
 
