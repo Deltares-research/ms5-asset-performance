@@ -6,8 +6,7 @@ from numpy.typing import NDArray
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
-from srg_data_loader import load_data
-from srg_torch import plot
+from srg_utils import load_data, plot
 
 import torch
 import torch.nn as nn
@@ -50,22 +49,14 @@ class MLP(nn.Module):
 def train(epochs: int = 1_000, lr: float = 1e-4, quiet: bool = False):
 
     base_dir = Path(__file__).resolve().parent
-    data_dir = base_dir / "data"
-    data_dir.mkdir(exist_ok=True)
 
+    data_dir = base_dir.parent / "data"
     data_path = data_dir / "srg_data_20250520_094244.csv"
 
-    output_path = base_dir / f"torch_results/lr_{lr:.1e}_epochs_{epochs:d}"
+    output_path = base_dir.parent / f"results/srg/torch/lr_{lr:.1e}_epochs_{epochs:d}"
     output_path.mkdir(parents=True, exist_ok=True)
 
     X, y = load_data(data_path)
-    
-    
-#    locs = np.repeat(np.arange(y.shape[-1])[np.newaxis, :], X.shape[0], axis=0).reshape(-1, 1)
-#    X = np.repeat(X, y.shape[-1], axis=0)
-#    X = np.c_[locs, X]
-#    y = y.reshape(-1, 1)
-    
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
@@ -132,12 +123,16 @@ def train(epochs: int = 1_000, lr: float = 1e-4, quiet: bool = False):
         f.write(f"{timestamp} | " + message)
 
     print("Training completed! ✅")
-    
+
+    torch.save(model.state_dict(), output_path/r"torch_weights.pth")
+    joblib.dump(scaler_x, output_path/r"scaler_x.joblib")
+    joblib.dump(scaler_y, output_path/r"scaler_y.joblib")
+
     print("[SUMMARY] "+message)
 
     print("Plotting results...")
 
-    plot(model, X_train, X_test, y_train, y_test, scaler_x, scaler_y, output_path, epoch_losses)
+    plot(inference, model, X_train, X_test, y_train, y_test, scaler_x, scaler_y, output_path, epoch_losses)
 
     print("Results plotted! ✅")
 
@@ -145,12 +140,12 @@ def train(epochs: int = 1_000, lr: float = 1e-4, quiet: bool = False):
 def inference(model, x, scaler_x, scaler_y, device=None):
     if device is None:
         device = next(model.parameters()).device
-    x = scaler_x.transform(x)
-    x_torch = torch.tensor(x, dtype=torch.float32, device=device)
+    x_scaled = scaler_x.transform(x)
+    x_scaled_torch = torch.tensor(x_scaled, dtype=torch.float32, device=device)
     with torch.no_grad():
-        y_hat = model(x_torch)
-    y_hat = y_hat.detach().cpu().numpy()
-    y_hat = scaler_y.inverse_transform(y_hat)
+        y_hat_scaled = model(x_scaled_torch)
+    y_hat_scaled = y_hat_scaled.detach().cpu().numpy()
+    y_hat = scaler_y.inverse_transform(y_hat_scaled)
     return y_hat
 
 

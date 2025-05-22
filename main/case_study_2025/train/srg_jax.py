@@ -335,7 +335,7 @@ if __name__ == "__main__":
     # dates = [int("".join(f.stem.split("_")[-2:])) for f in df_files]
     # df_file = df_files[dates.index(max(dates))]
     # df = pd.read_csv(df_file)
-    df = pd.read_csv(r"data/srg_data_20250520_094244.csv")
+    df = pd.read_csv(r"../data/srg_data_20250520_094244.csv")
 
     X_cols = [col for col in df.columns if col.split("_")[0] != "disp" and col != "index"]
     X_cols = [col for col in X_cols if "soilcurko2" not in col and "soilcurko3" not in col]
