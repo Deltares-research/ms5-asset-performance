@@ -369,8 +369,8 @@ if __name__ == "__main__":
     X = X[idx]
     y = y[idx]
     
-    # Subsample the displacement points
-    y = y[:, np.arange(0, 150, 10)]
+    # keep every 10th column for y
+    y = y[:, ::10]
     
     # Split data
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -393,29 +393,31 @@ if __name__ == "__main__":
     #     print(f"Model file {model_path} does not exist, training a new model.")
     #     train_new_model = True
     
-    n_epochs = 500
+    n_epochs = 100
     lr = 0.01
+    lr_for_str = int(lr*100)
 
     if train_new_model:
         # For GPR, we can use fewer epochs than for neural networks
         losses_history = model.train(
             X_train_tensor, y_train_tensor, 
             n_epochs=n_epochs, lr=lr,  # Reduced epochs for faster training
-            path=r'results/gpr_surrogate_{}_{}.pkl'.format(n_epochs, lr)
+            path=r'results/independent_gpr_surrogate_{}_{}.pkl'.format(n_epochs, lr_for_str)
         )
-        plot_losses(losses_history, r"figures/surrogate_gpr/losses.png")
+        Path(r"figures/independent_surrogate_gpr_{}_{}".format(n_epochs, lr_for_str)).mkdir(parents=True, exist_ok=True)
+        plot_losses(losses_history, r"figures/independent_surrogate_gpr_{}_{}/losses.png".format(n_epochs, lr_for_str))
     else:
-        model.load(r'results/gpr_surrogate_{}_{}.pkl'.format(n_epochs, lr))
+        model.load(r'results/independent_gpr_surrogate_{}_{}.pkl'.format(n_epochs, (lr*100)))
     
     # Create plot directory if it doesn't exist
-    plot_dir = Path(r"figures/surrogate_gpr")
+    plot_dir = Path(r"figures/independent_surrogate_gpr_{}_{}".format(n_epochs, lr_for_str))
     plot_dir.mkdir(parents=True, exist_ok=True)
     
     # Plot results
     plot(model, X_train_tensor, X_test_tensor, y_train, y_test, plot_dir)
     
-    # Generate predictions for all data and compute correlation matrix of residuals
-    y_hat = inference(model, torch.tensor(X, dtype=torch.float32))
-    residuals = y - y_hat
-    corr_mat = np.corrcoef(residuals.T)
-    np.save(r"results/gpr_corr_mat.npy", corr_mat) 
+    # # Generate predictions for all data and compute correlation matrix of residuals
+    # y_hat = inference(model, torch.tensor(X, dtype=torch.float32))
+    # residuals = y - y_hat
+    # corr_mat = np.corrcoef(residuals.T)
+    # np.save(r"results/gpr_corr_mat.npy", corr_mat)
