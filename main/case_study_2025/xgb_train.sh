@@ -9,7 +9,6 @@ lrs=(0.05)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="$SCRIPT_DIR/results/srg/xgb"
 mkdir -p "$LOG_DIR"
-#rm -f "$LOG_DIR"/*
 
 log_file="$LOG_DIR/log.txt"
 
