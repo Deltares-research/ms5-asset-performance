@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
-from srg_data_loader import load_data
+from srg_utils import load_data
 
 import torch
 import torch.nn as nn
@@ -254,7 +254,7 @@ def plot(model, x_train, x_test, y_train, y_test, scaler_x, scaler_y, path, loss
 if __name__ == "__main__":
 
     # path = os.environ["SRG_DATA_PATH"]
-    data_path = r"data/srg_data_20250520_094244.csv"
+    data_path = r"../data/srg_data_20250520_094244.csv"
 
     path = Path(Path(data_path).as_posix())
 
