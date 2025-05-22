@@ -114,6 +114,7 @@ def plot_wall(model, x, y, scaler_x, scaler_y, path):
     locs = np.arange(1, y.shape[-1]+1)
     ci = np.quantile(y, (0.025, 0.975), axis=0)
     plt.fill_betweenx(locs, ci[0], ci[1], color="b", alpha=0.3, label="Observation 95% CI")
+    plt.plot(y.mean(axis=0), locs, c="b", label="Mean observations")
     for i, y_hat_depth in enumerate(y_hat.T):
         loc = i + 1
         label = "Prediction 95% CI" if i == y_hat.shape[-1]-1 else None
@@ -242,8 +243,9 @@ def plot(model, x_train, x_test, y_train, y_test, scaler_x, scaler_y, path, loss
 
     plot_predictions(model, x_train, x_test, y_train, y_test, scaler_x, scaler_y, path/"predictions.pdf")
     plot_wall(model, x_train, y_train, scaler_x, scaler_y, path/"wall.png")
-    plot_wall_error(model, x_train, y_train, scaler_x, scaler_y, path/"wall_error.png")
-    plot_variables(model, x_train, y_train, scaler_x, scaler_y, path/"variables.pdf")
+    plot_wall(model, x_test, y_test, scaler_x, scaler_y, path/"wall_test.png")
+#    plot_wall_error(model, x_train, y_train, scaler_x, scaler_y, path/"wall_error.png")
+#    plot_variables(model, x_train, y_train, scaler_x, scaler_y, path/"variables.pdf")
     plot_violins(model, x_test, y_test, scaler_x, scaler_y, path/"violins.png")
 
     if losses is not None: plot_losses(losses, path/"losses.png")

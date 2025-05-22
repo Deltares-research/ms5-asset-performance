@@ -59,7 +59,14 @@ def train(epochs: int = 1_000, lr: float = 1e-4, quiet: bool = False):
     output_path.mkdir(parents=True, exist_ok=True)
 
     X, y = load_data(data_path)
-
+    
+    
+#    locs = np.repeat(np.arange(y.shape[-1])[np.newaxis, :], X.shape[0], axis=0).reshape(-1, 1)
+#    X = np.repeat(X, y.shape[-1], axis=0)
+#    X = np.c_[locs, X]
+#    y = y.reshape(-1, 1)
+    
+    
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
     scaler_x = MinMaxScaler(feature_range=(-1, 1))
@@ -77,13 +84,16 @@ def train(epochs: int = 1_000, lr: float = 1e-4, quiet: bool = False):
 
     model = MLP(
         input_dim=X.shape[-1],
-        hidden_dims=[512, 256, 128, 64, 32],
+        hidden_dims=[1024, 512, 256, 128, 64, 32],
         output_dim=y.shape[-1]
     ).to(device)
 
     torch.manual_seed(42)
 
-    criterion = nn.MSELoss()
+#    criterion = nn.MSELoss()
+    criterion = torch.nn.HuberLoss(delta=1.0) 
+#    criterion = torch.nn.SmoothL1Loss() 
+    
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
