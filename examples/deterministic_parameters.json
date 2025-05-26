@@ -1,0 +1,153 @@
+{
+  "material_properties": {
+    "Klei": {
+      "unit_weight": 15,
+      "unit_weight_sat": 15,
+      "cohesion": 10.03,
+      "phi": 30.77,
+      "delta_friction": 20.1,
+      "shell_factor": 1.0,
+      "OCR": 1.0,
+      "grain_type": "fine",
+      "k_top": {
+        "kh1": 30000,
+        "kh2": 15000,
+        "kh3": 7500
+      },
+      "k_bottom": {
+        "kh1": 30000,
+        "kh2": 15000,
+        "kh3": 7500
+      }
+    },
+    "Zand": {
+      "unit_weight": 17,
+      "unit_weight_sat": 17,
+      "cohesion": 0,
+      "phi": 27.5,
+      "delta_friction": 18.33,
+      "shell_factor": 1.0,
+      "OCR": 1.0,
+      "grain_type": "fine",
+      "k_top": {
+        "kh1": 12000,
+        "kh2": 6000,
+        "kh3": 3000
+      },
+      "k_bottom": {
+        "kh1": 12000,
+        "kh2": 6000,
+        "kh3": 3000
+      }
+    },
+    "klei siltig": {
+      "unit_weight": 16.8,
+      "unit_weight_sat": 16.8,
+      "cohesion": 5.5,
+      "phi": 31.7,
+      "delta_friction": 20.1,
+      "shell_factor": 1.0,
+      "OCR": 1.0,
+      "grain_type": "fine",
+      "k_top": {
+        "kh1": 4000,
+        "kh2": 2000,
+        "kh3": 800
+      },
+      "k_bottom": {
+        "kh1": 4000,
+        "kh2": 2000,
+        "kh3": 800
+      }
+    },
+    "Zandvast": {
+      "unit_weight": 18.5,
+      "unit_weight_sat": 20.5,
+      "cohesion": 0,
+      "phi": 33.8,
+      "delta_friction": 22.5,
+      "shell_factor": 1.0,
+      "OCR": 1.0,
+      "grain_type": "fine",
+      "k_top": {
+        "kh1": 30000,
+        "kh2": 15000,
+        "kh3": 7500
+      },
+      "k_bottom": {
+        "kh1": 30000,
+        "kh2": 15000,
+        "kh3": 7500
+      }
+    },
+    "Zandlos": {
+      "unit_weight": 17,
+      "unit_weight_sat": 19,
+      "cohesion": 0,
+      "phi": 30,
+      "delta_friction": 20.1,
+      "shell_factor": 1.0,
+      "OCR": 1.0,
+      "grain_type": "fine",
+      "k_top": {
+        "kh1": 12000,
+        "kh2": 6000,
+        "kh3": 3000
+      },
+      "k_bottom": {
+        "kh1": 12000,
+        "kh2": 6000,
+        "kh3": 3000
+      }
+    }
+  },
+  "sheet_piling_walls": {
+    "AZ 12 -770": {
+      "material": "steel",
+      "acting_width": 1,
+      "height": 344,
+      "EI": 45003,
+      "Mr_d_el": 535
+    }
+  },
+  "anchors": {
+    "Bestaande anker": {
+      "E": 210000000,
+      "Design_yield_force": 103,
+      "Level": -0.1,
+      "Length": 11.5,
+      "Angle": -6
+    }
+  },
+  "water_levels": {
+    "Water level left": {
+      "Name": "A",
+      "Level": -0.8,
+      "Type": "regular water"
+    },
+    "Water level right": {
+      "Name": "A",
+      "Level": -0.8,
+      "Type": "regular water"
+    }
+  },
+  "uniform_loads": {
+    "load": {
+      "characteristic_value_left": 10,
+      "characteristic_value_right": 0,
+      "Type": "uniform",
+      "Duration": "Permanent",
+      "Condition": "Unfavourable"
+    }
+  },
+  "surcharge_loads": {
+    "road_a": {
+      "distance_to_wall": 5,
+      "width": 6,
+      "characteristic_value": 15,
+      "Type": "uniform",
+      "Duration": "Variable",
+      "Condition": "Unfavourable"
+    }
+  }
+}
