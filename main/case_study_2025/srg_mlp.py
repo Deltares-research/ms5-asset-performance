@@ -103,8 +103,9 @@ def train(
             runner, loss = _epoch(runner, i)
             losses.append(loss)
     else:
-        # runner, losses = lax.scan(scan_tqdm(n_epochs)(_epoch), runner, jnp.arange(n_epochs), n_epochs)
-        runner, losses = jax.block_until_ready(lax.scan(_epoch, runner, jnp.arange(n_epochs), n_epochs))
+        runner, losses = lax.scan(scan_tqdm(n_epochs)(_epoch), runner, jnp.arange(n_epochs), n_epochs)
+        # runner, losses = jax.block_until_ready(lax.scan(scan_tqdm(n_epochs)(_epoch), runner, jnp.arange(n_epochs), n_epochs))
+        # runner, losses = jax.block_until_ready(lax.scan(_epoch, runner, jnp.arange(n_epochs), n_epochs))
 
     end = time.time()
     print(f"Training took {end - start:.2f} seconds")
@@ -279,9 +280,9 @@ def plot(model, params, x_train, x_test, y_train, y_test, path, losses=None):
 
 if __name__ == "__main__":
 
-    # path = os.environ["SRG_DATA_PATH"]
-    # path = Path(Path(path).as_posix())
-    #
+    path = os.environ["SRG_DATA_PATH"]
+    path = Path(Path(path).as_posix())
+
     # df_path = path / "compiled_data"
     # df_files = [f for f in df_path.iterdir()]
     # dates = [int("".join(f.stem.split("_")[-2:])) for f in df_files]
@@ -319,9 +320,9 @@ if __name__ == "__main__":
             x=X_train,
             y=y_train,
             lr=1e-6,
-            n_epochs=10_000,
+            n_epochs=10,
             path=r'results/mlp.pkl',
-            verbose=True
+            verbose=False
         )
 
         print(jax.devices())
