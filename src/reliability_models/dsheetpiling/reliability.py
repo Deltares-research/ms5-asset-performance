@@ -103,7 +103,7 @@ class ReliabilityFragilityCurve(ReliabilityBase):
         self.project.settings.variation_coefficient = variation_coefficient
 
     def set_fragility_rvs(self, state: Type[StateBase]) -> None:
-        for rv_name in state.names:
+        for i, rv_name in enumerate(state.names):
             if state.marginal_pdf_type[rv_name] in ["normal", "multivariate_normal"]:
                 self.project.variables[rv_name].distribution = ptk.DistributionType.normal
                 self.project.variables[rv_name].mean = 0
