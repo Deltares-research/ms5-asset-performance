@@ -18,7 +18,7 @@ for lr_exp in "${lr_exps[@]}"; do
   for ep in "${epochs[@]}"; do
     lr=$(echo "10 ^ $lr_exp" | bc -l)
     echo "Running: lr_exp=$lr_exp and epochs=$ep" | tee -a "$log_file"
-    result=$(python "$SCRIPT_DIR/train/torch_train.py" --lr "$lr" --epochs "$ep" 2>&1 | tee /dev/tty)
+    result=$(python "$SCRIPT_DIR/srg/torch_train.py" --lr "$lr" --epochs "$ep" 2>&1 | tee /dev/tty)
     result="${result}\n"
     echo "$result" >> "$log_file"
     summary=$(echo "$result" | grep "\[SUMMARY\]")

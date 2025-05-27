@@ -149,7 +149,11 @@ class ReliabilityFragilityCurve(ReliabilityBase):
             fc_savedir: Optional[str | Path] = None
     ) -> None:
 
-        self.generate_integration_mesh(len(self.integration_rv_names), integration_lims, n_integration_grid)
+        if fc_savedir is not None:
+            if not isinstance(fc_savedir, Path): fc_savedir = Path(Path(fc_savedir).as_posix())
+            fc_savedir.parent.mkdir(parents=True, exist_ok=True)
+
+        self.generate_integration_mesh(integration_lims, n_integration_grid)
 
         fragility_points = []
         for point in tqdm(self.fc_mesh, desc="Running FORM for combination of integration variables:"):
