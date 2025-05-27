@@ -25,10 +25,6 @@ if __name__ == "__main__":
 
     fc_savedir = r"../../results/ptk/fragility_curve.json"
     rm = ReliabilityFragilityCurve(lsf, state, "form", form_params, integration_rv_names=["water_A"])
-    rm.build_fragility(n_integration_grid=3, fc_savedir=fc_savedir)
-    rm.generate_integration_mesh(n_grid=3)
+    # rm.build_fragility(n_integration_grid=10, fc_savedir=fc_savedir)
     rm.load_fragility(fc_savedir)
     pf, beta = rm.integrate_fragility()
-
-    # path = Path(Path(r"../../results/ptk/fragility_curve").as_posix())
-    # rm.compile_fragility_points(path)

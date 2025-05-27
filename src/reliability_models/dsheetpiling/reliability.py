@@ -182,22 +182,42 @@ class ReliabilityFragilityCurve(ReliabilityBase):
         fc_dict["fragility_points"] = fragility_points
         self.fragility_curve = FragilityCurve(fragility_points)
 
-    def integrate_fragility(self) -> Tuple[float, float]:
+    def integrate_fragility(self, n_interp: int  = 1_000) -> Tuple[float, float]:
 
-        idx_integration_rvs = np.asarray([self.state.names.index(rv) for rv in self.integration_rv_names])
-        mus = self.state.mus[idx_integration_rvs]
-        cov = self.state.cov[idx_integration_rvs][:, idx_integration_rvs]
-        detransformed_mesh = mus + np.sqrt(np.diag(cov)) * self.fc_mesh
+        n_integration_rvs = len(self.integration_rv_names)
 
-        grids = tuple(np.sort(np.unique(m)) for m in detransformed_mesh.T)
-        shapes = tuple(grid.size for grid in grids)
+        if n_integration_rvs > 1:
 
-        log_prob = stats.multivariate_normal(mus, cov).logpdf(detransformed_mesh)
-        pf = log_prob + self.fragility_curve.logpfs
-        pf = np.exp(pf).reshape(shapes)
+            idx_integration_rvs = np.asarray([self.state.names.index(rv) for rv in self.integration_rv_names])
+            mus = self.state.mus[idx_integration_rvs]
+            cov = self.state.cov[idx_integration_rvs][:, idx_integration_rvs]
 
-        for i_axis, grid in reversed(list(enumerate(grids))):
-            pf = trapezoid(pf, grid, axis=i_axis)
+            detransformed_mesh = mus + np.sqrt(np.diag(cov)) * self.fc_mesh
+            grids = tuple(np.sort(np.unique(m)) for m in detransformed_mesh.T)
+            shapes = tuple(grid.size for grid in grids)
+
+            log_prob = stats.multivariate_normal(mus, cov).logpdf(detransformed_mesh)
+            pf = log_prob + self.fragility_curve.logpfs
+            pf = np.exp(pf).reshape(shapes)
+
+            for i_axis, grid in reversed(list(enumerate(grids))):
+                pf = trapezoid(pf, grid, axis=i_axis)
+
+        else:
+
+            marginal_pdf = self.state.marginal_pdf[self.integration_rv_names[0]]
+            quantiles = marginal_pdf.ppf([0.001, 0.999])
+            x = np.linspace(quantiles[0], quantiles[1], n_interp)
+            log_prob = marginal_pdf.logpdf(x)
+
+            log_pfs = self.fragility_curve.logpfs
+            xs = self.fragility_curve.points
+
+            log_pf = np.interp(x, xs, log_pfs)
+
+            pf = log_prob + log_pf
+            pf = np.exp(pf)
+            pf = trapezoid(pf, x)
 
         beta = stats.norm.ppf(1-pf)
 
