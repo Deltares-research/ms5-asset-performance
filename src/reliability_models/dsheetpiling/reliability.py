@@ -200,10 +200,11 @@ class ReliabilityFragilityCurve(ReliabilityBase):
             shapes = tuple(grid.size for grid in grids)
 
             coords = self.fragility_curve.points
-            x = tuple([np.unique(coord) for coord in coords.T])
+            detransformed_coords = mus + np.sqrt(np.diag(cov)) * coords
+            x = tuple([np.unique(coord) for coord in detransformed_coords.T])
             y = self.fragility_curve.logpfs
             n_grid = int(np.sqrt(y.size))
-            y = y.reshape(n_grid, n_grid)
+            y = y.reshape(len(x[0]), len(x[1])).T
             interp = RegularGridInterpolator(x, y, bounds_error=False, fill_value=None)
             logpfs_interp = interp(detransformed_mesh)
 
@@ -233,6 +234,24 @@ class ReliabilityFragilityCurve(ReliabilityBase):
         beta = stats.norm.ppf(1-pf)
 
         return pf, beta
+
+    def pf_point(self, point):
+
+        idx_integration_rvs = np.asarray([self.state.names.index(rv) for rv in self.integration_rv_names])
+        mus = self.state.mus[idx_integration_rvs]
+        cov = self.state.cov[idx_integration_rvs][:, idx_integration_rvs]
+
+        coords = self.fragility_curve.points
+        detransformed_coords = mus + np.sqrt(np.diag(cov)) * coords
+        x = tuple([np.unique(coord) for coord in detransformed_coords.T])
+        y = self.fragility_curve.logpfs
+        y = y.reshape(len(x[0]), len(x[1])).T
+        interp = RegularGridInterpolator(x, y, bounds_error=False, fill_value=None)
+        logpfs_interp = interp(point)
+
+        pfs = np.exp(logpfs_interp)
+
+        return pfs
 
     def compile_fragility_points(self, path: str | Path) -> None:
 
