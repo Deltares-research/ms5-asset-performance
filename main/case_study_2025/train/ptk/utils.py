@@ -19,7 +19,7 @@ def parse_parameter_dist(path=r"../../data/parameter_distributions.csv"):
     structural_rvs = [rv_name for rv_name in rv_names if rv_name.split("_")[0] not in soil_rv_names]
 
     parameter_dists = parameter_dists.set_index(parameter_dists["parameter"])
-    rvs = []
+    soil_states = []
     for soil in soil_rv_names:
 
         param_names = ["soilphi", "soilcohesion", "soilcurkb1"]
@@ -36,18 +36,15 @@ def parse_parameter_dist(path=r"../../data/parameter_distributions.csv"):
             stds = soil_rows.loc[params, "std"]
             soil_state = MvnRV(mus=means, stds=stds, names=params)
 
-        rvs.append(soil_state)
+        soil_states.append(soil_state)
 
+    other_states = []
     for structural_rv in structural_rvs:
         mean = parameter_dists.loc[structural_rv, "mean"]
         std = parameter_dists.loc[structural_rv, "std"]
-        structural_state = MvnRV(mus=[mean], stds=[std], names=[structural_rv])
-        rvs.append(structural_state)
+        other_state = MvnRV(mus=[mean], stds=[std], names=[structural_rv])
+        other_states.append(other_state)
 
-    rv_water = MvnRV(mus=np.array([-0.8]), stds=np.array([0.2]), names=["water_lvl"])
-    resistance_state = GaussianState(rvs=rvs)
-    state = GaussianState(rvs=rvs+[rv_water])
-
-    return state, resistance_state
+    return soil_states, other_states
 
 

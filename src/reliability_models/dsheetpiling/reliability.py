@@ -2,6 +2,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy import stats
 from scipy.integrate import trapezoid
+from scipy.interpolate import RegularGridInterpolator
 import math
 import probabilistic_library as ptk
 from src.reliability_models.base import ReliabilityBase
@@ -115,8 +116,8 @@ class ReliabilityFragilityCurve(ReliabilityBase):
         n_rvs = len(self.integration_rv_names)
         cdf_grid = np.linspace(min(lims), max(lims), n_grid)
         grid = stats.norm(0, 1).ppf(cdf_grid)
-        mesh = np.meshgrid([grid]*n_rvs)
-        mesh = np.c_[*mesh]
+        mesh = np.meshgrid(*[[grid] for _ in range(n_rvs)])
+        mesh = np.c_[*[m.flatten() for m in mesh]]
         self.fc_mesh = mesh
 
     def fragility_point(self, point: Annotated[NDArray[float], "integration_dims"]) -> FragilityPoint:
@@ -188,6 +189,8 @@ class ReliabilityFragilityCurve(ReliabilityBase):
 
         if n_integration_rvs > 1:
 
+            self.generate_integration_mesh(n_grid=n_interp)
+
             idx_integration_rvs = np.asarray([self.state.names.index(rv) for rv in self.integration_rv_names])
             mus = self.state.mus[idx_integration_rvs]
             cov = self.state.cov[idx_integration_rvs][:, idx_integration_rvs]
@@ -196,8 +199,16 @@ class ReliabilityFragilityCurve(ReliabilityBase):
             grids = tuple(np.sort(np.unique(m)) for m in detransformed_mesh.T)
             shapes = tuple(grid.size for grid in grids)
 
+            coords = self.fragility_curve.points
+            x = tuple([np.unique(coord) for coord in coords.T])
+            y = self.fragility_curve.logpfs
+            n_grid = int(np.sqrt(y.size))
+            y = y.reshape(n_grid, n_grid)
+            interp = RegularGridInterpolator(x, y, bounds_error=False, fill_value=None)
+            logpfs_interp = interp(detransformed_mesh)
+
             log_prob = stats.multivariate_normal(mus, cov).logpdf(detransformed_mesh)
-            pf = log_prob + self.fragility_curve.logpfs
+            pf = log_prob + logpfs_interp
             pf = np.exp(pf).reshape(shapes)
 
             for i_axis, grid in reversed(list(enumerate(grids))):

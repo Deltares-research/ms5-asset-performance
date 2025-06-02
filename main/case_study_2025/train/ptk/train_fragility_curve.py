@@ -12,21 +12,22 @@ from utils import parse_parameter_dist
 if __name__ == "__main__":
 
 
-    state, resistance_state = parse_parameter_dist(r"../../data/parameter_distributions.csv")
+    soil_states, other_states = parse_parameter_dist(r"../../data/parameter_distributions.csv")
+    water_state = MvnRV(mus=[-0.8], stds=[0.2], names=["water_lvl"])
+    state = GaussianState(rvs=soil_states+other_states+[water_state])
 
     geomodel_path = os.environ["MODEL_PATH"]
     form_path = os.environ["FORM_PATH"]
     geomodel = DSheetPiling(geomodel_path, form_path)
 
-    performance_config = ("max_moment", lambda x: 20. / (x[0] + 1e-5))
+    performance_config = ("max_moment", lambda x: 40. / (x[0] + 1e-5))
     form_params = (0.15, 30, 0.02)
     lsf = package_lsf(geomodel, state, performance_config, True)
 
     fc_savedir = r"../../results/ptk/fragility_curve.json"
-    rm = ReliabilityFragilityCurve(lsf, state, "form", form_params, integration_rv_names=["water_lvl"])
+    rm = ReliabilityFragilityCurve(lsf, state, "form", form_params, integration_rv_names=["Wall_SheetPilingElementEI", "water_lvl"])
 
-    retrain = True
-
+    retrain = False
     if retrain:
         rm.build_fragility(n_integration_grid=10, fc_savedir=fc_savedir)
     else:
