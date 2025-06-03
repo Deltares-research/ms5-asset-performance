@@ -7,8 +7,8 @@ if __name__ == "__main__":
 
     geomodel_path = os.environ["MODEL_PATH"]  # model_path defined as environment variable
     result_path = r"results/results.json"
-    soil_data = {"Klei": {"soilcohesion": 10.}}
-    water_data = {"A": +1.}
+    soil_data = {"Klei": {"soilcohesion": 10., "soilcurkb1": 9999.}}
+    water_data = {"lvl": +1.}
     load_data = {"load": (15, 0.)}
     wall_data = {"SheetPilingElementEI": 9999.}
     anchor_data = {"Emod": 9999.}

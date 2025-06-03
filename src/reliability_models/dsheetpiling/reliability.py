@@ -2,6 +2,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy import stats
 from scipy.integrate import trapezoid
+from scipy.interpolate import RegularGridInterpolator
 import math
 import probabilistic_library as ptk
 from src.reliability_models.base import ReliabilityBase
@@ -103,7 +104,7 @@ class ReliabilityFragilityCurve(ReliabilityBase):
         self.project.settings.variation_coefficient = variation_coefficient
 
     def set_fragility_rvs(self, state: Type[StateBase]) -> None:
-        for rv_name in state.names:
+        for i, rv_name in enumerate(state.names):
             if state.marginal_pdf_type[rv_name] in ["normal", "multivariate_normal"]:
                 self.project.variables[rv_name].distribution = ptk.DistributionType.normal
                 self.project.variables[rv_name].mean = 0
@@ -115,8 +116,8 @@ class ReliabilityFragilityCurve(ReliabilityBase):
         n_rvs = len(self.integration_rv_names)
         cdf_grid = np.linspace(min(lims), max(lims), n_grid)
         grid = stats.norm(0, 1).ppf(cdf_grid)
-        mesh = np.meshgrid([grid]*n_rvs)
-        mesh = np.c_[*mesh]
+        mesh = np.meshgrid(*[[grid] for _ in range(n_rvs)])
+        mesh = np.c_[*[m.flatten() for m in mesh]]
         self.fc_mesh = mesh
 
     def fragility_point(self, point: Annotated[NDArray[float], "integration_dims"]) -> FragilityPoint:
@@ -149,12 +150,17 @@ class ReliabilityFragilityCurve(ReliabilityBase):
             fc_savedir: Optional[str | Path] = None
     ) -> None:
 
-        self.generate_integration_mesh(len(self.integration_rv_names), integration_lims, n_integration_grid)
+        if fc_savedir is not None:
+            if not isinstance(fc_savedir, Path): fc_savedir = Path(Path(fc_savedir).as_posix())
+            fc_savedir.parent.mkdir(parents=True, exist_ok=True)
+
+        self.generate_integration_mesh(integration_lims, n_integration_grid)
 
         fragility_points = []
-        for point in tqdm(self.fc_mesh, desc="Running FORM for combination of integration variables:"):
+        for i_point, point in enumerate(tqdm(self.fc_mesh, desc="Running FORM for combination of integration variables:")):
             fragility_point = self.fragility_point(point)
             fragility_points.append(fragility_point)
+            print(f"Point {i_point+1}  |  β={fragility_point.beta:.2f}")
 
         self.fragility_curve = FragilityCurve(fragility_points)
 
@@ -178,26 +184,75 @@ class ReliabilityFragilityCurve(ReliabilityBase):
         fc_dict["fragility_points"] = fragility_points
         self.fragility_curve = FragilityCurve(fragility_points)
 
-    def integrate_fragility(self) -> Tuple[float, float]:
+    def integrate_fragility(self, n_interp: int  = 1_000) -> Tuple[float, float]:
 
-        idx_integration_rvs = np.asarray([self.state.names.index(rv) for rv in self.integration_rv_names])
-        mus = self.state.mus[idx_integration_rvs]
-        cov = self.state.cov[idx_integration_rvs][:, idx_integration_rvs]
-        detransformed_mesh = mus + np.sqrt(np.diag(cov)) * self.fc_mesh
+        n_integration_rvs = len(self.integration_rv_names)
 
-        grids = tuple(np.sort(np.unique(m)) for m in detransformed_mesh.T)
-        shapes = tuple(grid.size for grid in grids)
+        if n_integration_rvs > 1:
 
-        log_prob = stats.multivariate_normal(mus, cov).logpdf(detransformed_mesh)
-        pf = log_prob + self.fragility_curve.logpfs
-        pf = np.exp(pf).reshape(shapes)
+            self.generate_integration_mesh(n_grid=n_interp)
 
-        for i_axis, grid in reversed(list(enumerate(grids))):
-            pf = trapezoid(pf, grid, axis=i_axis)
+            idx_integration_rvs = np.asarray([self.state.names.index(rv) for rv in self.integration_rv_names])
+            mus = self.state.mus[idx_integration_rvs]
+            cov = self.state.cov[idx_integration_rvs][:, idx_integration_rvs]
+
+            detransformed_mesh = mus + np.sqrt(np.diag(cov)) * self.fc_mesh
+            grids = tuple(np.sort(np.unique(m)) for m in detransformed_mesh.T)
+            shapes = tuple(grid.size for grid in grids)
+
+            coords = self.fragility_curve.points
+            detransformed_coords = mus + np.sqrt(np.diag(cov)) * coords
+            x = tuple([np.unique(coord) for coord in detransformed_coords.T])
+            y = self.fragility_curve.logpfs
+            n_grid = int(np.sqrt(y.size))
+            y = y.reshape(len(x[0]), len(x[1])).T
+            interp = RegularGridInterpolator(x, y, bounds_error=False, fill_value=None)
+            logpfs_interp = interp(detransformed_mesh)
+
+            log_prob = stats.multivariate_normal(mus, cov).logpdf(detransformed_mesh)
+            pf = log_prob + logpfs_interp
+            pf = np.exp(pf).reshape(shapes)
+
+            for i_axis, grid in reversed(list(enumerate(grids))):
+                pf = trapezoid(pf, grid, axis=i_axis)
+
+        else:
+
+            marginal_pdf = self.state.marginal_pdf[self.integration_rv_names[0]]
+            quantiles = marginal_pdf.ppf([0.001, 0.999])
+            x = np.linspace(quantiles[0], quantiles[1], n_interp)
+            log_prob = marginal_pdf.logpdf(x)
+
+            log_pfs = self.fragility_curve.logpfs
+            xs = self.fragility_curve.points
+
+            log_pf = np.interp(x, xs, log_pfs)
+
+            pf = log_prob + log_pf
+            pf = np.exp(pf)
+            pf = trapezoid(pf, x)
 
         beta = stats.norm.ppf(1-pf)
 
         return pf, beta
+
+    def pf_point(self, point):
+
+        idx_integration_rvs = np.asarray([self.state.names.index(rv) for rv in self.integration_rv_names])
+        mus = self.state.mus[idx_integration_rvs]
+        cov = self.state.cov[idx_integration_rvs][:, idx_integration_rvs]
+
+        coords = self.fragility_curve.points
+        detransformed_coords = mus + np.sqrt(np.diag(cov)) * coords
+        x = tuple([np.unique(coord) for coord in detransformed_coords.T])
+        y = self.fragility_curve.logpfs
+        y = y.reshape(len(x[0]), len(x[1])).T
+        interp = RegularGridInterpolator(x, y, bounds_error=False, fill_value=None)
+        logpfs_interp = interp(point)
+
+        pfs = np.exp(logpfs_interp)
+
+        return pfs
 
     def compile_fragility_points(self, path: str | Path) -> None:
 
