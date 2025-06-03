@@ -12,10 +12,13 @@ import numpy as np
 import sys
 import os
 import json
+from pathlib import Path
 # Add the project root directory to the path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, '../..'))
-sys.path.append(project_root)
+# current_dir = os.path.dirname(os.path.abspath(__file__))
+# project_root = os.path.abspath(os.path.join(current_dir, '../..'))
+# sys.path.append(project_root)
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
 
 # Import required modules
 from src.bayesian_updating.ERADist import ERADist
@@ -26,6 +29,7 @@ from src.bayesian_updating.iTMCMC import iTMCMC
 from datetime import datetime
 import pandas as pd
 from main.dhseetpiling_deformation_updating.likelihood_functions import DisplacementLikelihood
+from main.case_study_2025.surrogate_dependent_gpr import MultitaskGPModel
 
 
 class PosteriorRetainingStructure:
@@ -40,8 +44,7 @@ class PosteriorRetainingStructure:
             use_surrogate (bool): Whether to use the fake surrogate model instead of DSheetPiling
         """
         self.use_surrogate = use_surrogate
-        
-        self.define_parameters()
+        self.define_parameters(wall_properties=True)
         self.load_synthetic_data(model_path)
         
 
@@ -70,17 +73,16 @@ class PosteriorRetainingStructure:
             use_surrogate=self.use_surrogate,
             parameter_names=synthetic_parameter_name,
         )
-        self.l_displacement.generate_synthetic_measurement([self.synthetic_values])
+        self.l_displacement.generate_synthetic_measurement(np.array([self.synthetic_values]), sigma=0.2)
+        print(f"self.l_displacement.measured_mean: {self.l_displacement.measured_mean}")
 
     def generate_samples(self, n_samples: int = 1000):
         """
         Generate samples from the posterior distribution
         """
         samples = self.prior_pdf.random(n_samples)
-        print(f"shape of samples: {np.shape(samples)}")
         # remove duplicate rows
         samples = np.unique(samples, axis=0)
-        print(f"shape of samples: {np.shape(samples)}")
         
         sample_dict = {"n_samples": n_samples,
                        "samples": {}}
@@ -111,7 +113,7 @@ class PosteriorRetainingStructure:
         return sample_dict
         
     
-    def define_parameters(self, wall_properties: bool = False):
+    def define_parameters(self, wall_properties: bool = True):
         # load parameters from json file
         with open('examples/deterministic_parameters.json', 'r') as f:
             parameters = json.load(f)
@@ -124,36 +126,38 @@ class PosteriorRetainingStructure:
         distributions = []
         parameter_names = []
         self.synthetic_values = []
-        scale = 1.2
+        scale = 1.5
         lower_bound = 0.3
         upper_bound = 1.8
+        std_scale = 0.1
         for material_name, material_values in material_properties.items():
-            if material_name == 'klei siltig' or material_name == 'Zand lost (18)':
+            if material_name == 'klei siltig' or material_name == 'Zand los (18)':
                 continue
             if material_values['cohesion'] != 0:
-                # cohesion = ERADist('normal', 'PAR', [material_values['cohesion'], 0.1*material_values['cohesion']])
-                cohesion = ERADist('uniform', 'PAR', [material_values['cohesion']*lower_bound, material_values['cohesion']*upper_bound])
+                cohesion = ERADist('normal', 'PAR', [material_values['cohesion'], material_values['cohesion']*std_scale])
+                # cohesion = ERADist('uniform', 'PAR', [material_values['cohesion']*lower_bound, material_values['cohesion']*upper_bound])
                 distributions.append(cohesion)
                 parameter_names.append(f'{material_name}_soilcohesion')
                 self.synthetic_values.append(material_values['cohesion']*scale)
             if material_values['phi'] != 0:
-                # phi = ERADist('normal', 'PAR', [material_values['phi'], 0.1*material_values['phi']])
-                phi = ERADist('uniform', 'PAR', [material_values['phi']*lower_bound, material_values['phi']*upper_bound])
+                phi = ERADist('normal', 'PAR', [material_values['phi'], material_values['phi']*std_scale])
+                # phi = ERADist('uniform', 'PAR', [material_values['phi']*lower_bound, material_values['phi']*upper_bound])
                 distributions.append(phi)
                 parameter_names.append(f'{material_name}_soilphi')
                 self.synthetic_values.append(material_values['phi']*scale)
             if material_values['k_top']['kh1'] != 0:
-                # kh1 = ERADist('normal', 'PAR', [material_values['k_top']['kh1'], 0.1*material_values['k_top']['kh1']])
-                kh1 = ERADist('uniform', 'PAR', [material_values['k_top']['kh1']*lower_bound, material_values['k_top']['kh1']*upper_bound])
+                kh1 = ERADist('normal', 'PAR', [material_values['k_top']['kh1'], material_values['k_top']['kh1']*std_scale])
+                # kh1 = ERADist('uniform', 'PAR', [material_values['k_top']['kh1']*lower_bound, material_values['k_top']['kh1']*upper_bound])
                 distributions.append(kh1)
                 parameter_names.append(f'{material_name}_soilcurkb1') # b van boven?
                 self.synthetic_values.append(material_values['k_top']['kh1']*scale)
 
         if wall_properties == True:
-            wall_eis = ERADist('uniform', 'PAR', [5000, 50000])
+            wall_eis = ERADist('normal', 'PAR', [40000, 4500])
+            # wall_eis = ERADist('uniform', 'PAR', [5000, 50000])
             distributions.append(wall_eis)
             parameter_names.append(f'Wall_SheetPilingElementEI')
-            # self.synthetic_values.append(5000*scale)
+            self.synthetic_values.append(45000)
 
         self.dist_parameters = distributions
         self.parameter_names = parameter_names
@@ -161,10 +165,10 @@ class PosteriorRetainingStructure:
         self.dimensions = len(self.dist_parameters)
         self.R = np.eye(self.dimensions)
         self.prior_pdf = ERANataf(self.dist_parameters, self.R)
-
+        self.synthetic_values = self.prior_pdf.random(1)
     # Removed the old likelihood methods since they're now in the DisplacementLikelihood class
     
-    def find_c(self, method: int = 1, l_class: DisplacementLikelihood = None):
+    def find_c(self, method: int = 2, l_class: DisplacementLikelihood = None):
         """
         Find the constant c
         """
@@ -172,22 +176,22 @@ class PosteriorRetainingStructure:
         # use MLE to find c
         if method == 1:    
             u_start = np.log(l_class.measured_mean + realmin)
-            fun     = lambda lnU: -l_class.compute_log_likelihood(np.exp(lnU)) 
+            fun     = lambda lnU: -l_class.compute_log_likelihood_for_equality_information(np.exp(lnU)) 
+            
             MLE_ln  = sp.optimize.fmin(func=fun, x0=u_start)
             MLE     = np.exp(MLE_ln)   # likelihood(MLE) = 1
             c       = 1/l_class.compute_likelihood_for_equality_information(MLE)
             return c
         # some likelihood evaluations to find c
         elif method == 2:
-            raise NotImplementedError('This method is not implemented yet')
-            # K  = int(5e3)                       # number of samples      
-            # u  = np.random.normal(size=(n,K))   # samples in standard space
-            # x  = prior_pdf.U2X(u)               # samples in physical space
-            # # likelihood function evaluation
-            # L_eval = np.zeros((K,1))
-            # for i in range(K):
-            #     L_eval[i] = likelihood(x[:,i])
-            # c = 1/np.max(L_eval)    # Ref. 1 Eq. 34
+            # raise NotImplementedError('This method is not implemented yet')
+            K  = int(1e2)                       # number of samples      
+            u  = np.random.normal(size=(self.dimensions,K))   # samples in standard space
+            x  = self.prior_pdf.U2X(u.T)               # samples in physical space
+            # likelihood function evaluation
+            L_eval = np.zeros((K,1))
+            L_eval = self.l_displacement.compute_likelihood_for_parameters(x)
+            c = 1/np.max(L_eval)    # Ref. 1 Eq. 34
             
         # use approximation to find c
         elif method == 3:
@@ -218,14 +222,15 @@ class PosteriorRetainingStructure:
                     # find c
                     valid_approaches = True
                     c = self.find_c(method=1, l_class=self.l_displacement)
-                    h, samplesU, samplesX, logcE, sigma, displacement_samples = BUS_SuS(cur_n, cur_p0, c, self.l_displacement, distr = self.prior_pdf)
+                    
+                    h, samplesU, samplesX, logcE, sigma, displacement_samples = BUS_SuS(cur_n, cur_p0, c, self.l_displacement, distr = self.prior_pdf, max_it=max_it)
                     sample_results_n[f"n{cur_n}"]["BUS"] = {
                         'h': h,
                         'samplesU': samplesU,
                         'samplesX': samplesX,
                         'logcE': logcE,
                         'sigma': sigma,
-                        'displacement_samples': displacement_samples,
+                        'displacement_samples': displacement_samples, #-1000,
                         'n': cur_n,
                         'p0': cur_p0,
                         'max_it': max_it
@@ -233,7 +238,7 @@ class PosteriorRetainingStructure:
                 
                 if 'aBUS' in approaches:
                     valid_approaches = True
-                    h, samplesU, samplesX, logcE, c, sigma, displacement_samples = aBUS_SuS(cur_n, cur_p0, self.l_displacement, self.prior_pdf)
+                    h, samplesU, samplesX, logcE, c, sigma, displacement_samples = aBUS_SuS(cur_n, cur_p0, self.l_displacement, self.prior_pdf, max_it=max_it)
                     sample_results_n[f"n{cur_n}"]["aBUS"] = {
                         'h': h,
                         'samplesU': samplesU,
@@ -266,6 +271,8 @@ class PosteriorRetainingStructure:
             self.sample_results[f"p0{cur_p0}"] = sample_results_n
         # Store results as class attributes to make them available for plotting
 
+        # rescale displacment samples
+        # self.displacement_samples = self.displacement_samples - 1000
         # Create the results directory if it doesn't exist
         os.makedirs('results', exist_ok=True)
         # Save the results to a JSON file
@@ -328,6 +335,7 @@ class PosteriorRetainingStructure:
                     
                     # Add measured displacement lines
                     for i, measured_displacement in enumerate(self.l_displacement.measured_mean):
+                        # measured_displacement = measured_displacement - 1000
                         plt.axvline(measured_displacement, color='orange', linestyle='--', 
                                    label=f'Measured value: {measured_displacement:.2f}' if i == 0 else "_nolegend_")
                         
@@ -348,27 +356,17 @@ class PosteriorRetainingStructure:
                     #         alpha=0.5, color='blue', label='Prior')
                     
                     # For the posterior (last level)
-                    kde_posterior = gaussian_kde(posterior_displacements)
-                    posterior_density = kde_posterior(x_range)
-                    plt.plot(x_range, posterior_density, 'r-', linewidth=2, label='Posterior')
-                    plt.fill_between(x_range, posterior_density, alpha=0.3, color='red')
-                    # plt.hist(posterior_displacements, density=True, bins=nr_bins,
-                    #         alpha=0.5, color='red', label='Posterior')
+                    try:
+                        kde_posterior = gaussian_kde(posterior_displacements)
+                        posterior_density = kde_posterior(x_range)
+                        plt.plot(x_range, posterior_density, 'r-', linewidth=2, label='Posterior')
+                        plt.fill_between(x_range, posterior_density, alpha=0.3, color='red')
+                    except:
+                        plt.hist(posterior_displacements, density=True, bins=nr_bins,
+                            alpha=0.5, color='red', label='Posterior')
 
-                                        # Plot likelihood as normal distribution for each measurement
-                    for i, (measured_displacement, sigma) in enumerate(zip(self.l_displacement.measured_mean, self.l_displacement.measured_sigma)):
-                        # Create x range around measurement (±4 sigma to capture full distribution)
-                        x_likelihood = np.linspace(measured_displacement - 4*sigma, measured_displacement + 4*sigma, 200)
-                        # Calculate normal distribution values
-                        norm_pdf = norm.pdf(x_likelihood, loc=measured_displacement, scale=sigma)
-                        # Scale to make it visible on the plot
-                        scale_factor = 0.6 * max(prior_density.max(), posterior_density.max()) / norm_pdf.max()
-                        # scale_factor = 0.6
-                        scaled_pdf = norm_pdf * scale_factor
-                        # Plot the normal distribution
-                        plt.plot(x_likelihood, scaled_pdf, color='darkgoldenrod', linestyle='-', linewidth=2,
-                                label=f'Likelihood N({measured_displacement:.2f}, {sigma:.2f})' if i == 0 else "_nolegend_")
-                        plt.fill_between(x_likelihood, scaled_pdf, alpha=0.2, color='darkgoldenrod')
+                        # Plot likelihood as normal distribution for each measurement
+                        plt.fill_between(x_range, prior_density, alpha=0.2, color='darkgoldenrod')
                 
                                 
                     plt.title(f'Marginal PDF of the displacement for {key}')
@@ -462,8 +460,15 @@ def run_bus_approach_comparison():
 
 
 if __name__ == '__main__':    
-    # Use a dummy model path when using surrogate model
-    model_path = "c:\\Users\\cotoarba\\OneDrive - Stichting Deltares\\Desktop\\dummy_123.shi"
+    # # Use a dummy model path when using surrogate model
+    use_surrogate = True
+    if use_surrogate:
+        # model_path = "trained_models/multitask_gpr_surrogate_500_1_1592_1.pkl" # 1 minute training time
+        model_path = "trained_models/multitask_gpr_surrogate_1000_1_1991_3.pkl" # 2:35 minute training time
+        # model_path = "trained_models/multitask_gpr_surrogate_1000_1_1991_1.pkl" # 2:35 minute training time
+        # model_path = "trained_models/multitask_gpr_surrogate_1000_1_3983_1.pkl" # 3:24 hours  training time
+    else:
+        model_path = "c:\\Users\\cotoarba\\OneDrive - Stichting Deltares\\Desktop\\dummy_123.shi"
     
     # Get measurement data path relative to the script
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -471,22 +476,22 @@ if __name__ == '__main__':
     
     # Initialize with surrogate model
     posterior_retention_structure = PosteriorRetainingStructure(
-        model_path, use_surrogate=True
+        model_path, use_surrogate=use_surrogate
     )
-    
 
-    ############################################################
-    # Generate samples for surrogate model
-    posterior_retention_structure.define_parameters(wall_properties=True)
-    posterior_retention_structure.generate_samples(n_samples=1_000_000)
+    # # # ############################################################
+    # # Generate samples for surrogate model
+    # posterior_retention_structure.define_parameters(wall_properties=True)
+    # posterior_retention_structure.generate_samples(n_samples=1_000_000)
     
-    # ############################################################
-    # # Run updating
-    # posterior_retention_structure.define_parameters(wall_properties=False)
-    # posterior_retention_structure.update_for_new_displacement_data(list_of_N=[1000], p0=[0.1], approaches=['BUS', 'aBUS'])
-    # # make plot directory
-    # os.makedirs('plots', exist_ok=True)
-    # posterior_retention_structure.plot_prior_and_posterior_marginal_pdfs(plot_dir='plots')
-    # posterior_retention_structure.plot_threshold_progression(plot_dir='plots')
-    # # plt.show()
-    # plt.close()
+    ############################################################
+    # Run updating
+    posterior_retention_structure.update_for_new_displacement_data(list_of_N=[300], p0=[0.1], approaches=['BUS', 'aBUS'], max_it=10)
+    # make plot director
+    os.makedirs('plots', exist_ok=True)
+
+    # posterior_retention_structure.l_displacement.measured_displacement_mean = posterior_retention_structure.measured_displacement_mean - 1000
+    posterior_retention_structure.plot_prior_and_posterior_marginal_pdfs(plot_dir='plots')
+    posterior_retention_structure.plot_threshold_progression(plot_dir='plots')
+    # plt.show()
+    plt.close()

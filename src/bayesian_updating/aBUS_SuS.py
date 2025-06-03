@@ -73,7 +73,7 @@ def aBUS_SuS(N, p0, l_class, distr, max_it: int = 20):
     # limit state funtion for the observation event (Ref.1 Eq.12)
     # log likelihood in standard space
     # displacements_for_u = lambda u: get_displacement(u2x(u[0:n-1]).flatten())
-    log_L_fun = lambda u, l_class_to_use: l_class_to_use.compute_log_likelihood_for_parameters(u2x(u[0:n-1]).flatten())
+    log_L_fun = lambda u, l_class_to_use: l_class_to_use.compute_log_likelihood_for_parameters(u2x(u[:,0:n-1]))
 
     # LSF
     h_LSF = lambda pi_u, logl_hat, log_L: np.log(sp.stats.norm.cdf(pi_u)) + logl_hat - log_L
@@ -100,14 +100,17 @@ def aBUS_SuS(N, p0, l_class, distr, max_it: int = 20):
     # initial MCS step
     print('Evaluating log-likelihood function ...\t', end='')
     u_j   = np.random.normal(size=(n,N))  # N samples from the prior distribution
-    for i in range(N):
-        # cur_displacements[i] = displacements_for_u(u_j[:,i])
-        leval[i] = log_L_fun(u_j[:,i], l_class)
-        # print(20*'-')
-        # print(f"leval: {leval[i]}")
-        cur_parameter_values[i] = l_class.parameter_value
-        # print(f"cur_parameter_values: {cur_parameter_values[i]}")
-    leval = np.array(leval)
+    # for i in range(N):
+    #     # cur_displacements[i] = displacements_for_u(u_j[:,i])
+    #     leval[i] = log_L_fun(u_j[:,i], l_class)
+    #     # print(20*'-')
+    #     # print(f"leval: {leval[i]}")
+    #     cur_parameter_values[i] = l_class.parameter_value
+    #     # print(f"cur_parameter_values: {cur_parameter_values[i]}")
+
+    leval = log_L_fun(u_j.T, l_class).flatten()
+    cur_parameter_values = l_class.parameter_values.flatten()
+
     print('Done!')
     logl_hat = max(leval)   # =-log(c) (Ref.1 Alg.5 Part.3)
     print('Initial maximum log-likelihood: ', logl_hat)
@@ -121,7 +124,7 @@ def aBUS_SuS(N, p0, l_class, distr, max_it: int = 20):
         # i += 1
 
         # compute the limit state function (Ref.1 Eq.12)
-        geval = h_LSF(u_j[-1,:], logl_hat, leval)   # evaluate LSF (Ref.1 Eq.12)
+        geval = h_LSF(u_j.T[:,-1], logl_hat, leval)   # evaluate LSF (Ref.1 Eq.12)
 
         # sort values in ascending order
         idx = np.argsort(geval)
@@ -153,6 +156,8 @@ def aBUS_SuS(N, p0, l_class, distr, max_it: int = 20):
 
         # sampling process using adaptive conditional sampling
         u_j, leval, lam, sigma, accrate, cur_parameter_values = aCS_aBUS(N, lam, h[i], rnd_seeds, log_L_fun, logl_hat, h_LSF, l_class)
+        print(f"leval: {leval}")
+        print(f"parameter_values: {parameter_values}")
         print('\t*aCS lambda =', lam, '\t*aCS sigma =', sigma[0], '\t*aCS accrate =', accrate)
 
         # update the value of the scaling constant (Ref.1 Alg.5 Part.4d)

@@ -1,7 +1,9 @@
 from typing import List, Union, Optional
 import numpy as np
 from scipy.stats import norm
-
+from main.case_study_2025.surrogate_dependent_gpr import DependentGPRModels, MultitaskGPModel
+import torch
+import gpytorch
 
 class BaseLikelihood:
     """Base class for likelihood functions."""
@@ -12,23 +14,8 @@ class BaseLikelihood:
         self.max_paramater_value = None
         self.measured_mean = None
         self.measured_sigma = None
-        pass
+        # pass
     
-    def compute_likelihood_for_equality_information(self, *args, **kwargs) -> float:
-        """
-        Compute the likelihood value.
-        
-        This is a base method that should be implemented by derived classes.
-        """
-        raise NotImplementedError("This method should be implemented by derived classes")
-    
-    def compute_log_likelihood(self, *args, **kwargs) -> float:
-        """
-        Compute the log likelihood value.
-        
-        By default, it uses the compute_likelihood method and takes the natural logarithm.
-        """
-        return np.log(self.compute_likelihood_for_equality_information(*args, **kwargs))
 
 
 class DisplacementLikelihood(BaseLikelihood):
@@ -46,12 +33,10 @@ class DisplacementLikelihood(BaseLikelihood):
             measured_displacement_sigma (Union[float, List[float]]): Standard deviations of measured displacements
         """
         super().__init__()
+        torch.set_num_threads(1)
         self.use_surrogate = use_surrogate
-        if not use_surrogate:
-            # Only import and initialize DSheetPiling if we're not using the surrogate
-            from src.geotechnical_models.dsheetpiling.model import DSheetPiling
-            self.model = DSheetPiling(model_path)
-            self.parameter_names = parameter_names
+        self.model_path = model_path
+        self.parameter_names = parameter_names
 
     def set_measured_mean_and_sigma(self, measured_displacement_mean: np.ndarray, 
                                     measured_displacement_sigma: Union[float, List[float]]):
@@ -63,22 +48,22 @@ class DisplacementLikelihood(BaseLikelihood):
         self.max_paramater_value = max_parameter_value
         return self.max_paramater_value
 
-    def generate_synthetic_measurement(self, parameters: List[float], sigma: float = 0.01):
+    def generate_synthetic_measurement(self, parameters: np.ndarray, sigma: float = 1):
         """
         Generate a synthetic measurement for given parameters and sigma
         """
-        self.measured_mean = []
-        self.measured_sigma = []
-        for parameter in parameters:
-            displacement = self.get_displacement_from_dsheet_model(parameter)
-            self.measured_mean.append(displacement)
-            self.measured_sigma.append(displacement*sigma)
-
-        self.measured_mean = np.array(self.measured_mean)
-        self.measured_sigma = np.array(self.measured_sigma)
+        # self.measured_mean = []
+        # self.measured_sigma = []
+        # for parameter in parameters:
+        #     self.measured_mean.append(self.get_displacement_for_parameters(parameter))
+        #     self.measured_sigma.append(sigma)
+        # self.measured_mean = np.array(self.measured_mean)
+        # self.measured_sigma = np.array(self.measured_sigma)
+        self.measured_mean = self.get_displacement_for_parameters(parameters)
+        self.measured_sigma = sigma * self.measured_mean
         return self.measured_mean, self.measured_sigma
 
-    def compute_total_likelihood(self, data: List[float]) -> float:
+    def compute_total_likelihood(self, data: np.ndarray) -> np.ndarray:
         """
         Compute the total likelihood for a list of data.
         """
@@ -95,7 +80,7 @@ class DisplacementLikelihood(BaseLikelihood):
         return total_likelihood
 
 
-    def compute_likelihood_for_equality_information(self, displacement_sample: float) -> float:
+    def compute_likelihood_for_equality_information(self, displacement_samples: np.ndarray) -> np.ndarray:
         """
         Compute likelihood for a displacement sample.
         
@@ -107,10 +92,17 @@ class DisplacementLikelihood(BaseLikelihood):
         """
         n = self.measured_mean.shape[0]
         w = 1 / n   # uniform weights
-        return float(sum(w * norm.pdf(displacement_sample, self.measured_mean[i], self.measured_sigma[i])
-                         for i in range(n)))
+        likelihood = np.array([sum(w * norm.pdf(displacement_samples, self.measured_mean[i], self.measured_sigma[i])
+                         for i in range(n))])
+        return likelihood
     
-    def safety_factor(self, displacement_sample: float) -> float:
+    def compute_log_likelihood_for_equality_information(self, displacement_samples: np.ndarray) -> np.ndarray:
+        """
+        Compute log likelihood for a displacement sample.
+        """
+        return np.log(self.compute_likelihood_for_equality_information(displacement_samples))
+    
+    def safety_factor(self, displacement_sample: np.ndarray) -> np.ndarray:
         '''
         Safety factor for the displacement sample given as the ratio of the max parameter value to the measured displacement value
         '''
@@ -140,7 +132,7 @@ class DisplacementLikelihood(BaseLikelihood):
         # return 1 - performance_function(displacement_sample)
         pass
     
-    def compute_likelihood_for_parameters(self, parameters: List[float]) -> tuple:
+    def compute_likelihood_for_parameters(self, parameters: np.ndarray) -> np.ndarray:
         """
         Compute likelihood for model parameters.
         
@@ -151,11 +143,11 @@ class DisplacementLikelihood(BaseLikelihood):
         Returns:
             tuple: (likelihood value, displacement)
         """
-        self.parameter_value = self.get_displacement_from_dsheet_model(parameters)
-        likelihood = self.compute_likelihood_for_equality_information(self.parameter_value)
+        self.parameter_values = self.get_displacement_for_parameters(parameters)
+        likelihood = self.compute_likelihood_for_equality_information(self.parameter_values)
         return likelihood
     
-    def compute_log_likelihood_for_parameters(self, parameters: List[float]) -> tuple:
+    def compute_log_likelihood_for_parameters(self, parameters: np.ndarray) -> np.ndarray:
         """
         Compute log likelihood for model parameters.
         
@@ -169,7 +161,71 @@ class DisplacementLikelihood(BaseLikelihood):
         likelihood = self.compute_likelihood_for_parameters(parameters)
         return np.log(likelihood)
     
-    def fake_surrogate_function(self, parameters: list[float]):
+    def GPR_surrogate_function(self, parameters: np.ndarray):
+        """
+        GPR surrogate function for given parameters: 
+        'Klei_soilphi', 'Klei_soilcohesion', 'Klei_soilcurkb1',
+        'Zand_soilphi', 'Zand_soilcurkb1',
+        'Zandlos_soilphi', 'Zandlos_soilcurkb1',
+        'Zandvast_soilphi', 'Zandvast_soilcurkb1',
+        'Wall_SheetPilingElementEI'
+        parameters: list of parameters
+        parameters[0]: Klei_soilcohesion
+        parameters[1]: Klei_soilphi
+        parameters[2]: Klei_soilcurkb1
+        parameters[3]: Zand_soilphi
+        parameters[4]: Zand_soilcurkb1
+        parameters[5]: Zandlos_soilphi
+        parameters[6]: Zandlos_soilcurkb1
+        parameters[7]: Zandvast_soilphi
+        parameters[8]: Zandvast_soilcurkb1
+        parameters[9]: Wall_SheetPilingElementEI
+        Returns:
+            displacement: estimated displacement in mm
+        """
+
+        X_predict_tensor = torch.tensor(parameters, dtype=torch.float32)
+        # ensure that X_predict_tensor is a 2D tensor
+        if X_predict_tensor.dim() == 1:
+            X_predict_tensor = X_predict_tensor.unsqueeze(0)
+
+        
+        cur_model = DependentGPRModels()
+        cur_model.load(self.model_path)
+        displacement, var_displacement = cur_model.predict(X_predict_tensor)
+        # import matplotlib.pyplot as plt
+        # n_parameters = displacement.shape[2]
+        # fig, axes = plt.subplots(3, n_parameters//3, figsize=(5*n_parameters//3, 15))
+        # for i in range(n_parameters):
+        #     ax1 = axes[i//(n_parameters//3), i%(n_parameters//3)]
+        #     ax1.hist(displacement[:, 0, i], bins=100)
+        #     ax1.set_title(f'Displacement for parameter {i}')
+        #     ax1.set_ylabel('Frequency')
+        #     ax1.set_xlabel('Displacement (mm)')    
+        # plt.tight_layout()
+        # plt.savefig('displacement_histogram.png')
+        # plt.show()
+        return displacement[:, 0, -1] # + 1000
+
+        # Plot the displacement
+        # print(f"Displacement shape: {displacement.shape}")
+        # fig, axes = plt.subplots(3, n_parameters//3, figsize=(5*n_parameters//3, 15))
+        # for i in range(n_parameters):
+        #     ax1 = axes[i//(n_parameters//3), i%(n_parameters//3)]
+        #     ax1.hist(displacement[:, i], bins=100)
+        #     ax1.set_title(f'Displacement for parameter {i}')
+        #     ax1.set_ylabel('Frequency')
+        #     ax1.set_xlabel('Displacement (mm)')    
+        # plt.tight_layout()
+        # # save figure
+
+        # # plt.close()
+
+        # print(f"Displacement: {displacement}")
+        # return first element of displacement which has shape (1, 1, 15)
+        # return displacement[:, -1]
+    
+    def fake_surrogate_function(self, parameters: np.ndarray):
         """
         Fake surrogate function for given parameters
         parameters: list of parameters
@@ -196,7 +252,17 @@ class DisplacementLikelihood(BaseLikelihood):
 
         # return parameters[0] + parameters[1] + parameters[2]
     
-    def get_displacement_from_dsheet_model(self, updated_parameters: list[float], stage_id: int = -1):
+    def get_displacement_for_parameters(self, parameters: np.ndarray) -> np.ndarray:
+        if self.use_surrogate == True:
+            return self.GPR_surrogate_function(parameters)
+            # return self.fake_surrogate_function(parameters)
+        else:
+            parameter_values = []
+            for i in range(len(parameters)):
+                parameter_values.append(self.get_displacement_from_dsheet_model(parameters[i]))
+            return parameter_values
+
+    def get_displacement_from_dsheet_model(self, updated_parameters: np.ndarray, stage_id: int = -1) -> float:
         """
         Run the Dsheet analysis for given parameters or use the surrogate model
         updated_parameters: list of parameters with
@@ -205,12 +271,11 @@ class DisplacementLikelihood(BaseLikelihood):
         updated_parameters[2]: water level
         Optional: updated_parameters[3]: corrosion
         """
-        # If surrogate mode is enabled, use the fake surrogate function
-        if hasattr(self, 'use_surrogate') and self.use_surrogate:
-            return self.fake_surrogate_function(updated_parameters)
-        
+        # Only import and initialize DSheetPiling if we're not using the surrogate
         from src.reliability_models.dsheetpiling.lsf import unpack_soil_params, unpack_water_params
-        # Otherwise use the actual DSheetPiling model
+        from src.geotechnical_models.dsheetpiling.model import DSheetPiling
+        self.model = DSheetPiling(self.model_path)
+
         # Pair parameters with names
         params = {name: rv for (name, rv) in zip(self.parameter_names, updated_parameters)}
         # if k1 in params, add k2=0.5*k1 and k3=0.2*k1

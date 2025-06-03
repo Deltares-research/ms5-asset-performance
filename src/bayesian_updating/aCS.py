@@ -86,63 +86,110 @@ def aCS(N, lambd_old, tau, theta_seeds, h_LSF, l_class):
     rho       = np.sqrt(1-sigma**2)                        # Ref. 1 Eq. 24
     mu_acc[i] = 0 
 
-    # b. apply conditional sampling
-    for k in range(1, Ns+1):
-        idx = sum(Nchain[:k-1])   # beginning of each chain total index
+    max_nr_samples = max(Nchain)
 
-        # initial chain values
-        theta_chain[:,idx] = theta_seeds[:,k-1]
+    cur_mask = Nchain >= 1
+    nr_idx = np.sum(cur_mask)
 
-        # initial LSF evaluation
-        geval[idx] = h_LSF(theta_chain[:,idx], l_class)  # evaluate the LSF
-        parameter_values[idx] = l_class.parameter_value
+    # initialize with current seed
+    theta_chain[:,0:nr_idx] = theta_seeds[:,cur_mask]
+    geval[0:nr_idx] = h_LSF(theta_chain[:,0:nr_idx].reshape(1,-1), l_class)
+    parameter_values[0:nr_idx] = l_class.parameter_values
+    acc[0:nr_idx] = 0
+
+    previous_start = 0
+    previous_idx = nr_idx
+    for sample_nr in range(2,max_nr_samples+1):
+        cur_mask = Nchain >= sample_nr
+        nr_idx = np.sum(cur_mask) + previous_idx
+
+        # initialize with current seed
+        previous_theta = theta_chain[:,previous_start:previous_idx]
+        theta_chain[:,previous_idx:nr_idx] = previous_theta[:,cur_mask]
+        geval[previous_idx:nr_idx] = h_LSF(theta_chain[:,previous_idx:nr_idx].T, l_class).flatten()
+        parameter_values[previous_idx:nr_idx] = l_class.parameter_values
+        acc[previous_idx:nr_idx] = 0
+
+        # generate candidate sample 
+        v_star = np.zeros((n, nr_idx-previous_idx))
+        # geval_star = np.zeros(nr_idx-previous_idx)
+        for cur_idx in range(nr_idx-previous_idx):
+            v_star[:,cur_idx] = np.random.normal(loc=rho*theta_chain[:,cur_idx].reshape(1,-1), scale=sigma)     
+
+        geval_star = h_LSF(v_star.T, l_class).flatten()
+
+        # Acceptance mask
+        mask_geval_star = geval_star <= tau
+
+        # Change accepted samples
+        theta_chain[:,previous_idx:nr_idx][:,mask_geval_star] = v_star[:,mask_geval_star]
+        geval[previous_idx:nr_idx][mask_geval_star] = geval_star[mask_geval_star]
+        acc[previous_idx:nr_idx][mask_geval_star] = 1
+        parameter_values[previous_idx:nr_idx][mask_geval_star] = l_class.parameter_values[mask_geval_star]
+
+        # Update previous index
+        previous_start = previous_idx
+        previous_idx = nr_idx
+
+    # # b. apply conditional sampling
+    # for k in range(1, Ns+1):
+    #     idx = sum(Nchain[:k-1])   # beginning of each chain total index
+    #     print(f"Cur k: {k} and cur idx: {idx}...")
+
+    #     # initial chain values
+    #     theta_chain[:,idx] = theta_seeds[:,k-1]
+
+    #     # initial LSF evaluation
+    #     geval[idx] = h_LSF(theta_chain[:,idx].reshape(1,-1), l_class)  # evaluate the LSF
+    #     parameter_values[idx] = l_class.parameter_values
         
-        for t in range(1, Nchain[k-1]):  
-            # current state
-            theta_t = theta_chain[:,idx+t-1]
+    #     for t in range(1, Nchain[k-1]):  
+    #         # current state
+    #         theta_t = theta_chain[:,idx+t-1]
 
-            # generate candidate sample        
-            v_star = np.random.normal(loc=rho*theta_t, scale=sigma)     
+    #         # generate candidate sample        
+    #         v_star = np.random.normal(loc=rho*theta_t, scale=sigma)     
             
-            # evaluate limit state function
-            geval_star = h_LSF(v_star, l_class)  # evaluate the LSF
+    #         # evaluate limit state function
+    #         geval_star = h_LSF(v_star.reshape(1,-1), l_class)  # evaluate the LSF
 
-            # accept or reject sample
-            if geval_star <= tau:
-                theta_chain[:,idx+t] = v_star       # accept the candidate in observation region           
-                geval[idx+t]         = geval_star   # store the loglikelihood evaluation
-                acc[idx+t]           = 1            # note the acceptance
-                parameter_values[idx+t] = l_class.parameter_value # store the sorted values
-            else:
-                theta_chain[:,idx+t] = theta_t          # reject the candidate and use the same state
-                geval[idx+t]         = geval[idx+t-1]   # store the loglikelihood evaluation    
-                acc[idx+t]           = 0                # note the rejection
-                parameter_values[idx+t] = parameter_values[idx+t-1] # store the sorted values
+    #         # accept or reject sample
+    #         if geval_star <= tau:
+    #             theta_chain[:,idx+t] = v_star       # accept the candidate in observation region           
+    #             geval[idx+t]         = geval_star   # store the loglikelihood evaluation
+    #             acc[idx+t]           = 1            # note the acceptance
+    #             parameter_values[idx+t] = l_class.parameter_value # store the sorted values
+    #         else:
+    #             theta_chain[:,idx+t] = theta_t          # reject the candidate and use the same state
+    #             geval[idx+t]         = geval[idx+t-1]   # store the loglikelihood evaluation    
+    #             acc[idx+t]           = 0                # note the rejection
+    #             parameter_values[idx+t] = parameter_values[idx+t-1] # store the sorted values
 
-        # average of the accepted samples for each seed 'mu_acc'
-        # here the warning "Mean of empty slice" is not an issue        
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", category=RuntimeWarning)
-            mu_acc[i] = mu_acc[i] + np.minimum(1, np.mean(acc[idx+1:idx+Nchain[k-1]])) 
+        # # average of the accepted samples for each seed 'mu_acc'
+        # # here the warning "Mean of empty slice" is not an issue        
+        # with warnings.catch_warnings():
+        #     warnings.simplefilter("ignore", category=RuntimeWarning)
+        #     mu_acc[i] = mu_acc[i] + np.minimum(1, np.mean(acc[idx+1:idx+Nchain[k-1]])) 
         
-        if np.mod(k,Na) == 0:
-            if Nchain[k-1] > 1:
-                # c. evaluate average acceptance rate
-                hat_acc[i] = mu_acc[i]/Na   # Ref. 1 Eq. 25
+        # if np.mod(k,Na) == 0:
+        #     if Nchain[k-1] > 1:
+        #         # c. evaluate average acceptance rate
+        #         hat_acc[i] = mu_acc[i]/Na   # Ref. 1 Eq. 25
             
-                # d. compute new scaling parameter
-                zeta       = 1/np.sqrt(i+1)   # ensures that the variation of lambda(i) vanishes
-                lambd[i+1] = np.exp(np.log(lambd[i]) + zeta*(hat_acc[i]-star_a))  # Ref. 1 Eq. 26
+        #         # d. compute new scaling parameter
+        #         zeta       = 1/np.sqrt(i+1)   # ensures that the variation of lambda(i) vanishes
+        #         lambd[i+1] = np.exp(np.log(lambd[i]) + zeta*(hat_acc[i]-star_a))  # Ref. 1 Eq. 26
             
-                # update parameters
-                sigma = np.minimum(lambd[i+1]*sigma_0, np.ones(n))  # Ref. 1 Eq. 23
-                rho   = np.sqrt(1-sigma**2)                       # Ref. 1 Eq. 24
+        #         # update parameters
+        #         sigma = np.minimum(lambd[i+1]*sigma_0, np.ones(n))  # Ref. 1 Eq. 23
+        #         rho   = np.sqrt(1-sigma**2)                       # Ref. 1 Eq. 24
             
-                # update counter
-                i += 1
-                
+        #         # update counter
+        #         i += 1
+    
     # next level lambda
-    new_lambda = lambd[i]
+    # new_lambda = lambd[i]
+    new_lambda = 0
 
     # compute mean acceptance rate of all chains
     accrate = sum(acc)/(N-Ns)

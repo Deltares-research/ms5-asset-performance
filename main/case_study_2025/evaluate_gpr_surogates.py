@@ -5,6 +5,12 @@ import numpy as np
 import pandas as pd
 import torch
 from pathlib import Path
+import sys
+
+# Add project root to Python path to enable 'main' module imports
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
 from surrogate_dependent_gpr import DependentGPRModels, MultitaskGPModel, ExactGPModel, SparseGPModel
 from surrogate_independent_gpr import IndependentGPRModels
 from sklearn.model_selection import train_test_split
@@ -198,8 +204,9 @@ def plot_wall(model, x_true, y_true, y_predicted, var_predicted, path, depth_lim
     if torch.is_tensor(var_predicted):
         var_predicted = var_predicted.numpy()
 
+    added_value = 1000
     # Calculate residuals
-    residuals = y_true - y_predicted
+    residuals = (y_true - y_predicted) - added_value
 
     # Get statistics
     mean_error = np.mean(residuals, axis=0)
@@ -232,10 +239,10 @@ def plot_wall(model, x_true, y_true, y_predicted, var_predicted, path, depth_lim
     # for i_sample in range(n_samples):
         # ax2.plot(y_true[i_sample,:], depths,  c='g', linewidth=1, alpha=0.1)
 
-    y_true_mean = y_true.mean(axis=0)
+    y_true_mean = y_true.mean(axis=0) - added_value
     y_true_std = y_true.std(axis=0)
 
-    y_pred_mean = y_predicted.mean(axis=0)
+    y_pred_mean = y_predicted.mean(axis=0) - added_value
     # y_pred_std = y_predicted.std(axis=0)
     y_error = 2*np.sqrt(var_predicted)
     y_pred_std = y_error.mean(axis=0)
@@ -428,12 +435,30 @@ def compute_metrics(y_true, y_pred, prediction_time):
         'prediction_time': prediction_time
     }
 
-def save_predictions(model, X_test_tensor, plot_dir):
+def save_predictions(model, X_test_tensor, plot_dir, model_path):
     # predict on test data
     # start timer
     start_time = time.time()
+    y_hat_test = []
+    var_test = []
+    # for i in range(X_test_tensor.shape[0]):
+    #     model = DependentGPRModels()
+    #     model.load(model_path)
+    #     print(f"Shape of X_test_tensor[i]: {X_test_tensor[i].unsqueeze(0).shape}")
+    #     y_hat_test_i, var_test_i = model.predict(X_test_tensor[i].unsqueeze(0))
+    #     y_hat_test.append(y_hat_test_i)
+    #     var_test.append(var_test_i)
+    # print(f"y_hat_test.shape: {y_hat_test.shape}")
+    # print(f"var_test.shape: {var_test.shape}")
+    # print(50*'-=-')
+
+    model = DependentGPRModels()
+    model.load(model_path)
     y_hat_test, var_test = model.predict(X_test_tensor)
+    y_hat_test = np.array(y_hat_test)
+    var_test = np.array(var_test)
     end_time = time.time()
+
 
     prediction_time = end_time - start_time
 
@@ -848,12 +873,21 @@ def evaluate_multitask_gpr(model_path,
         y_var = y_var_df.to_numpy()
     except FileNotFoundError:
         print(f"No predictions found for {model_path}")
-        save_predictions(model, X_test_tensor, plot_dir)
+        save_predictions(model, X_test_tensor, plot_dir, model_path)
         y_pred_df, y_var_df = load_predictions(plot_dir)
         y_pred = y_pred_df.to_numpy()
         y_var = y_var_df.to_numpy()
 
-    # Plot results 
+    # # two subplots figure
+    # fig, axes = plt.subplots(2, 1, figsize=(10, 10))
+    # ax1 = axes[0]
+    # ax2 = axes[1]
+    # ax1.hist(y_test[:,0])
+    # ax2.hist(y_pred[:,0])
+    # # plt.savefig(plot_dir / "histogram_comparison.png")
+    # plt.show()
+
+    # Plot results z
     plot(model, X_test_tensor, y_test, y_pred, y_var, X_train_tensor, plot_dir)
 
 def evaluate_independent_gpr_models(model_path, 
@@ -967,7 +1001,7 @@ if __name__ == "__main__":
     X_og = X_og.T
     nr_points = X_og.shape[0]
 
-    target_nr_points = nr_points // 2
+    target_nr_points = nr_points // 10
     # target_nr_points = 4
     # randomly select target_nr_points from X
     np.random.seed(42)
@@ -990,8 +1024,8 @@ if __name__ == "__main__":
     y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
 
 
-    # target_nr_points = nr_points // 1
-    target_nr_points = 20
+    target_nr_points = nr_points // 10
+    # target_nr_points = 50
 
     # randomly select target_nr_points from X
     np.random.seed(42)
@@ -1003,7 +1037,6 @@ if __name__ == "__main__":
     prepare_training_data = PrepareTrainingData(X, y)
     X, y = prepare_training_data.get_training_simple()
     
-
     # keep every 10th column for y
     y = y[:, ::10]
     # print(f"y shape after removing 90% of the columns: {y.shape}")
@@ -1011,15 +1044,17 @@ if __name__ == "__main__":
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 
+    added_value = 1000
     X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
-    y_test_tensor = torch.tensor(y_test, dtype=torch.float32)
+    y_test_tensor = torch.tensor(y_test + added_value, dtype=torch.float32)
 
     # Evaluate multitask modelx
     # model_path = r"results/multitask_gpr_surrogate_500_1_100_3186.pkl"
     # model_path = r"trained_models/multitask_gpr_surrogate_500_1_1592.pkl"
-    for rank in [2]:
-        for trainig_size in [159, 1592, 3186]:
-            model_path = r"trained_models/multitask_gpr_surrogate_500_1_{}_{}.pkl".format(trainig_size, rank)
+    
+    for rank in [1]:
+        for trainig_size in [1592]: #, 1592, 3186]:
+            model_path = f"trained_models/multitask_gpr_surrogate_500_1_{trainig_size}_{rank}.pkl"
             evaluate_multitask_gpr(model_path, X_test_tensor, y_test_tensor, X_train_tensor, name_addition=f"Test_Data_{X_test.shape[0]}")
 
 
@@ -1028,15 +1063,13 @@ if __name__ == "__main__":
     # comparison_dir.mkdir(parents=True, exist_ok=True)
     
     # result_metrics_paths = []
-    # for rank in [2]:
-    #     metrics_path = Path(f"trained_models_plots/multitask_Test_Data_1992_surrogate_gpr_500_1_159_{rank}/result_metrics.json")
+    # for rank in [1]: #,2,3,4]:
+    #     metrics_path = Path(f"trained_models_plots/multitask_Test_Data_498_surrogate_gpr_1000_1_1991_{rank}/result_metrics.json")
     #     result_metrics_paths.append(metrics_path)
-    #     metrics_path = Path(f"trained_models_plots/multitask_Test_Data_1992_surrogate_gpr_500_1_1592_{rank}/result_metrics.json")
-    #     result_metrics_paths.append(metrics_path)
-    #     metrics_path = Path(f"trained_models_plots/multitask_Test_Data_1992_surrogate_gpr_500_1_3186_{rank}/result_metrics.json")
+    #     metrics_path = Path(f"trained_models_plots/multitask_Test_Data_996_surrogate_gpr_1000_1_3983_{rank}/result_metrics.json")
     #     result_metrics_paths.append(metrics_path)
 
     # # Plot comparison of models with different ranks
     # if result_metrics_paths:
     #     plot_comparison_multitask_gpr_models(result_metrics_paths, comparison_dir)
-    #     print(f"Model comparison plots saved to {comparison_dir}")
+    # #     print(f"Model comparison plots saved to {comparison_dir}")

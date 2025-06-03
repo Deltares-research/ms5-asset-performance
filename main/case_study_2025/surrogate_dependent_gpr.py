@@ -10,21 +10,25 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import gpytorch.settings
 from torch.utils.data import DataLoader, TensorDataset
-# import tqdm
 from tqdm import notebook, tqdm
 
 
 class MultitaskGPModel(gpytorch.models.ExactGP):
     def __init__(self, train_x, train_y, likelihood, num_tasks, rank=2):
         super(MultitaskGPModel, self).__init__(train_x, train_y, likelihood)
-        print(50*'-=')
-        print(f"Used rank: {rank}")
+        # Linear mean
         self.mean_module = gpytorch.means.MultitaskMean(
-            gpytorch.means.ConstantMean(), num_tasks=num_tasks
+            gpytorch.means.LinearMean(input_size=train_x.shape[-1]), num_tasks=num_tasks
         )
+        # # Matern kernel
+        # self.covar_module = gpytorch.kernels.MultitaskKernel(
+        #     gpytorch.kernels.MaternKernel(nu=1.5), num_tasks=num_tasks, rank=rank
+        # )
+        #RBF kernel
         self.covar_module = gpytorch.kernels.MultitaskKernel(
             gpytorch.kernels.RBFKernel(), num_tasks=num_tasks, rank=rank
         )
+        
 
     def forward(self, x):
         mean_x = self.mean_module(x)
@@ -70,8 +74,6 @@ class SparseVariationaMultitaskGPModel(gpytorch.models.ApproximateGP):
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
 
-
-
 class ExactGPModel(gpytorch.models.ExactGP):
     def __init__(self, train_x, train_y, likelihood):
         super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
@@ -89,9 +91,6 @@ class SparseGPModel(gpytorch.models.ExactGP):
         self.mean_module = gpytorch.means.ConstantMean()
         # randomly select nr_inducing_points from train_x
         inducing_idx = np.random.choice(train_x.shape[0], nr_inducing_points, replace=False)
-        print(f"shape of train_x: {train_x.shape}")
-        print(f"shape of inducing_idx: {inducing_idx.shape}")
-        print(f"shape of train_x[inducing_idx, :]: {train_x[inducing_idx, :].shape}")
         
         self.base_covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
         self.covar_module = gpytorch.kernels.InducingPointKernel(self.base_covar_module, 
@@ -154,6 +153,7 @@ class DepthAwareGPModel(gpytorch.models.ExactGP):
     
 
 class DependentGPRModels:
+    
     def __init__(self):
         self.models = []
         self.likelihoods = []
@@ -177,8 +177,6 @@ class DependentGPRModels:
         scaler_x = StandardScaler()
         scaler_y = StandardScaler()
         
-        # print(f"x_train.shape: {x_train.numpy().shape}")
-        # print(f"y_train.shape: {y_train.numpy().reshape(-1, 1).shape}")
         x_scaled = torch.tensor(scaler_x.fit_transform(x_train.numpy()), dtype=torch.float32)
         if model_type == "multitask" or model_type == "multitask-variational":
             y_i_scaled = torch.tensor(scaler_y.fit_transform(y_train.numpy()), dtype=torch.float32)
@@ -189,6 +187,8 @@ class DependentGPRModels:
         
         self.scalers_x.append(scaler_x)
         self.scalers_y.append(scaler_y)
+        # self.scalers_x = scaler_x
+        # self.scalers_y = scaler_y
 
         if device is not None:
             x_scaled = x_scaled.to(device)
@@ -219,17 +219,7 @@ class DependentGPRModels:
             likelihood = likelihood.to(device)
 
         # optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-        optimizer = torch.optim.Adam([
-            {'params': model.parameters()},
-            # {'params': likelihood.parameters()},
-        ], lr=lr)
-        # Use the Adam optimizer with a learning rate scheduler
-        # optimizer = torch.optim.Adam([
-        #     {'params': model.covar_module.parameters()},
-        #     {'params': model.mean_module.parameters()},
-        #     {'params': model.likelihood.parameters()},
-        # ], lr=lr)
-            
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
         model.train()
         likelihood.train()
@@ -267,7 +257,8 @@ class DependentGPRModels:
                 optimizer.zero_grad()
                 output = model(x_scaled)
                 loss = -mll(output, y_i_scaled)
-                loss.backward()            
+                loss.backward()          
+                print('Iter %d/%d - Loss: %.3f' % (epoch + 1, n_epochs, loss.item()))  
                 optimizer.step()
                 losses.append(loss.item())
                 # Step the scheduler
@@ -281,10 +272,13 @@ class DependentGPRModels:
         
         self.models.append(model)
         self.likelihoods.append(likelihood)
+        # self.models = model
+        # self.likelihoods = likelihood
         
         if save_params:
             with open(path, 'wb') as f: 
                 pickle.dump({
+                    'model_state_dict': model.state_dict(),
                     'models': self.models,
                     'likelihoods': self.likelihoods,
                     'scalers_x': self.scalers_x,
@@ -313,14 +307,17 @@ class DependentGPRModels:
         
         with torch.no_grad():
             for i in range(len(self.models)):
-                model = self.models[i]
-                likelihood = self.likelihoods[i]
+                cur_model = self.models[i]
+                cur_likelihood = self.likelihoods[i]
                 
-                x_scaled = torch.tensor(self.scalers_x[i].transform(x.numpy()), dtype=torch.float32)
+                cur_x_scaled = torch.tensor(self.scalers_x[i].transform(x.numpy()), dtype=torch.float32)
                 
                 # Get predictions from model
-                observed_pred = likelihood(model(x_scaled))
+                cur_model_output = cur_model(cur_x_scaled)
+                observed_pred = cur_likelihood(cur_model_output)
+                
                 mean = observed_pred.mean
+                
                 variance = observed_pred.variance
                 
                 # Rescale predictions back to original scale
@@ -469,12 +466,10 @@ def run_full_parameter():
          data["Zandvast_soilphi"].values, data["Zandvast_soilcurkb1"].values,
          data["Wall_SheetPilingElementEI"].values])
     
-    # print(f"X shape before: {X.shape}")
-    # print(f"y shape before: {y.shape}")
     X = X.T
     nr_points = X.shape[0]
 
-    divider = [2] # reduce the number of training points by a factor of divider_i
+    divider = [10] # reduce the number of training points by a factor of divider_i
     for divider_i in divider:
         target_nr_points = nr_points // divider_i
         # randomly select target_nr_points from X
@@ -492,10 +487,12 @@ def run_full_parameter():
 
         # Split data
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-        
+
+        added_value = 1000
         # Convert to PyTorch tensors
         X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
-        y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
+        y_train_tensor = torch.tensor(y_train + added_value, dtype=torch.float32)
+
         X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
         y_test_tensor = torch.tensor(y_test, dtype=torch.float32)
         
@@ -511,7 +508,7 @@ def run_full_parameter():
         nr_training_points = X_train_tensor.shape[0]
         # mkdir trained_models
         Path("trained_models").mkdir(parents=True, exist_ok=True)
-        for rank in [2]:
+        for rank in [3,4]:
         # for rank in [None]:
             model = DependentGPRModels()
             if n_inducing_points is None:

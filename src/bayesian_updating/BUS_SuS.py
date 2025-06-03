@@ -77,7 +77,7 @@ def BUS_SuS(N, p0, c, l_class, distr, max_it: int = 20):
     ell   = np.log(1/c)
     # displacement_for_u = lambda u: get_displacement(u2x(u[0:n-1]).flatten())
     # h_LSF = lambda u, displacement: np.log(sp.stats.norm.cdf(u)) + ell - log_likelihood(displacement)
-    h_LSF = lambda u, l_class_to_use: np.log(sp.stats.norm.cdf(u[-1])) + ell - l_class_to_use.compute_log_likelihood_for_parameters(u2x(u[0:n-1]).flatten())
+    h_LSF = lambda u, l_class_to_use: np.log(sp.stats.norm.cdf(u[:,-1])) + ell - l_class_to_use.compute_log_likelihood_for_parameters(u2x(u[:,0:n-1]))
 
     # initialization of variables
     j        = 0                         # number of conditional level
@@ -101,13 +101,15 @@ def BUS_SuS(N, p0, c, l_class, distr, max_it: int = 20):
     print('Evaluating performance function:\t', end='')
     u_j   = np.random.normal(0,1,size=(n,N))      # samples in the standard space
     # geval = [h_LSF(u_j[:,i]) for i in range(N)]
-    for i in range(N):
+    # for i in range(N):
         # cur_displacements[i] = displacement_for_u(u_j[:,i])
-        geval[i] = h_LSF(u_j[:,i], l_class)  # evaluate the LSF
-        cur_parameter_values[i] = l_class.parameter_value
-    geval = np.array(geval)
-    print('OK!')
+        # print(f"Runing step {i} of {N}")
+        # geval[i] = h_LSF(u_j[:,i], l_class)  # evaluate the LSF
+        # cur_parameter_values[i] = l_class.parameter_value
 
+    geval = h_LSF(u_j.T, l_class).flatten()
+    cur_parameter_values = l_class.parameter_values.flatten()
+    
     # SuS stage
     h[j] = np.inf  # Initial threshold
     
@@ -149,14 +151,16 @@ def BUS_SuS(N, p0, c, l_class, distr, max_it: int = 20):
         samplesU['seeds'].append(seeds.T)       # store seeds
 
         # sampling process using adaptive conditional sampling
-        try:
-            u_j, geval, lam, sigma, accrate, cur_parameter_values = aCS(N, lam, h[j], rnd_seeds, h_LSF, l_class)
-            print(f"\t*aCS lambda = {lam}, *aCS sigma = {sigma[0]}, *aCS accrate = {accrate}")
-        except Exception as e:
-            print(f"Error in aCS: {e}")
-            break
-            
+        # try:
+        u_j, geval, lam, sigma, accrate, cur_parameter_values = aCS(N, lam, h[j], rnd_seeds, h_LSF, l_class)
+        print(f"\t*aCS lambda = {lam}, *aCS sigma = {sigma[0]}, *aCS accrate = {accrate}")
+        # except Exception as e:
+            # print(f"Error in aCS: {e}")
+            # break
+        
+        print(f"increasing current_j={j} to {j+1}")
         j += 1  # Move to next level
+        print(f"current j: {j}")
         if h[j-1] <= 0:
             break
 

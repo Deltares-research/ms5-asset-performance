@@ -59,6 +59,7 @@ def aCS_aBUS(N, lambd_old, tau, theta_seeds, log_L_fun, logl_hat, h_LSF, l_class
     # initialization
     theta_chain = np.zeros((n,N))         # generated samples 
     leval       = np.zeros(N)             # store lsf evaluations
+    heval       = np.zeros(N)             # store lsf evaluations
     parameter_values = np.zeros(N)
     acc         = np.zeros(N,dtype=int)   # store acceptance
 
@@ -87,62 +88,114 @@ def aCS_aBUS(N, lambd_old, tau, theta_seeds, log_L_fun, logl_hat, h_LSF, l_class
     rho       = np.sqrt(1-sigma**2)                        # Ref. 1 Eq. 24
     mu_acc[i] = 0 
 
-    # b. apply conditional sampling
-    for k in range(1, Ns+1):
-        idx = sum(Nchain[:k-1])   # beginning of each chain total index
+    max_nr_samples = max(Nchain)
 
-        # initial chain values
-        theta_chain[:,idx] = theta_seeds[:,k-1]
+    cur_mask = Nchain >= 1
+    nr_idx = np.sum(cur_mask)
 
-        # initial log-like evaluation
-        leval[idx] = log_L_fun(theta_chain[:,idx], l_class)
-        parameter_values[idx] = l_class.parameter_value
+    # initialize with current seed
+    theta_chain[:,0:nr_idx] = theta_seeds[:,cur_mask]
+    leval[0:nr_idx] = log_L_fun(theta_chain[:,0:nr_idx].reshape(1,-1), l_class)
+    # heval[0:nr_idx] = h_LSF(theta_chain[:,0:nr_idx].reshape(1,-1), logl_hat, leval[0:nr_idx])
+    parameter_values[0:nr_idx] = l_class.parameter_values
+    acc[0:nr_idx] = 0
+
+    previous_start = 0
+    previous_idx = nr_idx
+    for sample_nr in range(2,max_nr_samples+1):
+        cur_mask = Nchain >= sample_nr
+        nr_idx = np.sum(cur_mask) + previous_idx
+
+        # initialize with current seed
+        previous_theta = theta_chain[:,previous_start:previous_idx]
+        theta_chain[:,previous_idx:nr_idx] = previous_theta[:,cur_mask]
+        # geval[previous_idx:nr_idx] = h_LSF(theta_chain[:,previous_idx:nr_idx].T, l_class).flatten()
+        leval[previous_idx:nr_idx] = log_L_fun(theta_chain[:,previous_idx:nr_idx].T, l_class).flatten()
+        # heval[previous_idx:nr_idx] = h_LSF(theta_chain[:,previous_idx:nr_idx].reshape(1,-1), logl_hat, leval[previous_idx:nr_idx])
+        parameter_values[previous_idx:nr_idx] = l_class.parameter_values.flatten()
+        acc[previous_idx:nr_idx] = 0
+
+         # generate candidate sample 
+        v_star = np.zeros((n, nr_idx-previous_idx))
+        # geval_star = np.zeros(nr_idx-previous_idx)
+        for cur_idx in range(nr_idx-previous_idx):
+            v_star[:,cur_idx] = np.random.normal(loc=rho*theta_chain[:,cur_idx].reshape(1,-1), scale=sigma)     
+
+        # geval_star = h_LSF(v_star.T, l_class).flatten()
+        leval_star = log_L_fun(v_star.T, l_class).flatten()
+        heval_star = h_LSF(v_star.T[:,-1], logl_hat, leval_star)
+
+        # Acceptance mask
+        mask_leval_star = heval_star <= tau
+
+        # Change accepted samples
+        theta_chain[:,previous_idx:nr_idx][:,mask_leval_star] = v_star[:,mask_leval_star]
+        leval[previous_idx:nr_idx][mask_leval_star] = leval_star[mask_leval_star]
+        # heval[previous_idx:nr_idx][mask_leval_star] = heval_star[mask_leval_star]
+        acc[previous_idx:nr_idx][mask_leval_star] = 1
+        parameter_values[previous_idx:nr_idx][mask_leval_star] = l_class.parameter_values[mask_leval_star]
+
+        # Update previous index
+        previous_start = previous_idx
+        previous_idx = nr_idx
+
+    # # b. apply conditional sampling
+    # for k in range(1, Ns+1):
+    #     idx = sum(Nchain[:k-1])   # beginning of each chain total index
+
+    #     # initial chain values
+    #     theta_chain[:,idx] = theta_seeds[:,k-1]
+
+    #     # initial log-like evaluation
+    #     theta_chain_idx = theta_chain[:,idx].reshape(1,-1)
+    #     leval[idx] = log_L_fun(theta_chain_idx, l_class)
+    #     parameter_values[idx] = l_class.parameter_values
+  
+        # for t in range(1, Nchain[k-1]): 
+        #     # current state
+        #     theta_t = theta_chain[:,idx+t-1]
+
+        #     # generate candidate sample        
+        #     v_star = np.random.normal(loc=rho*theta_t, scale=sigma).reshape(1,-1)
+            
+        #     # evaluate loglikelihood functio
+        #     log_l_star = log_L_fun(v_star, l_class)
+
+        #     # evaluate limit state function 
+        #     heval = h_LSF(v_star[:,-1].reshape(-1), logl_hat, log_l_star)   # evaluate limit state function    
+
+        #     # accept or reject sample
+        #     if heval <= tau:
+        #         theta_chain[:,idx+t] = v_star       # accept the candidate in observation region           
+        #         leval[idx+t]         = log_l_star   # store the loglikelihood evaluation
+        #         acc[idx+t]           = 1            # note the acceptance
+        #         parameter_values[idx+t] = l_class.parameter_value
+        #     else:
+        #         theta_chain[:,idx+t] = theta_t          # reject the candidate and use the same state
+        #         leval[idx+t]         = leval[idx+t-1]   # store the loglikelihood evaluation    
+        #         acc[idx+t]           = 0                # note the rejection
+        #         parameter_values[idx+t] = parameter_values[idx+t-1]
+        # # average of the accepted samples for each seed 'mu_acc'
+        # # here the warning "Mean of empty slice" is not an issue        
+        # with warnings.catch_warnings():
+        #     warnings.simplefilter("ignore", category=RuntimeWarning)
+        #     mu_acc[i] = mu_acc[i] + np.minimum(1, np.mean(acc[idx+1:idx+Nchain[k-1]])) 
         
-        for t in range(1, Nchain[k-1]): 
-            # current state
-            theta_t = theta_chain[:,idx+t-1]
-
-            # generate candidate sample        
-            v_star = np.random.normal(loc=rho*theta_t, scale=sigma)    
+        # if np.mod(k,Na) == 0:
+        #     if Nchain[k-1] > 1:
+        #         # c. evaluate average acceptance rate
+        #         hat_acc[i] = mu_acc[i]/Na   # Ref. 1 Eq. 25
             
-            # evaluate loglikelihood function
-            log_l_star = log_L_fun(v_star, l_class)
-
-            # evaluate limit state function 
-            heval = h_LSF(v_star[-1].reshape(-1), logl_hat, log_l_star)   # evaluate limit state function    
-
-            # accept or reject sample
-            if heval <= tau:
-                theta_chain[:,idx+t] = v_star       # accept the candidate in observation region           
-                leval[idx+t]         = log_l_star   # store the loglikelihood evaluation
-                acc[idx+t]           = 1            # note the acceptance
-                parameter_values[idx+t] = l_class.parameter_value
-            else:
-                theta_chain[:,idx+t] = theta_t          # reject the candidate and use the same state
-                leval[idx+t]         = leval[idx+t-1]   # store the loglikelihood evaluation    
-                acc[idx+t]           = 0                # note the rejection
-                parameter_values[idx+t] = parameter_values[idx+t-1]
-        # average of the accepted samples for each seed 'mu_acc'
-        # here the warning "Mean of empty slice" is not an issue        
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", category=RuntimeWarning)
-            mu_acc[i] = mu_acc[i] + np.minimum(1, np.mean(acc[idx+1:idx+Nchain[k-1]])) 
-        
-        if np.mod(k,Na) == 0:
-            if Nchain[k-1] > 1:
-                # c. evaluate average acceptance rate
-                hat_acc[i] = mu_acc[i]/Na   # Ref. 1 Eq. 25
+        #         # d. compute new scaling parameter
+        #         zeta       = 1/np.sqrt(i+1)   # ensures that the variation of lambda(i) vanishes
+        #         lambd[i+1] = np.exp(np.log(lambd[i]) + zeta*(hat_acc[i]-star_a))  # Ref. 1 Eq. 26
             
-                # d. compute new scaling parameter
-                zeta       = 1/np.sqrt(i+1)   # ensures that the variation of lambda(i) vanishes
-                lambd[i+1] = np.exp(np.log(lambd[i]) + zeta*(hat_acc[i]-star_a))  # Ref. 1 Eq. 26
+        #         # update parameters
+        #         sigma = np.minimum(lambd[i+1]*sigma_0, np.ones(n))  # Ref. 1 Eq. 23
+        #         rho   = np.sqrt(1-sigma**2)                       # Ref. 1 Eq. 24
             
-                # update parameters
-                sigma = np.minimum(lambd[i+1]*sigma_0, np.ones(n))  # Ref. 1 Eq. 23
-                rho   = np.sqrt(1-sigma**2)                       # Ref. 1 Eq. 24
-            
-                # update counter
-                i += 1
+        #         # update counter
+        #         i += 1
 
     # next level lambda
     new_lambda = lambd[i]
