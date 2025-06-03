@@ -21,7 +21,6 @@ import pickle
 import pandas as pd
 from tqdm import tqdm
 import time
-from functools import partial
 
 
 class NeuralNetwork(nn.Module):
@@ -31,8 +30,6 @@ class NeuralNetwork(nn.Module):
     def __call__(self, x: Float[Array, "n_obs n_input"]) -> Float[Array, "n_obs n_output"]:
 
         y = nn.Dense(512, kernel_init=variance_scaling(scale=1.0, mode='fan_in', distribution='truncated_normal'), bias_init=constant(0.0))(x)
-        y = nn.relu(y)
-        y = nn.Dense(512, kernel_init=variance_scaling(scale=1.0, mode='fan_in', distribution='truncated_normal'), bias_init=constant(0.0))(y)
         y = nn.relu(y)
         y = nn.Dense(256, kernel_init=variance_scaling(scale=1.0, mode='fan_in', distribution='truncated_normal'), bias_init=constant(0.0))(y)
         y = nn.relu(y)
@@ -55,50 +52,11 @@ def loss_fn(state, params, x: Float[Array, "n_obs n_input"], y: Float[Array, "n_
 
 @jax.jit
 def _epoch(runner: tuple, epoch: int) -> Tuple[tuple, float]:
-    state, x, y = runner
-    loss, grads = jax.value_and_grad(loss_fn, argnums=1)(state, state.params, x, y)
+    state, x_train, y_train = runner
+    loss, grads = jax.value_and_grad(loss_fn, argnums=1)(state, state.params, x_train, y_train)
     state = state.apply_gradients(grads=grads)
-    runner = (state, x, y)
+    runner = (state, x_train, y_train)
     return runner, loss
-
-
-def make_epoch_batches(x, y, rng, batch_size=64, n_epochs=10):
-    rngs = jax.random.split(rng, n_epochs * 2)
-    batches = []
-
-    for i in range(n_epochs):
-        rng_x, rng_y = rngs[2*i], rngs[2*i + 1]
-        x_perm = jax.random.permutation(rng_x, x)
-        y_perm = jax.random.permutation(rng_y, y)
-
-        total = (x.shape[0] // batch_size) * batch_size
-        xb = x_perm[:total].reshape(-1, batch_size, x.shape[-1])
-        yb = y_perm[:total].reshape(-1, batch_size, y.shape[-1])
-        batches.append((xb, yb))
-
-    batches = jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *batches)
-    return batches
-
-
-@jax.jit
-def _minibatch_step(state, batch):
-    x, y = batch
-    loss, grads = jax.value_and_grad(loss_fn, argnums=1)(state, state.params, x, y)
-    return state.apply_gradients(grads=grads), loss
-
-
-@jax.jit
-def epoch_step(state, epoch_batches):
-    state, losses = jax.lax.scan(_minibatch_step, state, xs=epoch_batches)
-    return state, jnp.mean(losses)
-
-
-@jax.jit
-def training_scan(state, all_batches):
-    def scan_epoch(state, epoch_batches):
-        state, loss = epoch_step(state, epoch_batches)
-        return state, loss
-    return jax.lax.scan(scan_epoch, state, xs=all_batches)
 
 
 def train(
@@ -107,7 +65,6 @@ def train(
         y: Float[Array, "n_obs n_output"],
         n_epochs: int = 20_000,
         lr: float = 1e-4,
-        minbatch_size: int =64,
         path: Optional[str | Path] = None,
         verbose: bool = True
 ) -> Tuple[dict, list]:
@@ -134,36 +91,26 @@ def train(
         tx=tx
     )
 
+    runner = (state, x, y)
+
+    jax.block_until_ready(_epoch(runner, 0))  # Warmup --> don't count compile time in training
+
+    start = time.time()
+
     if verbose:
-        runner = (state, x, y)
-        jax.block_until_ready(_epoch(runner, 0))  # Warmup --> don't count compile time in training
-        start = time.time()
         losses = []
         for i in tqdm(range(n_epochs)):
             runner, loss = _epoch(runner, i)
             losses.append(loss)
-
-        state, _, _ = runner
-
     else:
-        # jax.block_until_ready(_epoch_step(runner, 0))  # Warmup --> don't count compile time in training
-
-        rng = jax.random.PRNGKey(42)
-        batches = make_epoch_batches(x, y, rng, batch_size=64, n_epochs=n_epochs)
-
-        print("-------- Initiating warmup -------------")
-        small_batches = jax.tree.map(lambda x: x[:2], batches)
-        _, losses = training_scan(state, small_batches)
-        _ = jnp.mean(losses).block_until_ready()
-        print("-------- Warmup completed -------------")
-
-        start = time.time()
-        state, losses = training_scan(state, batches)
-        _ = losses.block_until_ready()
+        runner, losses = lax.scan(scan_tqdm(n_epochs)(_epoch), runner, jnp.arange(n_epochs), n_epochs)
+        # runner, losses = jax.block_until_ready(lax.scan(scan_tqdm(n_epochs)(_epoch), runner, jnp.arange(n_epochs), n_epochs))
+        # runner, losses = jax.block_until_ready(lax.scan(_epoch, runner, jnp.arange(n_epochs), n_epochs))
 
     end = time.time()
     print(f"Training took {end - start:.2f} seconds")
 
+    state, _, _ = runner
     trained_params = state.params
 
     losses = np.asarray(losses)
@@ -322,26 +269,33 @@ def plot(model, params, x_train, x_test, y_train, y_test, path, losses=None):
     plot_wall_error(model, params, x_train, y_train, path/"wall_error.png")
     plot_variables(model, params, x_train, y_train, path/"variables.pdf")
 
-    if losses is not None: plot_losses(losses, path/"losses.png")
+    plot_losses = losses is not None
+    if plot_losses:
+        fig = plt.figure()
+        plt.plot(losses)
+        plt.xlabel("Training step")
+        plt.ylabel("Loss [${mm}^{2}")
+        fig.savefig(path/"losses.png")
 
 
 if __name__ == "__main__":
 
-    # path = os.environ["SRG_DATA_PATH"]
-    # path = Path(Path(path).as_posix())
-    #
+    path = os.environ["SRG_DATA_PATH"]
+    path = Path(Path(path).as_posix())
+
     # df_path = path / "compiled_data"
     # df_files = [f for f in df_path.iterdir()]
     # dates = [int("".join(f.stem.split("_")[-2:])) for f in df_files]
     # df_file = df_files[dates.index(max(dates))]
     # df = pd.read_csv(df_file)
-    df = pd.read_csv(r"../data/srg_data_20250520_094244.csv")
+    df = pd.read_csv(r"data/srg_data_20250520_094244.csv")
 
     X_cols = [col for col in df.columns if col.split("_")[0] != "disp" and col != "index"]
     X_cols = [col for col in X_cols if "soilcurko2" not in col and "soilcurko3" not in col]
     X = df[X_cols].values
 
     idx_locs = list(range(1, 151, 10))
+    idx_locs = [60]
     y_cols = [col for col in df.columns if col.split("_")[0] == "disp" and int(col.split("_")[-1]) in idx_locs]
     y = df[y_cols].values
 
@@ -351,7 +305,7 @@ if __name__ == "__main__":
     bnd_distance = 0.01
     bounds = quartiles + np.array([-bnd_distance, +bnd_distance])[:, np.newaxis] * iqr[np.newaxis, :]
     # outliers = np.all(np.logical_and(bounds[0]<=y, y<=bounds[1]), axis=1)
-    outliers = np.any(np.abs(y)>=1_000, axis=1)
+    outliers = np.any(np.abs(y)>=30, axis=1)
     X, y = X[~outliers], y[~outliers]
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -366,10 +320,9 @@ if __name__ == "__main__":
             x=X_train,
             y=y_train,
             lr=1e-6,
-            n_epochs=50_000,
+            n_epochs=10,
             path=r'results/mlp.pkl',
-            minbatch_size=256,
-            verbose=True
+            verbose=False
         )
 
         print(jax.devices())
@@ -379,5 +332,5 @@ if __name__ == "__main__":
         with open(r'results/mlp.pkl', 'rb') as f: params = pickle.load(f)
         losses = None
 
-    # plot(model, params, X_train, X_test, y_train, y_test, r'figures/srg_jax', losses)
+    plot(model, params, X_train, X_test, y_train, y_test, r'figures/srg_mlp', losses)
 

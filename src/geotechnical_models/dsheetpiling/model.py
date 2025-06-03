@@ -51,8 +51,24 @@ class DSheetPiling(GeoModelBase):
     def get_soils(self) -> dict[str, SoilCollection]:
         return {soil.name: soil for soil in deepcopy(self.geomodel.input.input_data.soil_collection.soil)}
 
+    def adjust_stiffness(self, soil_params: dict[str, float]) -> dict[str, float]:
+        soil_param_names = list(soil_params.keys())
+        # soilcurkb1 is the stiffness variable that controls all others deterministically
+        if "soilcurkb1" in soil_param_names:
+            stiff = soil_params["soilcurkb1"]
+            soil_params["soilcurkb2"] = stiff * 0.5
+            soil_params["soilcurkb3"] = stiff * 0.25
+            soil_params["soilcurko1"] = stiff * 1.0
+            soil_params["soilcurko2"] = stiff * 0.5
+            soil_params["soilcurko3"] = stiff * 0.25
+        return soil_params
+
     def update_soils(self, soil_data: dict[str, dict[str, float]]) -> None:
+
         for (soil_name, soil_params) in soil_data.items():
+
+            soil_params = self.adjust_stiffness(soil_params)
+
             for (soil_param_name, soil_param_value) in soil_params.items():
                 if hasattr(self.soils[soil_name], soil_param_name):
                     setattr(self.soils[soil_name], soil_param_name, float(soil_param_value))
@@ -185,11 +201,13 @@ class DSheetPiling(GeoModelBase):
             file_name = self.file_name + "_executed_" + timestamp + self.file_suffix
         else:
             file_name = self.file_name + f"_executed_run{i_run:d}" + self.file_suffix
+
         exe_path = self.exe_path / file_name
         geomodel = deepcopy(self.geomodel)
         geomodel.serialize(exe_path)  # _executed model is used from now on.
         geomodel.execute()  # Make sure to add 'geolib.env' in run directory
         self.results = self.read_dsheet_results(geomodel)
+
         for extension in [".log", ".shi", ".shd"]:
             file_path = exe_path.with_suffix(extension)
             if file_path.exists(): file_path.unlink()

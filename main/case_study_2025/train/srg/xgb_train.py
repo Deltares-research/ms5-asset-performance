@@ -67,8 +67,10 @@ def train(n_estimators: int = 100, max_depth: int = 5, lr: float = 1e-4):
         f.write(f"{timestamp} | " + message)
 
     print("Training completed! ✅")
-    
+
     print("[SUMMARY] "+message)
+
+    xgb_model.save_model(output_path / "model.json")
 
     print("Plotting results...")
 

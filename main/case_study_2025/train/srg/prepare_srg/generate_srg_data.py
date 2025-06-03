@@ -143,15 +143,15 @@ if __name__ == "__main__":
     geomodel_path = os.environ["MODEL_PATH"]  # model_path defined as environment variable
     geomodel = DSheetPiling(geomodel_path)
 
-    samples_path = r"data/1M_parameter_samples.csv"
+    samples_path = r"../../../data/1M_parameter_samples.csv"
     samples_path = Path(Path(samples_path).as_posix())
     df = pd.read_csv(samples_path)
     rv_names = list(df.columns)
 
     # split_packages(samples_path, samples_per_split=1_000)
 
-    packages = list(range(528, 535))
-    data_path = r"data/data_packages"
-    result_path = r"data/result_packages"
+    packages = list(range(575, 580))
+    data_path = r"../../../data/data_packages"
+    result_path = r"../../../data/result_packages"
     draw_sample(geomodel, rv_names, packages=packages, result_path=result_path, data_path=data_path)
 
