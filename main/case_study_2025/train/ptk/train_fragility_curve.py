@@ -21,13 +21,13 @@ if __name__ == "__main__":
     geomodel = DSheetPiling(geomodel_path, form_path)
 
     performance_config = ("max_moment", lambda x: 40. / (x[0] + 1e-5))
-    form_params = (0.15, 30, 0.02)
+    form_params = (0.15, 10, 0.02)
     lsf = package_lsf(geomodel, state, performance_config, True)
 
     fc_savedir = r"../../results/ptk/fragility_curve.json"
     rm = ReliabilityFragilityCurve(lsf, state, "form", form_params, integration_rv_names=["Wall_SheetPilingElementEI", "water_lvl"])
 
-    retrain = False
+    retrain = True
     if retrain:
         rm.build_fragility(n_integration_grid=10, fc_savedir=fc_savedir)
     else:

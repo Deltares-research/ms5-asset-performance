@@ -157,9 +157,10 @@ class ReliabilityFragilityCurve(ReliabilityBase):
         self.generate_integration_mesh(integration_lims, n_integration_grid)
 
         fragility_points = []
-        for point in tqdm(self.fc_mesh, desc="Running FORM for combination of integration variables:"):
+        for i_point, point in enumerate(tqdm(self.fc_mesh, desc="Running FORM for combination of integration variables:")):
             fragility_point = self.fragility_point(point)
             fragility_points.append(fragility_point)
+            print(f"Point {i_point+1}  |  β={fragility_point.beta:.2f}")
 
         self.fragility_curve = FragilityCurve(fragility_points)
 
