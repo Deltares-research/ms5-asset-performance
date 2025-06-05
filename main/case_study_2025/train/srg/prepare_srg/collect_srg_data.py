@@ -12,7 +12,7 @@ if __name__ == "__main__":
 
     path = Path(Path(path).as_posix())
 
-    df = pd.read_csv(path/"1M_parameter_samples.csv")
+    df = pd.read_csv(path/"1M_parameter_samples_uniformly_distributed.csv")
     rv_names = list(df.columns)
 
     rv_path = path / "data_packages"
@@ -34,15 +34,16 @@ if __name__ == "__main__":
         with open(result_files[package], "r") as f:
             results = json.load(f)
 
-        idx = results["idx"]
-        displacements = np.asarray(results["displacement"]).squeeze()
-        # moments = np.asarray(results["moment"]).squeeze()
+        idx = [idx for (d, idx) in zip(results["displacement"], results["idx"]) if len(d[0]) == 156]
+        rvs = [rv for (d, rv) in zip(results["displacement"], rvs) if len(d[0]) == 156]
+        displacements = [d[0] for d in results["displacement"] if len(d[0]) == 156]
+        displacements = np.asarray(displacements).squeeze()
 
         idxs.append(idx)
         Xs.append(rvs)
         ys.append(displacements)
 
-    idxs = np.hstack(idxs)
+    idxs = np.concatenate(idxs)
     Xs = np.vstack(Xs)
     ys = np.vstack(ys)
 
@@ -52,10 +53,16 @@ if __name__ == "__main__":
     output_name = "srg_data_" + timestamp + ".csv"
     output_path = path / "compiled_data" / output_name
     df_data = pd.DataFrame(
-        data=np.c_[idxs, Xs, ys],
+        data=np.column_stack([idxs, Xs, ys]),
         columns=["index"]+rv_names+[f"disp_{i+1}" for i in range(ys.shape[1])]
     )
+    cols_keep = [
+        'Klei_soilcohesion', 'Klei_soilphi', 'Klei_soilcurkb1','Zand_soilphi', 'Zand_soilcurkb1', 'Zandvast_soilphi',
+        'Zandvast_soilcurkb1','Zandlos_soilphi', 'Zandlos_soilcurkb1','Wall_SheetPilingElementEI', 'water_lvl'
+    ]
+    df_data = df_data.loc[:, ["index"]+cols_keep+[f"disp_{i+1}" for i in range(ys.shape[1])]]
     df_data.to_csv(output_path, index=False)
+    Xs = df_data[cols_keep].values
 
     output_name = "srg_data_" + timestamp + ".json"
     output_path = path / "compiled_data" / output_name

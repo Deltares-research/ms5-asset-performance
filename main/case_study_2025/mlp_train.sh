@@ -1,9 +1,10 @@
 #!/bin/bash
 
-source .venv_torch/bin/activate
+#source .venv_torch/bin/activate
+source /home/amavrits/.virtualenvs/ms5-asset-performance/bin/activate
 
-lr_exps=(-4)
-epochs=(10000)
+lr_exps=(-5)
+epochs=(10_000)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="$SCRIPT_DIR/results/srg/torch"
@@ -18,7 +19,7 @@ for lr_exp in "${lr_exps[@]}"; do
   for ep in "${epochs[@]}"; do
     lr=$(echo "10 ^ $lr_exp" | bc -l)
     echo "Running: lr_exp=$lr_exp and epochs=$ep" | tee -a "$log_file"
-    result=$(python "$SCRIPT_DIR/srg/torch_train.py" --lr "$lr" --epochs "$ep" 2>&1 | tee /dev/tty)
+    result=$(python "$SCRIPT_DIR/train/srg/mlp_train.py" --lr "$lr" --epochs "$ep" 2>&1 | tee /dev/tty)
     result="${result}\n"
     echo "$result" >> "$log_file"
     summary=$(echo "$result" | grep "\[SUMMARY\]")

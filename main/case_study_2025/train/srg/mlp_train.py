@@ -6,7 +6,7 @@ from numpy.typing import NDArray
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
-from srg_utils import load_data, plot
+from main.case_study_2025.train.srg.utils import load_data, plot
 
 import torch
 import torch.nn as nn
@@ -51,9 +51,9 @@ def train(epochs: int = 1_000, lr: float = 1e-4, quiet: bool = False):
     base_dir = Path(__file__).resolve().parent
 
     data_dir = base_dir.parent / "data"
-    data_path = data_dir / "srg_data_20250520_094244.csv"
+    data_path = data_dir / "srg_data_20250604_100638.csv"
 
-    output_path = base_dir.parent / f"results/srg/torch/lr_{lr:.1e}_epochs_{epochs:d}"
+    output_path = base_dir.parent / f"results/srg/mlp/lr_{lr:.1e}_epochs_{epochs:d}"
     output_path.mkdir(parents=True, exist_ok=True)
 
     X, y = load_data(data_path)
@@ -66,12 +66,15 @@ def train(epochs: int = 1_000, lr: float = 1e-4, quiet: bool = False):
     X_train_scaled = scaler_x.fit_transform(X_train)
     y_train_scaled = scaler_y.fit_transform(y_train)
 
-    if torch.backends.mps.is_available():
+    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
         device = torch.device("mps")
-        print("Using MPS (Metal) backend")
+        print("✅ Using MPS (Metal) backend")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+        print("✅ Using CUDA backend")
     else:
         device = torch.device("cpu")
-        print("MPS not available, using CPU")
+        print("⚠️ MPS and CUDA not available — using CPU")
 
     model = MLP(
         input_dim=X.shape[-1],

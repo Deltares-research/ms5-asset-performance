@@ -8,7 +8,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
 from sklearn.multioutput import MultiOutputRegressor
 import xgboost as xgb
-from srg_utils import load_data, plot
+from utils import load_data, plot
 from typing import Tuple, Optional
 from typing import Sequence
 import matplotlib.pyplot as plt
@@ -17,18 +17,19 @@ import joblib
 from tqdm import tqdm
 import typer
 from datetime import datetime
+import joblib
 
 
 app = typer.Typer()
 
 
 @app.command()
-def train(n_estimators: int = 100, max_depth: int = 5, lr: float = 1e-4):
+def train(n_estimators: int = 1_000, max_depth: int = 20, lr: float = 0.05):
 
     base_dir = Path(__file__).resolve().parent
 
     data_dir = base_dir.parent / "data"
-    data_path = data_dir / "srg_data_20250520_094244.csv"
+    data_path = data_dir / "srg_data_20250604_100638.csv"
 
     output_path = base_dir.parent / f"results/srg/xgb/lr_{lr:.1e}_estimators_{n_estimators:d}_maxdepth_{max_depth:d}"
     output_path.mkdir(parents=True, exist_ok=True)
@@ -52,11 +53,11 @@ def train(n_estimators: int = 100, max_depth: int = 5, lr: float = 1e-4):
         colsample_bytree=0.8,
         random_state=42,
         tree_method="hist",
-        verbosity=1
+        verbosity=1,
     )
 
     model = MultiOutputRegressor(xgb_model)
-    model.fit(X_train, y_train, **{"verbose": True})
+    model.fit(X_train, y_train)
 
     y_hat = inference(model, X_test, scaler_x, scaler_y)
     rmse = mean_squared_error(y_hat, y_test)
@@ -70,7 +71,7 @@ def train(n_estimators: int = 100, max_depth: int = 5, lr: float = 1e-4):
 
     print("[SUMMARY] "+message)
 
-    xgb_model.save_model(output_path / "model.json")
+    joblib.dump(model, output_path / "model.pkl")
 
     print("Plotting results...")
 

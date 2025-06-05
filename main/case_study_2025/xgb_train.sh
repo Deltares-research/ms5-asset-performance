@@ -1,9 +1,10 @@
 #!/bin/bash
 
-source .venv_torch/bin/activate
+#source .venv_torch/bin/activate
+source /home/amavrits/.virtualenvs/ms5-asset-performance/bin/activate
 
 estimators=(1000)
-maxdepths=(5)
+maxdepths=(10)
 lrs=(0.05)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

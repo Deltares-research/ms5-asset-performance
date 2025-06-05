@@ -31,13 +31,12 @@ def run_model(
 def log(run_index, disp_sample, moment_sample, path):
 
     # For some samples, DSheetpiling returns fewer points along the wall. Reject these samples.
-    max_n_points = max(len(disp[0]) for disp in disp_sample)
-    disp_sample = [disp if len(disp[0]) == max_n_points else [[np.nan] * max_n_points] for disp in disp_sample]
+    # max_n_points = max(len(disp[0]) for disp in disp_sample)
+    # disp_sample = [disp if len(disp[0]) == max_n_points else [[np.nan] * max_n_points] for disp in disp_sample]
     # disp_sample = np.asarray(disp_sample).squeeze()
 
-    max_n_points = max(len(moment[0]) for moment in moment_sample)
-    moment_sample = [moment if len(moment[0]) == max_n_points else [[np.nan] * max_n_points] for moment in
-                     moment_sample]
+    # max_n_points = max(len(moment[0]) for moment in moment_sample)
+    # moment_sample = [moment if len(moment[0]) == max_n_points else [[np.nan] * max_n_points] for moment in moment_sample]
     # moment_sample = np.asarray(moment_sample).squeeze()
 
     results = {
@@ -143,14 +142,21 @@ if __name__ == "__main__":
     geomodel_path = os.environ["MODEL_PATH"]  # model_path defined as environment variable
     geomodel = DSheetPiling(geomodel_path)
 
-    samples_path = r"../../../data/1M_parameter_samples.csv"
+    samples_path = r"../../../data/1M_parameter_samples_uniformly_distributed.csv"
     samples_path = Path(Path(samples_path).as_posix())
     df = pd.read_csv(samples_path)
     rv_names = list(df.columns)
 
+    cols_keep = [
+        'Klei_soilcohesion', 'Klei_soilphi', 'Klei_soilcurkb1','Zand_soilphi', 'Zand_soilcurkb1','Zandvast_soilphi',
+        'Zandvast_soilcurkb1','Zandlos_soilphi', 'Zandlos_soilcurkb1','Wall_SheetPilingElementEI', 'water_lvl'
+    ]
+    df = df.loc[:, cols_keep]
+
     # split_packages(samples_path, samples_per_split=1_000)
 
-    packages = list(range(575, 580))
+    # packages = list(range(1, 100))
+    packages = [i for i in range(1, 100) if i not in [1, 10, 11, 12, 13, 14, 15, 16, 17]]
     data_path = r"../../../data/data_packages"
     result_path = r"../../../data/result_packages"
     draw_sample(geomodel, rv_names, packages=packages, result_path=result_path, data_path=data_path)
