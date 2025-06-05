@@ -8,7 +8,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
 from sklearn.multioutput import MultiOutputRegressor
 import xgboost as xgb
-from utils import load_data, plot
+from main.case_study_2025.train.srg.utils import load_data, plot
 from typing import Tuple, Optional
 from typing import Sequence
 import matplotlib.pyplot as plt
