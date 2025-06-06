@@ -18,7 +18,7 @@ def extract_mlp_weights(model):
     return weights
 
 
-def mlp_forward_pt(x, weights, scaler_y):
+def mlp_forward_pt(x, weights):
     h = x
     for i, (W, b) in enumerate(weights):
         W_pt = pt.constant(W.astype("float32"))

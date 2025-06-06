@@ -10,5 +10,5 @@ seed=42
 
 #SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-DRAWS=$draws TUNE=$tune TARGETACCEPT=$targetccept SEED=$seed python -m main.case_study_2025.train.hmc.updating 2>&1
+python -m main.case_study_2025.train.hmc.updating train train --draws $draws --tune $tune --targetaccept $targetccept 2>&1
 
