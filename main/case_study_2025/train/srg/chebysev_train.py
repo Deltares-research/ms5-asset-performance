@@ -2,6 +2,7 @@ import os
 import json
 from pathlib import Path
 import numpy as np
+from numpy.polynomial.chebyshev import chebvander, chebder
 from numpy.typing import NDArray
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
@@ -25,9 +26,29 @@ from datetime import datetime
 app = typer.Typer()
 
 
-class MLP(nn.Module):
-    def __init__(self, input_dim, hidden_dims, output_dim):
+def make_chebyshev_basis(x, degree=10):
+    x_scaled = 2 * (x - x.min()) / (x.max() - x.min()) - 1
+    phi = chebvander(x_scaled, degree)  # shape (n_points, degree+1)
+    return phi
 
+
+def make_chebyshev_basis_second_derivative(x, degree):
+    x_scaled = 2 * (x - x.min()) / (x.max() - x.min()) - 1
+    T = np.polynomial.chebyshev.chebvander(x_scaled, degree)  # (n_points, degree+1)
+
+    T_dd = np.zeros_like(T)
+    for k in range(degree + 1):
+        # Get 2nd derivative of T_k
+        coefs = np.zeros(degree + 1)
+        coefs[k] = 1
+        d2T_coefs = chebder(coefs, m=2)
+        T_dd[:, k] = np.polynomial.chebyshev.chebval(x_scaled, d2T_coefs)
+
+    return T_dd  # (degree+1, n_points)
+
+
+class Chebysev(nn.Module):
+    def __init__(self, input_dim, hidden_dims, degree, x):
         super().__init__()
         layers = []
 
@@ -37,12 +58,20 @@ class MLP(nn.Module):
             layers.append(nn.ReLU())
             prev_dim = hidden_dim
 
-        layers.append(nn.Linear(prev_dim, output_dim))
+        layers.append(nn.Linear(prev_dim, degree+1))
 
         self.net = nn.Sequential(*layers)
 
-    def forward(self, x):
-        return self.net(x)
+        phi = torch.from_numpy(make_chebyshev_basis(x, degree)).float()
+        self.register_buffer("basis", phi.T)  # shape (degree+1, n_points)
+
+        phi_der = torch.from_numpy(make_chebyshev_basis_second_derivative(x, degree)).float()
+        self.register_buffer("basis_der", phi_der.T)  # shape (degree+1, n_points)
+
+    def forward(self, x, return_coeffs=False):
+        coeffs = self.net(x)               # shape (batch, degree+1)
+        if return_coeffs: return coeffs
+        return coeffs @ self.basis         # shape (batch, n_points)
 
 
 @app.command()
@@ -53,7 +82,7 @@ def train(epochs: int = 1_000, lr: float = 1e-4, full_profile: bool = True, quie
     data_dir = base_dir.parent / "data"
     data_path = data_dir / "srg_data_20250604_100638.csv"
 
-    output_path = base_dir.parent / f"results/srg/mlp/lr_{lr:.1e}_epochs_{epochs:d}_fullprofile_{full_profile}"
+    output_path = base_dir.parent / f"results/srg/chebysev/lr_{lr:.1e}_epochs_{epochs:d}_fullprofile_{full_profile}"
     output_path.mkdir(parents=True, exist_ok=True)
 
     X, y = load_data(data_path, full_profile)
@@ -76,10 +105,14 @@ def train(epochs: int = 1_000, lr: float = 1e-4, full_profile: bool = True, quie
         device = torch.device("cpu")
         print("⚠️ MPS and CUDA not available — using CPU")
 
-    model = MLP(
+    x = np.linspace(0, 10, y.shape[-1])
+    x = np.cumsum(x)
+
+    model = Chebysev(
         input_dim=X.shape[-1],
         hidden_dims=[1024, 512, 256, 128, 64, 32],
-        output_dim=y.shape[-1]
+        x=x,
+        degree=10
     ).to(device)
 
     torch.manual_seed(42)

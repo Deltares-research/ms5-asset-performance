@@ -27,6 +27,7 @@ pytensor.config.cxx = "/usr/bin/clang++"  # <-- Fix for MacOS
 
 @app_train.command()
 def train(draws: int = 1_000, tune: int = 1_000, targetaccept: float = 0.8, seed: int = 42):
+
     SCRIPT_DIR = Path(__file__).resolve().parent
 
     mlp_path = SCRIPT_DIR / "../results/srg/mlp/lr_1.0e-06_epochs_100000"
@@ -60,7 +61,7 @@ def train(draws: int = 1_000, tune: int = 1_000, targetaccept: float = 0.8, seed
     torch_model = MLP(
         input_dim=11,
         hidden_dims=[1024, 512, 256, 128, 64, 32],
-        output_dim=15
+        output_dim=y_obs.shape[-1]
     )
     state_dict = torch.load(torch_path, map_location=torch.device('cpu'))
     torch_model.load_state_dict(state_dict)

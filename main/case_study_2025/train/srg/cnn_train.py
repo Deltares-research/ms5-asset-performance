@@ -25,24 +25,39 @@ from datetime import datetime
 app = typer.Typer()
 
 
-class MLP(nn.Module):
-    def __init__(self, input_dim, hidden_dims, output_dim):
-
+class CNN(nn.Module):
+    def __init__(self, input_dim: int, hidden_dims=[128, 64], output_len: int = 156, kernel_size: int = 5):
         super().__init__()
+
         layers = []
-
         prev_dim = input_dim
-        for hidden_dim in hidden_dims:
-            layers.append(nn.Linear(prev_dim, hidden_dim))
+
+        for h in hidden_dims:
+            layers.append(nn.Linear(prev_dim, h))
             layers.append(nn.ReLU())
-            prev_dim = hidden_dim
+            prev_dim = h
 
-        layers.append(nn.Linear(prev_dim, output_dim))
-
+        layers.append(nn.Linear(prev_dim, output_len))  # 🔧 Fix: output_len, not output_dim
         self.net = nn.Sequential(*layers)
 
+        self.kernel_size = kernel_size
+        self.smoother = nn.Conv1d(
+            in_channels=1,
+            out_channels=1,
+            kernel_size=kernel_size,
+            padding=kernel_size // 2,
+            bias=False,
+        )
+
+        # Initialize smoother as a uniform averaging filter
+        with torch.no_grad():
+            self.smoother.weight[:] = 1.0 / kernel_size
+
     def forward(self, x):
-        return self.net(x)
+        x = self.net(x)           # (batch_size, output_len)
+        x = x.unsqueeze(1)        # (batch_size, 1, output_len)
+        x = self.smoother(x)      # smoothing along spatial axis
+        return x.squeeze(1)       # (batch_size, output_len)
 
 
 @app.command()
@@ -53,7 +68,7 @@ def train(epochs: int = 1_000, lr: float = 1e-4, full_profile: bool = True, quie
     data_dir = base_dir.parent / "data"
     data_path = data_dir / "srg_data_20250604_100638.csv"
 
-    output_path = base_dir.parent / f"results/srg/mlp/lr_{lr:.1e}_epochs_{epochs:d}_fullprofile_{full_profile}"
+    output_path = base_dir.parent / f"results/srg/cnn/lr_{lr:.1e}_epochs_{epochs:d}_fullprofile_{full_profile}"
     output_path.mkdir(parents=True, exist_ok=True)
 
     X, y = load_data(data_path, full_profile)
@@ -76,10 +91,11 @@ def train(epochs: int = 1_000, lr: float = 1e-4, full_profile: bool = True, quie
         device = torch.device("cpu")
         print("⚠️ MPS and CUDA not available — using CPU")
 
-    model = MLP(
+    model = CNN(
         input_dim=X.shape[-1],
         hidden_dims=[1024, 512, 256, 128, 64, 32],
-        output_dim=y.shape[-1]
+        output_len=y.shape[-1],
+        kernel_size=49,
     ).to(device)
 
     torch.manual_seed(42)

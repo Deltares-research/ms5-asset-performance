@@ -6,7 +6,7 @@ import seaborn as sns
 from pathlib import Path
 
 
-def load_data(path):
+def load_data(path, full_profile=False):
 
     df = pd.read_csv(path)
 
@@ -15,7 +15,10 @@ def load_data(path):
     X = df[X_cols].values
 
     idx_locs = list(range(1, 151, 10))
-    y_cols = [col for col in df.columns if col.split("_")[0] == "disp" and int(col.split("_")[-1]) in idx_locs]
+    if full_profile:
+        y_cols = [col for col in df.columns if col.split("_")[0] == "disp"]
+    else:
+        y_cols = [col for col in df.columns if col.split("_")[0] == "disp" and int(col.split("_")[-1]) in idx_locs]
     y = df[y_cols].values
 
     # Remove extreme outliers which probably correspond to numerical error in DSheetPiling
