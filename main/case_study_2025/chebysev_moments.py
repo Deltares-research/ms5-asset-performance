@@ -113,7 +113,7 @@ class FoSCalculator:
 
         return fos
 
-    def plot_moments(self, moments, path):
+    def plot_moments(self, displacements, moments, path):
 
         _, moment_cap, wall_locs, monitoring_locs = self.wall_props
         # _, keep_idx = np.unique(wall_locs, return_index=True)
@@ -122,34 +122,27 @@ class FoSCalculator:
 
         x = wall_locs
 
-        fig, axs = plt.subplots(1, 2, sharex=True, sharey=True, figsize=(12, 6))
+        fig, axs = plt.subplots(1, 2, sharex=False, sharey=True, figsize=(12, 6))
 
-        # moments = self.idata.prior_prediction.moments.values
-        # moments = moments.reshape(-1, moments.shape[-1])
-        # moments_mean = moments.mean(axis=0)
-        # moments_ci = np.quantile(moments, [0.05, 0.95], axis=0)
-        #
-        # fos = self.idata.prior_prediction.fos.values
-        # pf = np.mean(fos < 1)
-        #
-        # axs[0].axvline(moment_cap, c="k", linestyle="--", label="Capacity")
-        # axs[0].fill_betweenx(x, moments_ci[0], moments_ci[1], color="b", alpha=0.6, label="90% CI")
-        # axs[0].plot(moments_mean, x, c="b", label="Mean model")
-        # axs[0].set_xlabel("Moment [kNm]", fontsize=14)
-        # axs[0].set_ylabel("Depth along wall [m]", fontsize=14)
-        # # axs[0].invert_yaxis()
-        # handles, labels = axs[0].get_legend_handles_labels()
-        # axs[0].legend(handles[::-1], labels[::-1], fontsize=10)
-        # axs[0].grid()
-        # axs[0].set_title("Prior\n" + "${P}_{f}$=" + f"{pf:.2e}", fontsize=14)
+        displacements = displacements.reshape(-1, displacements.shape[-1])
+        displacements_mean = displacements.mean(axis=0)
+        displacements_ci = np.quantile(displacements, [0.05, 0.95], axis=0)
 
-        # moments = self.idata.posterior_prediction.moments.values
+        axs[0].fill_betweenx(x, displacements_ci[0], displacements_ci[1], color="b", alpha=0.6, label="90% CI")
+        axs[0].plot(displacements_mean, x, c="b", label="Mean model")
+        axs[0].set_xlabel("Displacement [mm]", fontsize=14)
+        axs[0].set_ylabel("Depth along wall [m]", fontsize=14)
+        axs[0].invert_yaxis()
+        handles, labels = axs[0].get_legend_handles_labels()
+        axs[0].legend(handles[::-1], labels[::-1], fontsize=10)
+        axs[0].grid()
+
         moments = moments.reshape(-1, moments.shape[-1])
         moments_mean = moments.mean(axis=0)
         moments_ci = np.quantile(moments, [0.05, 0.95], axis=0)
 
         # fos = self.idata.posterior_prediction.fos.values
-        fos = np.ones(moments.shape[0])
+        fos = moments.max(axis=1) / moment_cap
         pf = np.mean(fos < 1)
 
         axs[1].axvline(moment_cap, c="k", linestyle="--", label="Capacity")
@@ -166,60 +159,6 @@ class FoSCalculator:
 
         path = Path(Path(path).as_posix())
         fig.savefig(path / "moments.png")
-
-    # def plot_moments(self, path):
-    #
-    #     (y_data, wall_props) = self.data
-    #     _, moment_cap, wall_locs, monitoring_locs = wall_props
-    #     _, keep_idx = np.unique(wall_locs, return_index=True)
-    #     keep_idx = np.sort(keep_idx)
-    #     wall_locs = wall_locs[keep_idx]
-    #
-    #     x = wall_locs
-    #
-    #     fig, axs = plt.subplots(1, 2, sharex=True, sharey=True, figsize=(12, 6))
-    #
-    #     moments = self.idata.prior_prediction.moments.values
-    #     moments = moments.reshape(-1, moments.shape[-1])
-    #     moments_mean = moments.mean(axis=0)
-    #     moments_ci = np.quantile(moments, [0.05, 0.95], axis=0)
-    #
-    #     fos = self.idata.prior_prediction.fos.values
-    #     pf = np.mean(fos < 1)
-    #
-    #     axs[0].axvline(moment_cap, c="k", linestyle="--", label="Capacity")
-    #     axs[0].fill_betweenx(x, moments_ci[0], moments_ci[1], color="b", alpha=0.6, label="90% CI")
-    #     axs[0].plot(moments_mean, x, c="b", label="Mean model")
-    #     axs[0].set_xlabel("Moment [kNm]", fontsize=14)
-    #     axs[0].set_ylabel("Depth along wall [m]", fontsize=14)
-    #     # axs[0].invert_yaxis()
-    #     handles, labels = axs[0].get_legend_handles_labels()
-    #     axs[0].legend(handles[::-1], labels[::-1], fontsize=10)
-    #     axs[0].grid()
-    #     axs[0].set_title("Prior\n" + "${P}_{f}$=" + f"{pf:.2e}", fontsize=14)
-    #
-    #     moments = self.idata.posterior_prediction.moments.values
-    #     moments = moments.reshape(-1, moments.shape[-1])
-    #     moments_mean = moments.mean(axis=0)
-    #     moments_ci = np.quantile(moments, [0.05, 0.95], axis=0)
-    #
-    #     fos = self.idata.posterior_prediction.fos.values
-    #     pf = np.mean(fos < 1)
-    #
-    #     axs[1].axvline(moment_cap, c="k", linestyle="--", label="Capacity")
-    #     axs[1].fill_betweenx(x, moments_ci[0], moments_ci[1], color="r", alpha=0.6, label="90% CI")
-    #     axs[1].plot(moments_mean, x, c="r", label="Mean model")
-    #     axs[1].set_xlabel("Moment [kNm]", fontsize=14)
-    #     handles, labels = axs[1].get_legend_handles_labels()
-    #     axs[1].legend(handles[::-1], labels[::-1], fontsize=10)
-    #     axs[1].grid()
-    #     axs[1].set_title("Posterior\n" + "${P}_{f}$=" + f"{pf:.2e}", fontsize=14)
-    #
-    #     plt.tight_layout()
-    #     plt.close()
-    #
-    #     path = Path(Path(path).as_posix())
-    #     fig.savefig(path / "moments.png")
 
 
 if __name__ == "__main__":

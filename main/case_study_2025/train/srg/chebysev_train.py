@@ -33,18 +33,23 @@ def make_chebyshev_basis(x, degree=10):
 
 
 def make_chebyshev_basis_second_derivative(x, degree):
-    x_scaled = 2 * (x - x.min()) / (x.max() - x.min()) - 1
-    T = np.polynomial.chebyshev.chebvander(x_scaled, degree)  # (n_points, degree+1)
+    x_min = x.min()
+    x_max = x.max()
+    x_scaled = 2 * (x - x_min) / (x_max - x_min) - 1  # Scaled to [-1, 1]
+    T = np.polynomial.chebyshev.chebvander(x_scaled, degree)
 
     T_dd = np.zeros_like(T)
     for k in range(degree + 1):
-        # Get 2nd derivative of T_k
         coefs = np.zeros(degree + 1)
         coefs[k] = 1
         d2T_coefs = chebder(coefs, m=2)
         T_dd[:, k] = np.polynomial.chebyshev.chebval(x_scaled, d2T_coefs)
 
-    return T_dd  # (degree+1, n_points)
+    # Rescale derivatives from d²/d(𝑥̃)² to d²/dx²
+    dx_dxtilde_sq = (2 / (x_max - x_min)) ** 2
+    T_dd_rescaled = T_dd * dx_dxtilde_sq
+
+    return T_dd_rescaled
 
 
 class Chebysev(nn.Module):
@@ -75,7 +80,7 @@ class Chebysev(nn.Module):
 
 
 @app.command()
-def train(epochs: int = 1_000, lr: float = 1e-4, full_profile: bool = True, quiet: bool = False):
+def train(epochs: int = 1_000, lr: float = 1e-4, full_profile: bool = False, quiet: bool = False):
 
     base_dir = Path(__file__).resolve().parent
 

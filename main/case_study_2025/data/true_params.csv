@@ -1,12 +1,12 @@
 parameter,value
 Klei_soilphi,39.64982211
 Klei_soilcohesion,8.212308669
-Klei_soilcurkb1,2504.573148
+Klei_soilcurkb1,2300
 Zand_soilphi,27.8681126
 Zand_soilcurkb1,12726.91631
 Zandvast_soilphi,37.75442981
 Zandvast_soilcurkb1,27084.8215
 Zandlos_soilphi,29.77508766
 Zandlos_soilcurkb1,8852.613557
-Wall_SheetPilingElementEI,43568.60333
+Wall_SheetPilingElementEI,30000
 Water_lvl,-1

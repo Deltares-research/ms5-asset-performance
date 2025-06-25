@@ -29,6 +29,21 @@ def mlp_forward_pt(x, weights):
     return h
 
 
+def chebysev_forward_pt(x, weights, basis):
+    h = x
+    for i, (W, b) in enumerate(weights):
+        W_pt = pt.constant(W.astype("float32"))
+        b_pt = pt.constant(b.astype("float32"))
+        h = pt.dot(h, W_pt.T) + b_pt
+        if i < len(weights) - 1:
+            h = pt.switch(h > 0, h, 0)  # ReLU
+
+    # h now contains the Chebyshev coefficients
+    basis_pt = pt.constant(basis.astype("float32"))  # shape (degree+1, n_points)
+    out = pt.dot(h, basis_pt)  # (batch, n_points)
+    return out
+
+
 def posterior_plot(idata, ref_vals, path):
 
     if not isinstance(path, Path): path = Path(Path(path).as_posix())

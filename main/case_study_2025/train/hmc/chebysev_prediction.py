@@ -36,20 +36,18 @@ if __name__ == "__main__":
     water_lvl = data['12']["true_params"]["Water_lvl"]
     X = np.column_stack((X, np.ones(X.shape[0])*water_lvl))
 
-    posterior_displacements = fos_calculator.inference(X_srg)[0][None, :]
-
-    # moments = fos_calculator.moments(posterior_displacements)
+    posterior_displacements = fos_calculator.inference(X_srg)
 
     XX = torch.from_numpy(X_srg).float()
-    XX = XX[0][None, :]
     with torch.no_grad():
         coeffs = fos_calculator.model(XX, return_coeffs=True)
     curvatures = coeffs @ fos_calculator.model.basis_der
-    EI = 10_000
+    curvatures = curvatures.detach().numpy()
+    curvatures /= (1_000)  # Convert [mm/m^2] displacements to [1/m].
+    EI = 12_000
     moments = - EI * curvatures  # Minus for proper sign in moment convention
 
     plot_path = Path("../../results/hmc/chebysev")
     plot_path.mkdir(exist_ok=True, parents=True)
-    fos_calculator.plot_moments(moments, plot_path)
-    # fos_calculator.plot_moments(posterior_displacements, plot_path)
+    fos_calculator.plot_moments(posterior_displacements, moments, plot_path)
 
