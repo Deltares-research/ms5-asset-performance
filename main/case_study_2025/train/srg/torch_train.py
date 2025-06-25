@@ -6,7 +6,9 @@ from numpy.typing import NDArray
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
-from srg_utils import load_data, plot
+# from srg_utils import load_data, plot
+from main.case_study_2025.train.srg.srg_utils import load_data, plot
+from src.geotechnical_models.mlp.MLP_class import MLP, inference
 
 import torch
 import torch.nn as nn
@@ -24,39 +26,22 @@ from datetime import datetime
 
 app = typer.Typer()
 
-
-class MLP(nn.Module):
-    def __init__(self, input_dim, hidden_dims, output_dim):
-
-        super().__init__()
-        layers = []
-
-        prev_dim = input_dim
-        for hidden_dim in hidden_dims:
-            layers.append(nn.Linear(prev_dim, hidden_dim))
-            layers.append(nn.ReLU())
-            prev_dim = hidden_dim
-
-        layers.append(nn.Linear(prev_dim, output_dim))
-
-        self.net = nn.Sequential(*layers)
-
-    def forward(self, x):
-        return self.net(x)
-
-
 @app.command()
 def train(epochs: int = 1_000, lr: float = 1e-4, quiet: bool = False):
 
     base_dir = Path(__file__).resolve().parent
 
     data_dir = base_dir.parent / "data"
-    data_path = data_dir / "srg_data_20250520_094244.csv"
+    data_name = "srg_moments_20250617_101504"
+    data_path = data_dir / f"{data_name}.csv"
+    # data_path = data_dir / "srg_data_20250604_100638.csv"
 
-    output_path = base_dir.parent / f"results/srg/torch/lr_{lr:.1e}_epochs_{epochs:d}"
+    output_path = base_dir.parent / f"results_moments/{data_name}/gpr/lr_{lr:.1e}_epochs_{epochs:d}"
     output_path.mkdir(parents=True, exist_ok=True)
 
     X, y = load_data(data_path)
+    print("="*50)
+    print(X.shape, y.shape)
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
@@ -125,6 +110,7 @@ def train(epochs: int = 1_000, lr: float = 1e-4, quiet: bool = False):
     print("Training completed! ✅")
 
     torch.save(model.state_dict(), output_path/r"torch_weights.pth")
+    torch.save(model, output_path/r"torch_model.pth")
     joblib.dump(scaler_x, output_path/r"scaler_x.joblib")
     joblib.dump(scaler_y, output_path/r"scaler_y.joblib")
 
@@ -137,18 +123,6 @@ def train(epochs: int = 1_000, lr: float = 1e-4, quiet: bool = False):
     print("Results plotted! ✅")
 
 
-def inference(model, x, scaler_x, scaler_y, device=None):
-    if device is None:
-        device = next(model.parameters()).device
-    x_scaled = scaler_x.transform(x)
-    x_scaled_torch = torch.tensor(x_scaled, dtype=torch.float32, device=device)
-    with torch.no_grad():
-        y_hat_scaled = model(x_scaled_torch)
-    y_hat_scaled = y_hat_scaled.detach().cpu().numpy()
-    y_hat = scaler_y.inverse_transform(y_hat_scaled)
-    return y_hat
-
 
 if __name__ == "__main__":
-
     app()

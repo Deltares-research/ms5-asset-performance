@@ -1,12 +1,12 @@
 import numpy as np
 import scipy as sp
-from src.bayesian_updating.resampling_index import resampling_index
+from .resampling_index import resampling_index
 np.seterr(all='ignore')
 
 # Make sure ERADist, ERANataf classes are in the path
 # https://www.bgu.tum.de/era/software/eradist/
-from src.bayesian_updating.ERADist import ERADist
-from src.bayesian_updating.ERANataf import ERANataf
+from .ERADist import ERADist
+from .ERANataf import ERANataf
 
 """
 ---------------------------------------------------------------------------

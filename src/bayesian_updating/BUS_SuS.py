@@ -6,11 +6,11 @@ np.seterr(all='ignore')
 # import os
 # import sys
 # sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
-from src.bayesian_updating.aCS import aCS
+from .aCS import aCS
 # Make sure ERADist, ERANataf classes are in the path
 # https://www.bgu.tum.de/era/software/eradist/
-from src.bayesian_updating.ERADist import ERADist
-from src.bayesian_updating.ERANataf import ERANataf
+from .ERADist import ERADist
+from .ERANataf import ERANataf
 # from ERANataf import ERANataf
 
 """
@@ -77,7 +77,7 @@ def BUS_SuS(N, p0, c, l_class, distr, max_it: int = 20):
     ell   = np.log(1/c)
     # displacement_for_u = lambda u: get_displacement(u2x(u[0:n-1]).flatten())
     # h_LSF = lambda u, displacement: np.log(sp.stats.norm.cdf(u)) + ell - log_likelihood(displacement)
-    h_LSF = lambda u, l_class_to_use: np.log(sp.stats.norm.cdf(u[:,-1])) + ell - l_class_to_use.compute_log_likelihood_for_parameters(u2x(u[:,0:n-1]))
+    h_LSF = lambda u, l_class_to_use: np.log(sp.stats.norm.cdf(u[:,-1])) + ell - l_class_to_use.compute_log_likelihood_for_parameters(u2x(u[:,0:-1]))
 
     # initialization of variables
     j        = 0                         # number of conditional level

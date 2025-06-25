@@ -3,12 +3,12 @@ import scipy as sp
 np.seterr(all='ignore')
 
 # Make sure to include aCS.py in your workspace
-from src.bayesian_updating.aCS_aBUS import aCS_aBUS
+from .aCS_aBUS import aCS_aBUS
 
 # Make sure ERADist, ERANataf classes are in the path
 # https://www.bgu.tum.de/era/software/eradist/
-from src.bayesian_updating.ERADist import ERADist
-from src.bayesian_updating.ERANataf import ERANataf
+from .ERADist import ERADist
+from .ERANataf import ERANataf
 
 """
 ---------------------------------------------------------------------------
@@ -62,18 +62,18 @@ def aBUS_SuS(N, p0, l_class, distr, max_it: int = 20):
         n   = len(distr.Marginals)+1   # number of random variables + p Uniform variable of BUS
         u2x = lambda u: distr.U2X(u)   # from u to x
 
-    elif isinstance(distr[0], ERADist):   # use distribution information for the transformation (independence)
+    elif isinstance(distr, ERADist):   # use distribution information for the transformation (independence)
         # Here we are assuming that all the parameters have the same distribution !!!
         # Adjust accordingly otherwise or use an ERANataf object
-        n   = len(distr)+1                # number of random variables + p Uniform variable of BUS
-        u2x = lambda u: distr[0].icdf(sp.stats.norm.cdf(u))   # from u to x
+        n   = 2               # number of random variables + p Uniform variable of BUS
+        u2x = lambda u: distr.icdf(sp.stats.norm.cdf(u))   # from u to x
     else:
         raise RuntimeError('Incorrect distribution. Please create an ERADist/Nataf object!')
 
     # limit state funtion for the observation event (Ref.1 Eq.12)
     # log likelihood in standard space
     # displacements_for_u = lambda u: get_displacement(u2x(u[0:n-1]).flatten())
-    log_L_fun = lambda u, l_class_to_use: l_class_to_use.compute_log_likelihood_for_parameters(u2x(u[:,0:n-1]))
+    log_L_fun = lambda u, l_class_to_use: l_class_to_use.compute_log_likelihood_for_parameters(u2x(u[:,0:-1]))
 
     # LSF
     h_LSF = lambda pi_u, logl_hat, log_L: np.log(sp.stats.norm.cdf(pi_u)) + logl_hat - log_L
@@ -156,8 +156,6 @@ def aBUS_SuS(N, p0, l_class, distr, max_it: int = 20):
 
         # sampling process using adaptive conditional sampling
         u_j, leval, lam, sigma, accrate, cur_parameter_values = aCS_aBUS(N, lam, h[i], rnd_seeds, log_L_fun, logl_hat, h_LSF, l_class)
-        print(f"leval: {leval}")
-        print(f"parameter_values: {parameter_values}")
         print('\t*aCS lambda =', lam, '\t*aCS sigma =', sigma[0], '\t*aCS accrate =', accrate)
 
         # update the value of the scaling constant (Ref.1 Alg.5 Part.4d)

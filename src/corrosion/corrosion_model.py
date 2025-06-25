@@ -2,6 +2,7 @@ import numpy as np
 from numpy.typing import NDArray
 from typing import List, Tuple, Dict, Optional, Type, NamedTuple
 from dataclasses import dataclass
+from src.bayesian_updating.ERADist import ERADist
 
 
 class CorrosionModel:
@@ -132,6 +133,18 @@ class CorrosionModel:
     #     return post
 
 
+class CorrosionModelSimple:
+
+    """
+    According to Jongbloed curves detailed in Report:
+    Richtlijn bewezen sterkte damwanden en kademuren.
+    Corrosion model with simple parameters:
+    a ~ N(mean_a, sigma_a)
+    b ~ N(mean_b, sigma_b)
+    """    
+    def get_corrosion_rate_at_t(self, samples_a: np.ndarray, cur_t: int, b: float = 0.57):
+        return (samples_a * cur_t** b) / 10
+    
 
 if __name__ == "__main__":
 

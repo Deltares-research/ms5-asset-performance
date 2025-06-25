@@ -13,12 +13,9 @@ import sys
 import os
 import json
 from pathlib import Path
-# Add the project root directory to the path
-# current_dir = os.path.dirname(os.path.abspath(__file__))
-# project_root = os.path.abspath(os.path.join(current_dir, '../..'))
-# sys.path.append(project_root)
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
+# # # Add the project root directory to the path
+# project_root = Path(__file__).parent.parent.parent
+# sys.path.insert(0, str(project_root))
 
 # Import required modules
 from src.bayesian_updating.ERADist import ERADist
@@ -28,13 +25,12 @@ from src.bayesian_updating.aBUS_SuS import aBUS_SuS
 from src.bayesian_updating.iTMCMC import iTMCMC
 from datetime import datetime
 import pandas as pd
-from main.dhseetpiling_deformation_updating.likelihood_functions import DisplacementLikelihood
-from main.case_study_2025.surrogate_dependent_gpr import MultitaskGPModel
-
+from src.bayesian_updating.likelihood_functions import DisplacementLikelihood
+import typer
 
 class PosteriorRetainingStructure:
     
-    def __init__(self, model_path: str, use_surrogate: bool = True):
+    def __init__(self, model_path: str, model_type: str = "gpr", normal_distribution: bool = False):
         """
         Initialize the PosteriorRetainingStructure class
 
@@ -43,40 +39,23 @@ class PosteriorRetainingStructure:
             measurement_path (str): Path to the measurement data file
             use_surrogate (bool): Whether to use the fake surrogate model instead of DSheetPiling
         """
-        self.use_surrogate = use_surrogate
-        self.define_parameters(wall_properties=True)
-        self.load_synthetic_data(model_path)
+        self.model_type = model_type
+        self.define_parameters(normal_distribution=normal_distribution)
+        # self.load_synthetic_data(model_path)
         
 
     def load_synthetic_data(self, model_path: str):
         """
         Load the synthetic data
         """ 
-        # parameters = [[self.true_cohesion, self.true_phi, self.true_water_level]]
-        synthetic_parameter_name = self.parameter_names
-        # if not self.use_surrogate:
-        #     for i_par, parameter_name in enumerate(self.parameter_names):
-        #         if 'soilcurkb1' in parameter_name:
-        #             synthetic_parameter_name.append(parameter_name.replace('soilcurkb1', 'soilcurkb2'))
-        #             synthetic_parameter_name.append(parameter_name.replace('soilcurkb1', 'soilcurkb3'))
-        #             synthetic_parameter_name.append(parameter_name.replace('soilcurkb1', 'soilcurko1'))
-        #             synthetic_parameter_name.append(parameter_name.replace('soilcurkb1', 'soilcurko2'))
-        #             synthetic_parameter_name.append(parameter_name.replace('soilcurkb1', 'soilcurko3'))
-        #             self.synthetic_values.append(np.round(self.synthetic_values[i_par]*0.5))
-        #             self.synthetic_values.append(np.round(self.synthetic_values[i_par]*0.25))
-        #             self.synthetic_values.append(np.round(self.synthetic_values[i_par]))
-        #             self.synthetic_values.append(np.round(self.synthetic_values[i_par]*0.5))
-        #             self.synthetic_values.append(np.round(self.synthetic_values[i_par]*0.25))
         # Initialize the displacement likelihood function
         self.l_displacement = DisplacementLikelihood(
-            model_path,
-            use_surrogate=self.use_surrogate,
-            parameter_names=synthetic_parameter_name,
+            model_path=model_path,
+            model_type=self.model_type,
         )
-        self.l_displacement.generate_synthetic_measurement(np.array([self.synthetic_values]), sigma=0.2)
-        print(f"self.l_displacement.measured_mean: {self.l_displacement.measured_mean}")
+        self.l_displacement.generate_synthetic_measurement(np.array([self.synthetic_values]), sigma=0.1)
 
-    def generate_samples(self, n_samples: int = 1000):
+    def generate_samples(self, n_samples: int = 1000, normal_distribution: bool = False):
         """
         Generate samples from the posterior distribution
         """
@@ -102,18 +81,18 @@ class PosteriorRetainingStructure:
         df = pd.DataFrame({param: sample_dict["samples"][param] for param in param_names})
         # print(f"df: {df}")
         print("Saving dataframe to csv file...")
-        df.to_csv('1M_parameter_samples.csv', index=False)
+        file_name = f'1M_parameter_samples_normally_distributed.csv' if normal_distribution else '1M_parameter_samples_uniformly_distributed.csv'
+        df.to_csv(file_name, index=False)
         print("Done!")
 
         # save sample_dict to json file
         # with open('sample_dict.json', 'w') as f:
             # json.dump(sample_dict, f)
 
-    
         return sample_dict
         
     
-    def define_parameters(self, wall_properties: bool = True):
+    def define_parameters(self, normal_distribution: bool = False):
         # load parameters from json file
         with open('examples/deterministic_parameters.json', 'r') as f:
             parameters = json.load(f)
@@ -126,7 +105,7 @@ class PosteriorRetainingStructure:
         distributions = []
         parameter_names = []
         self.synthetic_values = []
-        scale = 1.5
+        scale = 1.3
         lower_bound = 0.3
         upper_bound = 1.8
         std_scale = 0.1
@@ -134,30 +113,50 @@ class PosteriorRetainingStructure:
             if material_name == 'klei siltig' or material_name == 'Zand los (18)':
                 continue
             if material_values['cohesion'] != 0:
-                cohesion = ERADist('normal', 'PAR', [material_values['cohesion'], material_values['cohesion']*std_scale])
-                # cohesion = ERADist('uniform', 'PAR', [material_values['cohesion']*lower_bound, material_values['cohesion']*upper_bound])
+                if normal_distribution:
+                    cohesion = ERADist('normal', 'PAR', [material_values['cohesion'], material_values['cohesion']*std_scale])
+                else:
+                    cohesion = ERADist('uniform', 'PAR', [material_values['cohesion']*lower_bound, material_values['cohesion']*upper_bound])
                 distributions.append(cohesion)
                 parameter_names.append(f'{material_name}_soilcohesion')
                 self.synthetic_values.append(material_values['cohesion']*scale)
             if material_values['phi'] != 0:
-                phi = ERADist('normal', 'PAR', [material_values['phi'], material_values['phi']*std_scale])
-                # phi = ERADist('uniform', 'PAR', [material_values['phi']*lower_bound, material_values['phi']*upper_bound])
+                if normal_distribution:
+                    phi = ERADist('normal', 'PAR', [material_values['phi'], material_values['phi']*std_scale])
+                else:
+                    phi = ERADist('uniform', 'PAR', [material_values['phi']*lower_bound, material_values['phi']*upper_bound])
                 distributions.append(phi)
                 parameter_names.append(f'{material_name}_soilphi')
                 self.synthetic_values.append(material_values['phi']*scale)
             if material_values['k_top']['kh1'] != 0:
-                kh1 = ERADist('normal', 'PAR', [material_values['k_top']['kh1'], material_values['k_top']['kh1']*std_scale])
-                # kh1 = ERADist('uniform', 'PAR', [material_values['k_top']['kh1']*lower_bound, material_values['k_top']['kh1']*upper_bound])
+                if normal_distribution:
+                    kh1 = ERADist('normal', 'PAR', [material_values['k_top']['kh1'], material_values['k_top']['kh1']*std_scale])
+                else:
+                    kh1 = ERADist('uniform', 'PAR', [material_values['k_top']['kh1']*lower_bound, material_values['k_top']['kh1']*upper_bound])
                 distributions.append(kh1)
                 parameter_names.append(f'{material_name}_soilcurkb1') # b van boven?
                 self.synthetic_values.append(material_values['k_top']['kh1']*scale)
 
-        if wall_properties == True:
+        if normal_distribution:
             wall_eis = ERADist('normal', 'PAR', [40000, 4500])
-            # wall_eis = ERADist('uniform', 'PAR', [5000, 50000])
-            distributions.append(wall_eis)
-            parameter_names.append(f'Wall_SheetPilingElementEI')
-            self.synthetic_values.append(45000)
+        else:
+            wall_eis = ERADist('uniform', 'PAR', [5000, 50000])
+        distributions.append(wall_eis)
+        parameter_names.append(f'Wall_SheetPilingElementEI')
+        self.synthetic_values.append(45000)
+
+        # # add water level
+        if normal_distribution:
+            mean_water_level = -0.8
+            std_water_level = 0.2
+            water_level = ERADist('normal', 'PAR', [mean_water_level, std_water_level])
+        else:
+            lower_water_level = -4.4
+            upper_water_level = 0.4
+            water_level = ERADist('uniform', 'PAR', [lower_water_level, upper_water_level])
+        distributions.append(water_level)
+        parameter_names.append('water_lvl')
+        self.synthetic_values.append(mean_water_level*scale)
 
         self.dist_parameters = distributions
         self.parameter_names = parameter_names
@@ -174,14 +173,15 @@ class PosteriorRetainingStructure:
         """
         realmin = np.finfo(np.double).tiny
         # use MLE to find c
-        if method == 1:    
-            u_start = np.log(l_class.measured_mean + realmin)
-            fun     = lambda lnU: -l_class.compute_log_likelihood_for_equality_information(np.exp(lnU)) 
-            
+        if method == 1:
+            u_start = np.log(abs(l_class.measured_mean) + realmin)
+            fun     = lambda lnU: -l_class.compute_log_likelihood_for_equality_information(np.exp(lnU))
             MLE_ln  = sp.optimize.fmin(func=fun, x0=u_start)
             MLE     = np.exp(MLE_ln)   # likelihood(MLE) = 1
+            if l_class.measured_mean[0] < 0:
+                MLE = -MLE
             c       = 1/l_class.compute_likelihood_for_equality_information(MLE)
-            return c
+            return c if not np.isnan(c) else 100
         # some likelihood evaluations to find c
         elif method == 2:
             # raise NotImplementedError('This method is not implemented yet')
@@ -205,7 +205,8 @@ class PosteriorRetainingStructure:
             raise RuntimeError('Finding the scale constant c requires -method- 1, 2 or 3')
 
     def update_for_new_displacement_data(self, list_of_N: List[int] = [100, 200, 500, 1000, 2000], p0: List[float] = [0.1, 0.2, 0.25],
-                                         approaches: List[str] = ['BUS', 'aBUS', 'iTMCMC'], max_it: int = 20):
+                                         approaches: List[str] = ['BUS', 'aBUS', 'iTMCMC'], max_it: int = 20,
+                                         results_dir: str = None):
         """
         Update the posterior for new data
         """        
@@ -274,11 +275,10 @@ class PosteriorRetainingStructure:
         # rescale displacment samples
         # self.displacement_samples = self.displacement_samples - 1000
         # Create the results directory if it doesn't exist
-        os.makedirs('results', exist_ok=True)
         # Save the results to a JSON file
         # Create runID based on the current date and time
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")   
-        result_path = f"results/results_{'_'.join(approaches)}_p0{p0}_maxit{max_it}_runID{run_id}.npz"
+        result_path = f"{results_dir}/results_{'_'.join(approaches)}_p0{p0}_maxit{max_it}_runID{run_id}.npz"
         np.savez(result_path, **self.sample_results)
         # Print summary statistics
         print('\nModel evidence =', np.exp(logcE), '\n')
@@ -307,7 +307,7 @@ class PosteriorRetainingStructure:
             p0_sample_results = self.sample_results[cur_p0]
             list_of_N = p0_sample_results.keys()
             for i_N, cur_N in enumerate(list_of_N):
-                plt.figure(figsize=(12, 2*self.dimensions))
+                plt.figure(figsize=(20, 4*self.dimensions))
                 # Get keys from self.sample_results and format them nicely
                 keys = p0_sample_results[cur_N].keys()
                 approaches = ", ".join(keys)
@@ -341,8 +341,6 @@ class PosteriorRetainingStructure:
                         
 
                     # For the prior (first level)
-                    # print(f"displacement_samples: {displacement_samples}")
-                    # print(f"shape of displaceme/nt_samples: {np.shape(displacement_samples)} ")
                     prior_displacements = displacement_samples[0]
                     posterior_displacements = displacement_samples[-1]
                     kde_prior = gaussian_kde(prior_displacements)
@@ -370,7 +368,7 @@ class PosteriorRetainingStructure:
                 
                                 
                     plt.title(f'Marginal PDF of the displacement for {key}')
-                    plt.xlabel('Displacement [cm]')
+                    plt.xlabel('Displacement [mm]')
                     plt.ylabel('Density')
                     plt.grid(True, alpha=0.3)
                     plt.legend()
@@ -381,18 +379,26 @@ class PosteriorRetainingStructure:
                         plt.subplot(self.dimensions+1, nr_keys, nr_keys*(i+1)+1+i_key)
                         
                         # Prior KDE
-                        kde_prior = gaussian_kde(prior_samples[:, i])
-                        x_range = np.linspace(param_ranges[i][0], param_ranges[i][1], 200)
-                        prior_density = kde_prior(x_range)
-                        plt.plot(x_range, prior_density, 'b-', linewidth=2, label='Prior')
-                        plt.fill_between(x_range, prior_density, alpha=0.1, color='blue')
+                        try:
+                            kde_prior = gaussian_kde(prior_samples[:, i])
+                            x_range = np.linspace(param_ranges[i][0], param_ranges[i][1], 200)
+                            prior_density = kde_prior(x_range)
+                            plt.plot(x_range, prior_density, 'b-', linewidth=2, label='Prior')
+                            plt.fill_between(x_range, prior_density, alpha=0.1, color='blue')
+                        except:
+                            plt.hist(prior_samples[:, i], density=True, alpha=0.5, color='blue', label='Prior', bins=nr_bins)
+
                         # plt.hist(prior_samples[:, i], density=True, alpha=0.5, color='blue', label='Prior', bins=nr_bins)
                         
                         # Posterior KDE
-                        kde_post = gaussian_kde(posterior_samples[:, i])
-                        post_density = kde_post(x_range)
-                        plt.plot(x_range, post_density, 'r-', linewidth=2, label='Posterior')
-                        plt.fill_between(x_range, post_density, alpha=0.3, color='red')
+                        try:
+                            kde_post = gaussian_kde(posterior_samples[:, i])
+                            post_density = kde_post(x_range)
+                            plt.plot(x_range, post_density, 'r-', linewidth=2, label='Posterior')
+                            plt.fill_between(x_range, post_density, alpha=0.3, color='red')
+                        except:
+                            plt.hist(posterior_samples[:, i], density=True, alpha=0.5, color='red', label='Posterior', bins=nr_bins)
+
                         # plt.hist(posterior_samples[:, i], density=True, alpha=0.5, color='red', label='Posterior', bins=nr_bins)
 
                         # Add mean lines
@@ -452,46 +458,67 @@ class PosteriorRetainingStructure:
         plt.savefig(f'{plot_dir}/threshold_progression.png', dpi=300)        
         # plt.show()
 
-def run_bus_approach_comparison():
-    """
-    Run the BUS approach comparison
-    """
-    pass
 
 
-if __name__ == '__main__':    
-    # # Use a dummy model path when using surrogate model
-    use_surrogate = True
-    if use_surrogate:
-        # model_path = "trained_models/multitask_gpr_surrogate_500_1_1592_1.pkl" # 1 minute training time
-        model_path = "trained_models/multitask_gpr_surrogate_1000_1_1991_3.pkl" # 2:35 minute training time
-        # model_path = "trained_models/multitask_gpr_surrogate_1000_1_1991_1.pkl" # 2:35 minute training time
-        # model_path = "trained_models/multitask_gpr_surrogate_1000_1_3983_1.pkl" # 3:24 hours  training time
-    else:
+app = typer.Typer()
+@app.command()
+def run_bus_approach(modeltype: str = "torch", 
+                     modelname: str = "lr_1.0e-04_epochs_10000"):
+    """
+    Run the BUS approach
+    """
+     # Run for gpr
+    if modeltype == "gpr":
+        from src.geotechnical_models.gpr.gpr_classes import DependentGPRModels, MultitaskGPModel
+        model_path = "main/case_study_2025/train/results/srg/gpr/" + modelname + "/model_params.pkl"
+    # Run for torch
+    elif modeltype == "torch":
+        from src.geotechnical_models.mlp.MLP_class import MLP
+        model_path = "main/case_study_2025/train/results/srg/torch/" + modelname
+
+    # Run for dsheet
+    elif modeltype == "dsheet":
         model_path = "c:\\Users\\cotoarba\\OneDrive - Stichting Deltares\\Desktop\\dummy_123.shi"
+    else:
+        raise ValueError(f"Invalid model type: {modeltype}. Not implemented yet.")
+    
+    # Verify that the model file exists
+    if modeltype != "dsheet" and not Path(model_path).exists():
+        raise FileNotFoundError(f"Model file not found: {model_path}")
+    
+    print(f"Using model path: {model_path}")
     
     # Get measurement data path relative to the script
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    measurement_path = os.path.join(current_dir, 'synthetic_measurement_data.json')
+    measurement_path = os.path.join(current_dir, 'data/synthetic_measurement_data.json')
     
     # Initialize with surrogate model
     posterior_retention_structure = PosteriorRetainingStructure(
-        model_path, use_surrogate=use_surrogate
+        model_path, model_type=modeltype, normal_distribution=True
     )
 
     # # # ############################################################
-    # # Generate samples for surrogate model
-    # posterior_retention_structure.define_parameters(wall_properties=True)
-    # posterior_retention_structure.generate_samples(n_samples=1_000_000)
+    # Generate samples for surrogate model
+    # posterior_retention_structure.generate_samples(n_samples=1_000_000, normal_distribution=True)
     
     ############################################################
+    # CONTOUR PLOT OF THE GRADIENT
     # Run updating
-    posterior_retention_structure.update_for_new_displacement_data(list_of_N=[300], p0=[0.1], approaches=['BUS', 'aBUS'], max_it=10)
+    results_dir = current_dir + '/results/' + modeltype + '/' + modelname
+    os.makedirs(results_dir, exist_ok=True)
+    posterior_retention_structure.update_for_new_displacement_data(list_of_N=[200], p0=[0.1], approaches=['BUS', 'aBUS'], max_it=10, results_dir=results_dir)
     # make plot director
-    os.makedirs('plots', exist_ok=True)
+    # plot_dir = results_dir + '/plots/'
+    # os.makedirs(plot_dir, exist_ok=True)
 
     # posterior_retention_structure.l_displacement.measured_displacement_mean = posterior_retention_structure.measured_displacement_mean - 1000
-    posterior_retention_structure.plot_prior_and_posterior_marginal_pdfs(plot_dir='plots')
-    posterior_retention_structure.plot_threshold_progression(plot_dir='plots')
+    posterior_retention_structure.plot_prior_and_posterior_marginal_pdfs(plot_dir=results_dir)
+    posterior_retention_structure.plot_threshold_progression(plot_dir=results_dir)
     # plt.show()
     plt.close()
+
+
+if __name__ == '__main__':
+    app()
+
+   

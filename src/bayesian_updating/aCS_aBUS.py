@@ -94,9 +94,12 @@ def aCS_aBUS(N, lambd_old, tau, theta_seeds, log_L_fun, logl_hat, h_LSF, l_class
     nr_idx = np.sum(cur_mask)
 
     # initialize with current seed
-    theta_chain[:,0:nr_idx] = theta_seeds[:,cur_mask]
-    leval[0:nr_idx] = log_L_fun(theta_chain[:,0:nr_idx].reshape(1,-1), l_class)
-    # heval[0:nr_idx] = h_LSF(theta_chain[:,0:nr_idx].reshape(1,-1), logl_hat, leval[0:nr_idx])
+    theta_chain[:,0:nr_idx] = theta_seeds[:,cur_mask]   
+    try:
+        leval[0:nr_idx] = log_L_fun(theta_chain[:,0:nr_idx].T, l_class)
+    except:
+        leval[0:nr_idx] = log_L_fun(theta_chain[:,0:nr_idx].T, l_class).flatten()
+
     parameter_values[0:nr_idx] = l_class.parameter_values
     acc[0:nr_idx] = 0
 
@@ -111,7 +114,6 @@ def aCS_aBUS(N, lambd_old, tau, theta_seeds, log_L_fun, logl_hat, h_LSF, l_class
         theta_chain[:,previous_idx:nr_idx] = previous_theta[:,cur_mask]
         # geval[previous_idx:nr_idx] = h_LSF(theta_chain[:,previous_idx:nr_idx].T, l_class).flatten()
         leval[previous_idx:nr_idx] = log_L_fun(theta_chain[:,previous_idx:nr_idx].T, l_class).flatten()
-        # heval[previous_idx:nr_idx] = h_LSF(theta_chain[:,previous_idx:nr_idx].reshape(1,-1), logl_hat, leval[previous_idx:nr_idx])
         parameter_values[previous_idx:nr_idx] = l_class.parameter_values.flatten()
         acc[previous_idx:nr_idx] = 0
 

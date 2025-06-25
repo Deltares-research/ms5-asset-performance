@@ -88,12 +88,14 @@ def aCS(N, lambd_old, tau, theta_seeds, h_LSF, l_class):
 
     max_nr_samples = max(Nchain)
 
+    # print(f"Theta_seeds: {theta_seeds}")
+
     cur_mask = Nchain >= 1
     nr_idx = np.sum(cur_mask)
 
     # initialize with current seed
     theta_chain[:,0:nr_idx] = theta_seeds[:,cur_mask]
-    geval[0:nr_idx] = h_LSF(theta_chain[:,0:nr_idx].reshape(1,-1), l_class)
+    geval[0:nr_idx] = h_LSF(theta_chain[:,0:nr_idx].T, l_class).flatten()
     parameter_values[0:nr_idx] = l_class.parameter_values
     acc[0:nr_idx] = 0
 
@@ -130,6 +132,7 @@ def aCS(N, lambd_old, tau, theta_seeds, h_LSF, l_class):
         # Update previous index
         previous_start = previous_idx
         previous_idx = nr_idx
+
 
     # # b. apply conditional sampling
     # for k in range(1, Ns+1):
