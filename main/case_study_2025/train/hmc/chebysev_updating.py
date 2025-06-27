@@ -163,30 +163,36 @@ def train(param: str = "Wall_SheetPilingElementEI", draws: int = 10, tune: int =
 
     idx = list(true_params.keys()).index(param)
     # true_params = np.array([val for (key, val) in true_params.items() if key != param])
-    true_params = np.array([val for (key, val) in true_params.items()])
+    # true_params = np.array([val for (key, val) in true_params.items()])
+    true_params = np.array([8.21, 39.65, 2300, 27.86, 12726, 37.75, 27084, 29.78, 8852, -1])
 
     m = (scaler_x.data_min_ + scaler_x.data_max_) / 2
+
+    print(scaler_x.data_min_)
+    print(scaler_x.data_max_)
+
+    m = true_params.copy()
+    m[0] = 3.1
+    m[1] = true_params[0]
 
     with pm.Model() as pymc_model:
         # x = pm.Normal("x", mu=mus[idx], sigma=sigmas[idx], shape=(1,))
         data_min = pt.constant(scaler_x.data_min_)
         data_max = pt.constant(scaler_x.data_max_)
         scale = pt.constant(scaler_x.scale_)
-        # x = pm.TruncatedNormal("x", mu=mus[idx], sigma=sigmas[idx], lower=data_min[idx], upper=data_max[idx], shape=(1,))
         x = pm.Uniform("x", lower=data_min[idx], upper=data_max[idx], shape=(1,))
-        # x = pm.TruncatedNormal("x", mu=2000, sigma=200, lower=0, upper=3000, shape=(1,))
-        # x_full = pt.concatenate([
-        #     pt.constant(true_params[:idx])[None, :],  # shape (1, len(a1))
-        #     x.reshape((1, 1)),  # shape (1, 1)
-        #     pt.constant(true_params[idx:])[None, :]  # shape (1, len(a2))
-        # ], axis=1)
-        # x_full = pt.constant(true_params)[None, :]
-        x_full = pt.constant(m)[None, :]
+        x_full = pt.concatenate([
+            pt.constant(m[:idx])[None, :],  # shape (1, len(a1))
+            x.reshape((1, 1)),  # shape (1, 1)
+            pt.constant(m[idx:])[None, :]  # shape (1, len(a2))
+        ], axis=1)
+        # x_full = pt.constant(m)[None, :]
         x_scaled = pm.Deterministic("x_scaled", ((x_full - data_min) * scale - 1).squeeze())
+        # x_scaled = pm.Deterministic("x_scaled", 2 * (x_full - data_min) / (data_max-data_min) - 1)
         y_hat_scaled = pm.Deterministic("y_hat_scaled", chebysev_forward_pt(x_scaled, weights_np, basis).squeeze())
         y_hat = pm.Deterministic("y_hat", 0.5 * (y_hat_scaled + 1) * (2 / scaler_y.scale_) + scaler_y.data_min_)
-        # sigma = pm.HalfNormal("sigma", sigma=5)
-        sigma = 10
+        sigma = pm.HalfNormal("sigma", sigma=5)
+        sigma = 5
         y = pm.Normal("y", mu=y_hat, sigma=sigma, observed=y_obs)
 
     idata_prior = pm.sample_prior_predictive(
@@ -194,38 +200,67 @@ def train(param: str = "Wall_SheetPilingElementEI", draws: int = 10, tune: int =
         random_seed=seed
     )
 
-    idata_posterior = pm.sample(
-        model=pymc_model,
-        draws=draws,
-        tune=tune,
-        chains=4,
-        cores=num_cores,
-        progressbar=True,
-        target_accept=targetaccept,
-        random_seed=seed
-    )
-
-    idata = idata_posterior.copy()
-    idata.add_groups({"prior": idata_prior.prior})
-
-    idata.to_netcdf(result_path / "posterior_data.netcdf")
-
-    summarize(idata, result_path, var_names=["x", "sigma"])
-
-    posterior_plot(idata, [ref_vals[idx]], result_path)
-
+    # idata_posterior = pm.sample(
+    #     model=pymc_model,
+    #     draws=draws,
+    #     tune=tune,
+    #     chains=4,
+    #     cores=num_cores,
+    #     progressbar=True,
+    #     target_accept=targetaccept,
+    #     random_seed=seed
+    # )
+    #
+    # idata = idata_posterior.copy()
+    # idata.add_groups({"prior": idata_prior.prior})
+    #
+    # idata.to_netcdf(result_path / "posterior_data.netcdf")
+    #
+    # summarize(idata, result_path, var_names=["x", "sigma"])
+    #
+    # posterior_plot(idata, [ref_vals[idx]], result_path)
+    #
     # print(f"Prior mean={(scaler_x.data_min_[idx]+scaler_x.data_max_[idx])/2:.1f}")
     # print("Prior Min/max:", scaler_x.data_min_[idx], scaler_x.data_max_[idx])
     # print("Prior mean of x:", idata_prior.prior["x"].mean())
     # print("Min/max:", idata_prior.prior["x"].min(), idata_prior.prior["x"].max())
-    #
     # print(f"True value={ref_vals[idx]:.0f}")
     # print(f"Prior parameter mean={idata_prior.prior.x.values.mean():.0f}")
     # print(f"Posterior parameter mean={idata.posterior.x.values.mean():.0f}")
     # print(f"Posterior scaled mean={idata.posterior.x_scaled.values[..., idx].mean():.2f}")
-    print(f"Posterior y_hat_scaled mean={idata.posterior.y_hat_scaled.values[..., 5].mean():.2f}")
-    print(f"Posterior y_hat mean={idata.posterior.y_hat.values[..., 5].mean():.2f}")
-    print(f"Observation y={y_obs[..., 5]:.2f}")
+    # print(f"Posterior y_hat_scaled mean={idata.posterior.y_hat_scaled.values[..., 5].mean():.2f}")
+    # print(f"Posterior y_hat mean={idata.posterior.y_hat.values[..., 5].mean():.2f}")
+    # print(f"Observation y={y_obs[..., 5]:.2f}")
+    # print(f"Sigma posterior mean={idata.posterior.sigma.values.mean()}")
+
+
+    from scipy.stats import norm
+    import matplotlib.pyplot as plt
+    def loglike(x):
+        x_full = np.concatenate((m[:idx], np.array([x]), m[idx:]))
+        x_scaled = ((x_full - scaler_x.data_min_) * scaler_x.scale_ - 1).squeeze()
+        y_hat_scaled = chebysev_forward_np(x_scaled, weights_np, basis).squeeze()
+        y_hat = 0.5 * (y_hat_scaled + 1) * (2 / scaler_y.scale_) + scaler_y.data_min_
+        sigma = 5
+        loglike = norm(loc=y_hat, scale=sigma).logpdf(y_obs).sum()
+        return loglike
+
+    grid = np.linspace(scaler_x.data_min_[idx], scaler_x.data_max_[idx], 100)
+    loglikes = [loglike(x) for x in grid]
+
+    fig = plt.figure()
+    plt.plot(grid, loglikes)
+    plt.axvline(ref_vals[idx], c="k")
+    plt.close()
+    fig.savefig('dummy.png')
+
+
+    # df = pd.DataFrame(
+    #     data=np.c_[scaler_x.data_min_, scaler_x.data_max_, scaler_x.scale_, m],
+    #     columns=["Min", "Max", "Scale", "True value"]
+    # )
+    # df["True value scaled"] = (df["True value"] - df["Min"]) * df["Scale"] - 1
+    # df.to_csv("dummy.csv", index=True)
 
 
 if __name__  == "__main__":

@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import pytensor
@@ -41,6 +42,17 @@ def chebysev_forward_pt(x, weights, basis):
     # h now contains the Chebyshev coefficients
     basis_pt = pt.constant(basis.astype("float32"))  # shape (degree+1, n_points)
     out = pt.dot(h, basis_pt)  # (batch, n_points)
+    return out
+
+
+def chebysev_forward_np(x, weights, basis):
+    h = x
+    for i, (W, b) in enumerate(weights):
+        h = np.dot(h, W.T) + b
+        if i < len(weights) - 1:
+            h = np.where(h > 0, h, 0)  # ReLU
+    # h now contains the Chebyshev coefficients
+    out = np.dot(h, basis)  # (batch, n_points)
     return out
 
 
