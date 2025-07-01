@@ -17,7 +17,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 class FoSCalculator:
 
-    def __init__(self, n_points, wall_props, model_path, posterior_path, scaler_x_path, scaler_y_path):
+    def __init__(self, n_points, wall_props, model_path, scaler_x_path, scaler_y_path, posterior_path=None, device=None):
 
         x = np.linspace(0, 10, n_points)
         x = np.cumsum(x)
@@ -30,6 +30,9 @@ class FoSCalculator:
             degree=10
         )
 
+        if device is not None:
+            self.model = self.model.to(device)
+
         self.model.load_state_dict(torch.load(model_path))
         self.model.eval()
 
@@ -39,8 +42,9 @@ class FoSCalculator:
         if not isinstance(scaler_y_path, Path): scaler_y_path = Path(Path(scaler_y_path).as_posix())
         self.scaler_y = joblib.load(scaler_y_path)
 
-        if not isinstance(posterior_path, Path): posterior_path = Path(Path(posterior_path).as_posix())
-        self.idata = az.from_netcdf(posterior_path)
+        if posterior_path is not None:
+            if not isinstance(posterior_path, Path): posterior_path = Path(Path(posterior_path).as_posix())
+            self.idata = az.from_netcdf(posterior_path)
 
         self.wall_props = wall_props
 
@@ -53,61 +57,32 @@ class FoSCalculator:
         y = self.scaler_y.inverse_transform(y_scaled)
         return y
 
-    def _curvature(self, displacements, dLs):
+    def displacement(self, x):
 
-        # u = displacements.copy() / 1_000
-        #
-        # padding = (
-        #     (0, 0),  # no padding on axis 0
-        #     (2, 2),  # pad two columns on axis 1 -> double derivative -> moments have the shape of displacements
-        # )
-        # displacements_padded = np.pad(displacements.copy(), pad_width=padding, mode='edge')
-        # dy2_dx2 = np.diff(displacements_padded, n=2, axis=-1)[..., 1:-1] / (dLs ** 2 + 1e-6)
+        with torch.no_grad():
+            displacements = self.model(x, return_coeffs=False)
+        curvatures = curvatures.detach().numpy()
 
-        # # TODO: Fix moment estimation using simple double derivative calculation
-        # x = np.cumsum(dLs)
-        # dy2_dx2 = np.zeros_like(displacements)
-        # for i, disp_chain in enumerate(displacements):
-        #     for j, disp_chain_sample in enumerate(disp_chain):
-        #         spline = UnivariateSpline(x, disp_chain_sample, s=1e-8)
-        #         dy2_dx2[i, j] = spline.derivative(n=2)(x)
+        return displacements
 
-        dx = 0.06
-        u = displacements.copy() / 1_000
-        curvature = np.zeros_like(u)
-        curvature[:, 2:-2] = (
-        -u[:, 0:-4] + 16 * u[:, 1:-3] - 30 * u[:, 2:-2] + 16 * u[:, 3:-1] - u[:, 4:]
-                             ) / (12 * dx ** 2 + 1e-6)
-
-        curvature[:, :2] = curvature[:, 2:3]  # replicate near-boundary values
-        curvature[:, -2:] = curvature[:, -3:-2]
-
-        curvature = savgol_filter(curvature, 11, 3, axis=1)
-
-        return curvature
-
-    def moments(self, displacements):
+    def moments(self, x):
 
         EI, _, wall_locs, monitoring_locs = self.wall_props
 
-        _, keep_idx = np.unique(wall_locs, return_index=True)
-        keep_idx = np.sort(keep_idx)
-        wall_locs = wall_locs[keep_idx]
-
-        dLs = np.abs(np.diff(wall_locs))
-        dLs = np.append(dLs[0], dLs)
-
-        dy2_dx2 = self._curvature(displacements, dLs)
-
-        moments = - EI * dy2_dx2  # Minus for proper sign in moment convention
+        with torch.no_grad():
+            coeffs = self.model(x, return_coeffs=True)
+        curvatures = coeffs @ self.model.basis_der
+        curvatures = curvatures.cpu().numpy()
+        curvatures /= (1_000)  # Convert [mm/m^2] displacements to [1/m].
+        moments = - EI * curvatures  # Minus for proper sign in moment convention
 
         return moments
 
-    def _fos(self, displacements, wall_props):
+    def fos(self, x):
 
-        _, moment_cap, _, _ = wall_props
+        _, moment_cap, _, _ = self.wall_props
 
-        moments = self.moments(displacements, wall_props)
+        moments = self.moments(x)
 
         fos = moment_cap / moments.max(axis=-1)
 
