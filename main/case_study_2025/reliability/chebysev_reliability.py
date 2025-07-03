@@ -23,9 +23,7 @@ else:
     print("⚠️ MPS and CUDA not available — using CPU")
 
 
-if __name__ == "__main__":
-
-    n_samples = int(os.environ.get("N_MCS", 100_000))
+def reliability(n_mcs=100_000, plot=True, fit=None):
 
     SCRIPT_DIR = Path(__file__).resolve().parent.parent
     chebysev_path = SCRIPT_DIR / "train/results/srg/chebysev/lr_1.0e-05_epochs_100000_fullprofile_True"
@@ -68,4 +66,9 @@ if __name__ == "__main__":
     np.save(result_path/f"fos_mcs_{n_samples}", fos)
 
     plot_fos_hist(fos, plot_path/f"fos_histogram_{n_samples}.png", modelfit="lognormal", ci_alpha=0.05)
+
+
+if __name__ == "__main__":
+
+    pass
 
