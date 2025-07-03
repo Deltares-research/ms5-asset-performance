@@ -5,7 +5,7 @@ source .venv_torch/bin/activate
 
 lr_exps=(-5)
 epochs=(100_000)
-fullprofile=false
+fullprofile=true
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="$SCRIPT_DIR/results/srg/torch"

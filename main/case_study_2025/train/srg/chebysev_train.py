@@ -33,9 +33,7 @@ def make_chebyshev_basis(x, degree=10):
 
 
 def make_chebyshev_basis_second_derivative(x, degree):
-    x_min = x.min()
-    x_max = x.max()
-    x_scaled = 2 * (x - x_min) / (x_max - x_min) - 1  # Scaled to [-1, 1]
+    x_scaled = 2 * (x - x.min()) / (x.max() - x.min()) - 1
     T = np.polynomial.chebyshev.chebvander(x_scaled, degree)
 
     T_dd = np.zeros_like(T)
@@ -46,7 +44,7 @@ def make_chebyshev_basis_second_derivative(x, degree):
         T_dd[:, k] = np.polynomial.chebyshev.chebval(x_scaled, d2T_coefs)
 
     # Rescale derivatives from d²/d(𝑥̃)² to d²/dx²
-    dx_dxtilde_sq = (2 / (x_max - x_min)) ** 2
+    dx_dxtilde_sq = (2 / (x.max() - x.min())) ** 2
     T_dd_rescaled = T_dd * dx_dxtilde_sq
 
     return T_dd_rescaled
@@ -86,6 +84,10 @@ def train(epochs: int = 1_000, lr: float = 1e-4, full_profile: bool = False, qui
 
     data_dir = base_dir.parent / "data"
     data_path = data_dir / "srg_data_20250604_100638.csv"
+    if full_profile:
+        z_path = base_dir.parent.parent / "data/setting/z.json"
+    else:
+        z_path = base_dir.parent.parent / "data/setting/z_monitoring.json"
 
     output_path = base_dir.parent / f"results/srg/chebysev/lr_{lr:.1e}_epochs_{epochs:d}_fullprofile_{full_profile}"
     output_path.mkdir(parents=True, exist_ok=True)
@@ -110,13 +112,12 @@ def train(epochs: int = 1_000, lr: float = 1e-4, full_profile: bool = False, qui
         device = torch.device("cpu")
         print("⚠️ MPS and CUDA not available — using CPU")
 
-    x = np.linspace(0, 10, y.shape[-1])
-    x = np.cumsum(x)
+    with open(z_path, "r") as f: z = np.array(json.load(f))
 
     model = Chebysev(
         input_dim=X.shape[-1],
         hidden_dims=[1024, 512, 256, 128, 64, 32],
-        x=x,
+        x=z,
         degree=10
     ).to(device)
 

@@ -1,5 +1,6 @@
 import numpy as np
 from numpy.typing import NDArray
+from scipy.stats import truncnorm
 from typing import List, Tuple, Dict, Optional, Type, NamedTuple
 from dataclasses import dataclass
 
@@ -21,13 +22,26 @@ class CorrosionModel:
         self.corrosion_rate = corrosion_rate
         self.start_thickness = start_thickness
 
-    def corrosion_model_params(self, C50: float=1.5):
+    def corrosion_model_params(self, times, C50: float=1.5):
+        if isinstance(C50, float):
+            C50 = np.array([C50])
         C50 = C50[..., np.newaxis]
         mu = C50 * (1 + self.corrosion_rate / 1.5 * (times - 50))
         scale = mu * 0.5
         lower_trunc = (0 - mu) / scale
         upper_trunc = (self.start_thickness - mu) / scale
         return mu, scale, lower_trunc, upper_trunc
+
+    def corrosion_distribution(self, t: NDArray[np.float32], C50: float=1.5) -> NDArray[np.float32]:
+        """
+        Distribution of corrosion x at time t for rate C50 according to EC model.
+        :t: Time
+        :param: Mean of corrosion distribution (as a function of time)
+        :return:
+        """
+        mu, scale, lower_trunc, upper_trunc = self.corrosion_model_params(t, C50)
+        corrosion_dist = truncnorm(loc=mu, scale=scale, a=lower_trunc, b=upper_trunc)
+        return corrosion_dist
 
     def prob(self, x: NDArray[np.float32], t: NDArray[np.float32], C50: float=1.5) -> NDArray[np.float32]:
         """

@@ -51,6 +51,7 @@ if __name__ == "__main__":
             "true_params": true_params,
             "time_params": time_params,
             "z": z,
+            "z_monitoring": z,
             "deformations": deformations,
             "deformations_monitoring": [d for i, d in enumerate(deformations) if i in monitoring_locs],
             "moments": moments,

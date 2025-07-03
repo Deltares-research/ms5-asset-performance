@@ -2,7 +2,36 @@ import numpy as np
 import torch
 from scipy import stats
 from pathlib import Path
+import json
 import matplotlib.pyplot as plt
+from main.case_study_2025.reliability.moment_calculation.chebysev_moments import FoSCalculator as ChebysevFoS
+
+if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+    device = torch.device("mps")
+elif torch.cuda.is_available():
+    device = torch.device("cuda")
+else:
+    device = torch.device("cpu")
+
+
+def load_chebysev_calculator(path, x_path):
+
+    with open(x_path, "r") as f: x = np.array(json.load(f))
+
+    n_points = len(x)
+    wall_props = (1e+4, 0, x, None)
+
+    fos_calculator = ChebysevFoS(
+        n_points=n_points,
+        wall_props=wall_props,
+        x=x,
+        model_path=path / "torch_weights.pth",
+        scaler_x_path=path / "scaler_x.joblib",
+        scaler_y_path=path / "scaler_y.joblib",
+        device=device
+    )
+
+    return fos_calculator
 
 
 def plot_errorbar(x, xerr, y, color="b", whiskersize=0.1):

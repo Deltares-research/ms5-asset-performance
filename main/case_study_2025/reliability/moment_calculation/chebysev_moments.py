@@ -17,10 +17,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 class FoSCalculator:
 
-    def __init__(self, n_points, wall_props, model_path, scaler_x_path, scaler_y_path, posterior_path=None, device=None):
-
-        x = np.linspace(0, 10, n_points)
-        x = np.cumsum(x)
+    def __init__(self, n_points, wall_props, model_path, scaler_x_path, scaler_y_path, x, posterior_path=None, device=None):
 
         if not isinstance(model_path, Path): model_path = Path(Path(model_path).as_posix())
         self.model = Chebysev(
