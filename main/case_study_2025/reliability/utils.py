@@ -5,6 +5,8 @@ from pathlib import Path
 import json
 import matplotlib.pyplot as plt
 from main.case_study_2025.reliability.moment_calculation.chebysev_moments import FoSCalculator as ChebysevFoS
+from main.case_study_2025.reliability.chebysev_reliability import moment_mcs
+
 
 if torch.backends.mps.is_available() and torch.backends.mps.is_built():
     device = torch.device("mps")
@@ -32,6 +34,42 @@ def load_chebysev_calculator(path, x_path):
     )
 
     return fos_calculator
+
+
+def C50_pf(
+        C50,
+        time,
+        corrosion_model,
+        fos_calculator,
+        n_mcs,
+        start_thickness,
+        moment_cap_start,
+        EI_start,
+        water_lvl,
+        mcs_samples_path,
+        moment_survived
+):
+
+    corrosion_dist = corrosion_model.corrosion_distribution(time, C50=C50)
+    np.random.seed(42)
+    corrosion_sample = corrosion_dist.rvs(n_mcs)
+    corrosion_ratio_sample = corrosion_sample / start_thickness
+    EI_sample = EI_start * (1 - corrosion_ratio_sample)
+    moment_cap_sample = moment_cap_start * (1 - corrosion_ratio_sample)
+
+    moment_sample = moment_mcs(
+        fos_calculator,
+        mcs_samples_path,
+        water_lvl,
+        EI_sample,
+        n_mcs=100_000
+    )
+
+    fos = moment_cap_sample / moment_sample
+    fos = fos[moment_cap_sample >= moment_survived]
+    pf = np.mean(fos >= 1)
+
+    return pf
 
 
 def plot_errorbar(x, xerr, y, color="b", whiskersize=0.1):

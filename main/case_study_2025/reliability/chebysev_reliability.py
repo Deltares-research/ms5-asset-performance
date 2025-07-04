@@ -20,45 +20,39 @@ else:
     print("⚠️ MPS and CUDA not available — using CPU")
 
 
-def reliability(
+def moment_mcs(
         fos_calculator,
         mcs_samples_path,
         water_lvl,
         EI,
-        n_mcs=100_000,
-        plot=True,
-        fit=None
+        n_mcs=100_000
 ):
 
-    result_path = SCRIPT_DIR / f"results/mcs/fos_sample"
-    result_path.mkdir(parents=True, exist_ok=True)
-
-    plot_path = SCRIPT_DIR / f"results/mcs/plots"
-    plot_path.mkdir(parents=True, exist_ok=True)
-
-    if isinstance(water_lvl, float):
+    if isinstance(water_lvl, float) or isinstance(water_lvl, int):
         water_lvl = np.repeat(water_lvl, n_mcs)
 
-    if isinstance(EI, float):
+    if isinstance(EI, float) or isinstance(EI, int):
         EI = np.repeat(EI, n_mcs)
 
     mcs_samples = np.load(mcs_samples_path)
+    mcs_samples = mcs_samples[:n_mcs]
     mcs_samples = mcs_samples[:, :-1]  # Remove EI column
     mcs_samples = np.column_stack((mcs_samples, EI, water_lvl))
     mcs_samples_torch = torch.from_numpy(mcs_samples.astype(np.float32)).to(device=device)
-    mcs_samples_torch = mcs_samples_torch[:n_samples]
 
     dataset = TensorDataset(mcs_samples_torch)
     loader = DataLoader(dataset, batch_size=1_000, shuffle=True)
 
-    fos = []
-    for (x,) in tqdm(loader):
-        f = fos_calculator.fos(x)
-        fos.append(f)
-    fos = np.stack(fos).flatten()
-    np.save(result_path/f"fos_mcs_{n_samples}", fos)
+    moments = []
+    for (x,) in loader:
+        m = fos_calculator.moments(x)
+        moments.append(m)
+    moments = np.stack(moments)
+    moments = moments.reshape(-1, moments.shape[-1])
 
-    plot_fos_hist(fos, plot_path/f"fos_histogram_{n_samples}.png", modelfit="lognormal", ci_alpha=0.05)
+    max_moments = np.abs(moments).max(axis=1)
+
+    return max_moments
 
 
 if __name__ == "__main__":

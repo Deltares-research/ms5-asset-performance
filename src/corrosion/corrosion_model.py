@@ -1,6 +1,6 @@
 import numpy as np
 from numpy.typing import NDArray
-from scipy.stats import truncnorm
+from scipy.stats import truncnorm, norm
 from typing import List, Tuple, Dict, Optional, Type, NamedTuple
 from dataclasses import dataclass
 
@@ -18,9 +18,17 @@ class CorrosionModel:
     "param" is the mean of corrosion distribution (as a function of time).
     """
 
-    def __init__(self, corrosion_rate: float = 0.022, start_thickness: float = 9.5) -> None:
+    def __init__(
+            self,
+            corrosion_rate: float = 0.022,
+            start_thickness: float = 9.5,
+            C50_mu: float = 1.5,
+            obs_error_std: float = .1
+    ) -> None:
         self.corrosion_rate = corrosion_rate
         self.start_thickness = start_thickness
+        self.C50_mu = C50_mu
+        self.obs_error_std = obs_error_std
 
     def corrosion_model_params(self, times, C50: float=1.5):
         if isinstance(C50, float):
@@ -82,69 +90,37 @@ class CorrosionModel:
 
         return obs.squeeze()
 
-    # def bayesian_updating(self, obs: OBS, obs_times: OBS_TIME, forecast: bool = False) -> POST_PDF:
-    #     """
-    #     Corrosion observations over a timeline are fully correlated -> there is only one truly random variable for
-    #     for generating observations: C50 -> There is one truly random observation
-    #
-    #     Observation uncertainty is added in observation generation to allow for meaningful Bayesian updating.
-    #
-    #     :param obs:
-    #     :param obs_times:
-    #     :return:
-    #     """
-    #
-    #     log_prior = np.log(self.config.C50_prior_pdf)
-    #
-    #     C50 = self.config.C50_grid
-    #     C50 = C50[:, np.newaxis, np.newaxis, np.newaxis]
-    #
-    #     obs_times = obs_times[np.newaxis, :, np.newaxis, np.newaxis]
-    #
-    #     C_mu = C50 * (1 + self.config.corrosion_rate / self.config.C50_mu * (obs_times - 50))
-    #     C_deviations = (obs - C_mu) / self.config.obs_error_std
-    #     C_deviations = C_deviations.squeeze()
-    #     C_deviations = np.concatenate((C_deviations[:, 0, ...][:, np.newaxis, ...], np.diff(C_deviations, axis=1)),
-    #                                   axis=1)
-    #
-    #     loglikes = norm(loc=0, scale=1).logpdf(C_deviations)
-    #
-    #     if not forecast:
-    #
-    #         loglike = loglikes.sum(axis=1)
-    #
-    #         log_post = log_prior[..., np.newaxis, np.newaxis] + loglike
-    #         post = np.exp(log_post)
-    #         post /= trapz(post, self.config.C50_grid, axis=0)[np.newaxis, ...]
-    #
-    #     else:
-    #
-    #         loglike = loglikes.cumsum(axis=1)
-    #
-    #         log_post = log_prior[..., np.newaxis, np.newaxis, np.newaxis] + loglike
-    #         post = np.exp(log_post)
-    #         post /= trapz(post, self.config.C50_grid, axis=0)[np.newaxis, ...]
-    #
-    #     """To xarray"""
-    #     if self.to_xarray:
-    #         if not forecast:
-    #             coords = dict(
-    #                 C50_grid=self.config.C50_grid,
-    #                 mc=np.arange(1, obs.shape[1] + 1),
-    #                 C50=np.arange(1, obs.shape[2] + 1)
-    #             )
-    #             post = xr.DataArray(data=post, dims=['C50_grid', 'mc', 'C50'], coords=coords)
-    #         else:
-    #             coords = dict(
-    #                 C50_grid=self.config.C50_grid,
-    #                 obs_time=obs_times,
-    #                 mc=np.arange(1, obs.shape[1] + 1),
-    #                 C50=np.arange(1, obs.shape[2] + 1)
-    #             )
-    #             post = xr.DataArray(data=post, dims=['C50_grid', 'obs_times', 'mc', 'C50'], coords=coords)
-    #
-    #     return post
+    def bayesian_updating(self, obs, obs_times, C50_prior_pdf, C50_grid):
+        """
+        Corrosion observations over a timeline are fully correlated -> there is only one truly random variable for
+        generating observations: C50 -> There is one truly random observation
 
+        Observation uncertainty is added in observation generation to allow for meaningful Bayesian updating.
+
+        :param obs:
+        :param obs_times:
+        :return:
+        """
+
+        log_prior = np.log(C50_prior_pdf)
+
+        C50_grid = C50_grid[:, np.newaxis]
+
+        obs_times = obs_times[np.newaxis, :]
+
+        C_mu = C50_grid * (1 + self.corrosion_rate / self.C50_mu * (obs_times - 50))
+        C_deviations = (obs - C_mu) / self.obs_error_std
+        C_deviations = np.concatenate((C_deviations[:, 0][:, np.newaxis], np.diff(C_deviations, axis=1)), axis=1)
+
+        loglikes = norm(loc=0, scale=1).logpdf(C_deviations)
+
+        loglike = loglikes.sum(axis=1)
+
+        log_post = log_prior + loglike
+        post = np.exp(log_post)
+        post /= np.trapezoid(post, C50_grid.squeeze())
+
+        return post
 
 
 if __name__ == "__main__":
