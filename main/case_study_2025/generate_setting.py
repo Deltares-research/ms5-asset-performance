@@ -27,7 +27,7 @@ if __name__ == "__main__":
     df = pd.read_csv(r"data/true_params.csv", index_col="parameter")
     true_params = df["value"].to_dict()
 
-    times = list(range(0, 31))
+    times = [50 + time for time in range(0, 31)]
     corossion_model = CorrosionModel()
     corrosions = corossion_model.generate_observations(np.array(times), seed=42)
 
@@ -43,8 +43,8 @@ if __name__ == "__main__":
         time_params = deepcopy(true_params)
         time_params["Wall_SheetPilingElementEI"] = EI_corroded
         deformations, moments, z = run_model(time_params, geomodel)
-        data[time] = {
-            "time": time,
+        data[float(time)] = {
+            "time": float(time),
             "corrosion": corrosion,
             "corrosion_ratio": corrosion_ratio,
             "EI_corroded": EI_corroded,

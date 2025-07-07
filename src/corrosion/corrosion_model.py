@@ -20,15 +20,25 @@ class CorrosionModel:
 
     def __init__(
             self,
+            n_grid: int = 100,
             corrosion_rate: float = 0.022,
             start_thickness: float = 9.5,
             C50_mu: float = 1.5,
+            C50_std: float = 1.5 * 0.5,
             obs_error_std: float = .1
     ) -> None:
         self.corrosion_rate = corrosion_rate
         self.start_thickness = start_thickness
         self.C50_mu = C50_mu
+        self.C50_std = C50_std
         self.obs_error_std = obs_error_std
+        self.C50_grid = np.linspace(.5, 2.5, n_grid)
+        self.C50_prior = truncnorm(
+            loc=self.C50_mu,
+            scale=self.C50_std,
+            a=(self.C50_grid.min()-self.C50_mu)/self.C50_std,
+            b=(self.C50_grid.max()-self.C50_mu)/self.C50_std
+        ).pdf(self.C50_grid)
 
     def corrosion_model_params(self, times, C50: float=1.5):
         if isinstance(C50, float):

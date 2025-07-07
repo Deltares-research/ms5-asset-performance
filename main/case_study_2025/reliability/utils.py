@@ -1,11 +1,15 @@
 import numpy as np
 import torch
+from torch.utils.data import DataLoader, TensorDataset
 from scipy import stats
 from pathlib import Path
 import json
-import matplotlib.pyplot as plt
+from copy import deepcopy
 from main.case_study_2025.reliability.moment_calculation.chebysev_moments import FoSCalculator as ChebysevFoS
 from main.case_study_2025.reliability.chebysev_reliability import moment_mcs
+from dataclasses import dataclass, field, asdict
+from typing import Type, Optional
+import matplotlib.pyplot as plt
 
 
 if torch.backends.mps.is_available() and torch.backends.mps.is_built():
@@ -14,6 +18,190 @@ elif torch.cuda.is_available():
     device = torch.device("cuda")
 else:
     device = torch.device("cpu")
+
+
+@dataclass
+class TimelineParameters:
+    setting: dict
+    n_mcs: int = 100_000
+    start_thickness: float = 9.5
+    EI_start: float = 30_000.
+    moment_cap_start: float = 30.
+    moment_survived: float = 0.
+    water_lvl: float = -1.
+    water_lvl: float = -1.
+    C50_mu: float = 1.5
+    corrosion_rate: float = 0.022
+    obs_error_std: float = .1
+    times: list = field(init=False)
+
+    def __post_init__(self):
+        self.times = [float(time) for time in self.setting.keys()]
+
+
+@dataclass
+class TimelineRunner:
+    time: float = 0.
+    timestep: int = -1
+    start_thickness: float = 9.5
+    EI_start: float = 30_000.
+    moment_cap_start: float = 30.
+    moment_survived: float = 0.
+    water_lvl: float = -1.
+    C50_grid: list = None
+    C50_prior: list = None
+    C50_posterior: Optional[list] = None
+    moment_cap: float = field(init=False)
+    corrosion_obs_times: list = field(init=False)
+    corrosion_obs: list = field(init=False)
+
+    def time_step(self, time):
+        self.timestep += 1
+        self.time = time
+
+    def update_moment_cap(self, data):
+        moment_survived = max(self.moment_survived, data["max_moment"])
+        moment_cap = max(moment_survived, self.moment_cap_start)
+        self.moment_survived = moment_survived
+        self.moment_cap = moment_cap
+
+    def read_corrosion_data(self, corrosion_obs_times, corrosion_obs):
+        self.corrosion_obs_times = corrosion_obs_times.tolist()
+        self.corrosion_obs = corrosion_obs.tolist()
+
+    def update_C50(self, C50_mu, corrosion_rate, obs_error_std):
+
+        log_prior = np.log(self.C50_prior)
+
+        C50_grid = np.array(self.C50_grid)[:, np.newaxis]
+
+        corrosion_obs_times = np.array(self.corrosion_obs_times)[np.newaxis, :]
+        corrosion_obs = np.array(self.corrosion_obs)
+
+        C_mu = C50_grid * (1 + corrosion_rate / C50_mu * (corrosion_obs_times - 50))
+        C_deviations = (corrosion_obs - C_mu) / obs_error_std
+        C_deviations = np.concatenate((C_deviations[:, 0][:, np.newaxis], np.diff(C_deviations, axis=1)), axis=1)
+
+        loglikes = stats.norm(loc=0, scale=1).logpdf(C_deviations)
+
+        loglike = loglikes.sum(axis=1)
+
+        log_post = log_prior + loglike
+        post = np.exp(log_post)
+        post /= np.trapezoid(post, C50_grid.squeeze())
+
+        self.C50_posterior = post.tolist()
+
+    def step(self, time, params):
+
+        self.time_step(time)
+
+        self.update_moment_cap(params.setting[time])
+
+        corrosion_obs_times, corrosion_obs = collect_corrosion_data(time, params.setting)
+        self.read_corrosion_data(corrosion_obs_times, corrosion_obs)
+
+        self.update_C50(
+            C50_mu=params.C50_mu,
+            corrosion_rate=params.corrosion_rate,
+            obs_error_std=params.obs_error_std
+        )
+
+    def finish_step(self):
+        self.C50_prior = deepcopy(self.C50_posterior)
+
+    def log(self, path):
+        if not isinstance(path, Path): path = Path(path)
+        runner_dict = asdict(self)
+        with open(path/f"runnerlog_time_{self.time:.0f}.json", "w") as f:
+            json.dump(runner_dict, f, indent=4)
+
+
+def collect_corrosion_data(time, data):
+    corrosion_obs_times = np.array([float(key) for key in data.keys() if float(key) <= time])
+    corrosion_obs = np.array([val["corrosion"] for (key, val) in data.items() if float(key) <= time])
+    return corrosion_obs_times, corrosion_obs
+
+
+class PfCalculator:
+    def __init__(self, C50_grid, params, corrosion_model, fos_calculator, mcs_samples_path):
+        self.C50_grid = np.asarray(C50_grid)
+        self.params = params
+        self.corrosion_model = corrosion_model
+        self.fos_calculator = fos_calculator
+        self.n_mcs = self.params.n_mcs
+        self.load_data(mcs_samples_path)
+        self.corrosion_ratio_sample = self.sample_corrosion_ratios(self.C50_grid, self.params.times)
+
+    def sample_corrosion_ratios(self, C50, times):
+
+        C50 = np.array(C50)
+        times = np.array(times)
+
+        mu, scale, lower_trunc, upper_trunc = self.corrosion_model.corrosion_model_params(times, C50)
+        mu = np.expand_dims(mu, axis=-1)
+        scale = np.expand_dims(scale, axis=-1)
+        lower_trunc = np.expand_dims(lower_trunc, axis=-1)
+        upper_trunc = np.expand_dims(upper_trunc, axis=-1)
+        corrosion_dist = stats.truncnorm(loc=mu, scale=scale, a=lower_trunc, b=upper_trunc)
+
+        np.random.seed(42)
+        corrosion_sample = corrosion_dist.rvs(size=(C50.size, times.size, self.n_mcs))
+        corrosion_ratio_sample = corrosion_sample / self.params.start_thickness
+
+        return  corrosion_ratio_sample
+
+    def load_data(self, path):
+        mcs_samples = np.load(path)
+        mcs_samples = mcs_samples[:self.n_mcs]
+        mcs_samples = mcs_samples[:, :-1]  # Remove EI column
+        self.mcs_samples_torch = torch.from_numpy(mcs_samples.astype(np.float32)).to(device=device)
+
+    def moment_mcs(self, water_lvl, EI):
+
+        samples = torch.column_stack((
+            self.mcs_samples_torch,
+            torch.from_numpy(EI.astype(np.float32)).to(device=device),
+            torch.from_numpy(water_lvl.astype(np.float32)).to(device=device)
+        ))
+
+        dataset = TensorDataset(samples)
+        loader = DataLoader(dataset, batch_size=1_000, shuffle=True)
+
+        max_moments = []
+        for (x,) in loader:
+            moments = self.fos_calculator.moments(x)
+            max_moments.append(np.abs(moments).max(axis=-1))
+
+        max_moments = np.concatenate(max_moments)
+
+        return max_moments
+
+    def calculate_max_moments_C50(self, C50, runner):
+
+        C50_idx = np.where(self.C50_grid==C50)[0].item()
+
+        corrosion_ratio_sample = self.corrosion_ratio_sample[C50_idx, runner.timestep]
+
+        EI_sample = self.params.EI_start * (1 - corrosion_ratio_sample)
+
+        water_lvl_sample = np.array([self.params.water_lvl] * self.params.n_mcs)
+
+        max_moment_sample = self.moment_mcs(water_lvl_sample, EI_sample)
+
+        return max_moment_sample
+
+    def calculate_max_moments(self, runner):
+
+        max_moments = np.zeros((np.array(self.C50_grid).size, self.n_mcs))
+
+        for i, C50 in enumerate(self.C50_grid):
+
+            mm = self.calculate_max_moments_C50(C50, runner)
+
+            max_moments[i] = mm
+
+        return max_moments
 
 
 def load_chebysev_calculator(path, x_path):
@@ -34,42 +222,6 @@ def load_chebysev_calculator(path, x_path):
     )
 
     return fos_calculator
-
-
-def C50_pf(
-        C50,
-        time,
-        corrosion_model,
-        fos_calculator,
-        n_mcs,
-        start_thickness,
-        moment_cap_start,
-        EI_start,
-        water_lvl,
-        mcs_samples_path,
-        moment_survived
-):
-
-    corrosion_dist = corrosion_model.corrosion_distribution(time, C50=C50)
-    np.random.seed(42)
-    corrosion_sample = corrosion_dist.rvs(n_mcs)
-    corrosion_ratio_sample = corrosion_sample / start_thickness
-    EI_sample = EI_start * (1 - corrosion_ratio_sample)
-    moment_cap_sample = moment_cap_start * (1 - corrosion_ratio_sample)
-
-    moment_sample = moment_mcs(
-        fos_calculator,
-        mcs_samples_path,
-        water_lvl,
-        EI_sample,
-        n_mcs=100_000
-    )
-
-    fos = moment_cap_sample / moment_sample
-    fos = fos[moment_cap_sample >= moment_survived]
-    pf = np.mean(fos >= 1)
-
-    return pf
 
 
 def plot_errorbar(x, xerr, y, color="b", whiskersize=0.1):
