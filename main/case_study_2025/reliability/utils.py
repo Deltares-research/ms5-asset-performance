@@ -10,6 +10,7 @@ from main.case_study_2025.reliability.chebysev_reliability import moment_mcs
 from dataclasses import dataclass, field, asdict
 from typing import Type, Optional
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 
 if torch.backends.mps.is_available() and torch.backends.mps.is_built():
@@ -48,12 +49,18 @@ class TimelineRunner:
     moment_cap_start: float = 30.
     moment_survived: float = 0.
     water_lvl: float = -1.
+    corrosion_rate: float = 0.022
+    corrosion_ratio_grid: list = None
+    corrosion_ratio_pdf: list = None
     C50_grid: list = None
     C50_prior: list = None
     C50_posterior: Optional[list] = None
     moment_cap: float = field(init=False)
     corrosion_obs_times: list = field(init=False)
     corrosion_obs: list = field(init=False)
+
+    def __post_init__(self):
+        self.corrosion_ratio_pdf = self.update_corrosion_ratio_pdf(C50_pdf_type="prior")
 
     def time_step(self, time):
         self.timestep += 1
@@ -92,6 +99,37 @@ class TimelineRunner:
 
         self.C50_posterior = post.tolist()
 
+    def update_corrosion_ratio_pdf(self, C50_pdf_type="posterior", times=None):
+
+        if times is None: times = self.time
+        if isinstance(times, float): times = np.array([times])
+        if isinstance(times, list): times = np.array(times)
+
+        if C50_pdf_type == "prior":
+            C50_pdf = np.array(self.C50_prior)
+        elif C50_pdf_type == "prior":
+            C50_pdf = np.array(self.C50_posterior)
+
+        times = np.array([50, 55])
+
+        C50_grid = np.array(self.C50_grid)[..., np.newaxis, np.newaxis]
+        times = times[np.newaxis, ..., np.newaxis]
+
+        mu = C50_grid * (1 + self.corrosion_rate / 1.5 * (times - 50))
+        scale = mu * 0.5
+        lower_trunc = (0 - mu) / scale
+        upper_trunc = (self.start_thickness - mu) / scale
+
+        corrosion_grid = np.array(self.corrosion_ratio_grid) * self.start_thickness
+        corrosion_pdf = stats.truncnorm(loc=mu, scale=scale, a=lower_trunc, b=upper_trunc).pdf(corrosion_grid)
+        corrosion_pdf *= 1 / (1 / self.start_thickness)  # Scaling of PDF between corrosion and corrosion rate
+
+        # Integrate out C50
+        corrosion_pdf *= C50_pdf[:, np.newaxis, np.newaxis]
+        corrosion_pdf = np.trapz(corrosion_pdf, self.C50_grid, axis=0)
+
+        return corrosion_pdf.tolist()
+
     def step(self, time, params):
 
         self.time_step(time)
@@ -124,14 +162,13 @@ def collect_corrosion_data(time, data):
 
 
 class PfCalculator:
-    def __init__(self, C50_grid, params, corrosion_model, fos_calculator, mcs_samples_path):
-        self.C50_grid = np.asarray(C50_grid)
+    def __init__(self, n_grid, params, corrosion_model, fos_calculator, mcs_samples_path):
+        self.corrosion_ratio_grid = np.linspace(0, 1, n_grid)
         self.params = params
         self.corrosion_model = corrosion_model
         self.fos_calculator = fos_calculator
         self.n_mcs = self.params.n_mcs
         self.load_data(mcs_samples_path)
-        self.corrosion_ratio_sample = self.sample_corrosion_ratios(self.C50_grid, self.params.times)
 
     def sample_corrosion_ratios(self, C50, times):
 
@@ -177,13 +214,11 @@ class PfCalculator:
 
         return max_moments
 
-    def calculate_max_moments_C50(self, C50, runner):
+    def calculate_max_moments_corrosion_ratio(self, corrosion_ratio):
 
-        C50_idx = np.where(self.C50_grid==C50)[0].item()
+        EI = self.params.EI_start * (1 - corrosion_ratio)
 
-        corrosion_ratio_sample = self.corrosion_ratio_sample[C50_idx, runner.timestep]
-
-        EI_sample = self.params.EI_start * (1 - corrosion_ratio_sample)
+        EI_sample = np.array([EI] * self.params.n_mcs)
 
         water_lvl_sample = np.array([self.params.water_lvl] * self.params.n_mcs)
 
@@ -191,17 +226,32 @@ class PfCalculator:
 
         return max_moment_sample
 
-    def calculate_max_moments(self, runner):
+    def calculate_max_moments(self, path):
 
-        max_moments = np.zeros((np.array(self.C50_grid).size, self.n_mcs))
+        if not isinstance(path, Path): path = Path(path)
 
-        for i, C50 in enumerate(self.C50_grid):
+        cache_path = path / "cache"
+        cache_path.mkdir(parents=True, exist_ok=True)
 
-            mm = self.calculate_max_moments_C50(C50, runner)
+        cached = any(cache_path.iterdir())
 
-            max_moments[i] = mm
+        if cached:
 
-        return max_moments
+            max_moments = np.load(cache_path/"mcs_moment_cache.npy")
+
+        else:
+
+            max_moments = np.zeros((np.array(self.corrosion_ratio_grid).size, self.n_mcs))
+
+            for i, corrosion_ratio in enumerate(tqdm(self.corrosion_ratio_grid)):
+
+                mm = self.calculate_max_moments_corrosion_ratio(corrosion_ratio)
+
+                max_moments[i] = mm
+
+            np.save(cache_path/"mcs_moment_cache.npy", max_moments)
+
+        self.max_moments = max_moments
 
 
 def load_chebysev_calculator(path, x_path):

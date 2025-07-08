@@ -26,24 +26,29 @@ if __name__ == "__main__":
     params = TimelineParameters(setting=setting_data)
 
     corrosion_model = CorrosionModel(
-        n_grid=10,
+        n_grid=100,
         C50_mu=params.C50_mu,
         corrosion_rate=params.corrosion_rate,
         obs_error_std=params.obs_error_std,
         start_thickness=params.start_thickness
     )
 
+    pf_calculator = PfCalculator(1_000, params, corrosion_model, fos_calculator, mcs_samples_path)
+
+    pf_calculator.calculate_max_moments(results_path)
+
     runner = TimelineRunner(
+        time=params.times[0],
         start_thickness = params.start_thickness,
         EI_start = params.EI_start,
         moment_cap_start = params.moment_cap_start,
         moment_survived = params.moment_survived,
         water_lvl = params.water_lvl,
+        corrosion_rate = params.corrosion_rate,
+        corrosion_ratio_grid=pf_calculator.corrosion_ratio_grid.tolist(),
         C50_grid=corrosion_model.C50_grid.tolist(),
         C50_prior=corrosion_model.C50_prior.tolist()
     )
-
-    pf_calculator = PfCalculator(runner.C50_grid, params, corrosion_model, fos_calculator, mcs_samples_path)
 
     results = {}
     for time, data in tqdm(params.setting.items(), desc="Running time step"):
@@ -54,9 +59,9 @@ if __name__ == "__main__":
 
         runner.step(time, params)
 
-        runner.log(results_path)
+        runner.update_corrosion_ratio_pdf()
 
-        max_moments = pf_calculator.calculate_max_moments(runner)
+        runner.log(results_path)
 
         pfs_all = []
         for cap_type in ["theoretical", "survived"]:
