@@ -45,19 +45,19 @@ class TimelineRunner:
     time: float = 0.
     timestep: int = -1
     start_thickness: float = 9.5
-    EI_start: float = 30_000.
     moment_cap_start: float = 30.
     time_survived: float = 0.
     moment_survived: float = 0.
     water_lvl: float = -1.
     corrosion_rate: float = 0.022
+    obs_error_std: float = .1
     corrosion_ratio_grid: list = None
     C50_grid: list = None
     C50_prior: list = None
     C50_posterior: Optional[list] = None
     corrosion_obs_times: list = field(init=False)
     corrosion_obs: list = field(init=False)
-    obs_error_std: float = .1
+    pfs: dict = field(init=False)
 
     def time_step(self, time):
         self.timestep += 1
@@ -150,6 +150,8 @@ class TimelineRunner:
         with open(path/f"time_{self.time:.0f}.json", "w") as f:
             json.dump(runner_dict, f, indent=4)
 
+    def read_pfs(self, pfs):
+        self.pfs = pfs
 
 def collect_corrosion_data(time, data):
     corrosion_obs_times = np.array([float(key) for key in data.keys() if float(key) <= time])
@@ -254,6 +256,54 @@ class PfCalculator:
         fos = moment_cap[:, np.newaxis] / self.max_moments
         pf_mcs = np.mean(fos < 1, axis=-1)
         return np.trapezoid(pf_mcs * corrosion_ratio_pdf, corrosion_ratio_grid, axis=-1)
+
+    def get_pfs(self, params, runner):
+
+        time = runner.time
+
+        times = [iter_time for iter_time in params.times if iter_time >= time]
+
+        corrosion_ratio_prior = runner.update_corrosion_ratio_pdf("prior", times)
+        corrosion_ratio_posterior = runner.update_corrosion_ratio_pdf("posterior", times)
+
+        pfs = {}
+        for cap_type in ["theoretical", "survived"]:
+
+            pfs[cap_type] = {}
+            for pdf_type in ["prior", "posterior"]:
+
+                if cap_type == "theoretical":
+                    moment_cap_actual = runner.moment_cap_start
+                elif cap_type == "survived":
+                    if runner.moment_survived > runner.moment_cap_start:
+                        moment_cap_actual = runner.moment_survived
+                        time_survived = runner.time_survived
+                    else:
+                        continue
+
+                moment_cap = moment_cap_actual * (1 - np.array(runner.corrosion_ratio_grid))
+                # TODO: moment cap corrosion when survived
+
+                if pdf_type == "prior":
+                    corrosion_ratio_pdf = corrosion_ratio_prior.copy()
+                elif pdf_type == "posterior":
+                    corrosion_ratio_pdf = corrosion_ratio_posterior.copy()
+
+                pf = self.get_pf(moment_cap, corrosion_ratio_prior, runner.corrosion_ratio_grid)
+                beta = stats.norm.ppf(1 - pf)
+
+                pfs[cap_type][pdf_type] = {
+                    "moment_cap_type": cap_type,
+                    "C50_dist_type": pdf_type,
+                    "moment_cap": moment_cap_actual,
+                    "corrosion_ratio_pdf": corrosion_ratio_pdf.tolist(),
+                    "pf_current": pf[0],
+                    "beta_current": beta[0],
+                    "pf_forecast": {time: p for (time, p) in zip(times, pf.tolist())},
+                    "beta_forecast": {time: b for (time, b) in zip(times, beta.tolist())},
+                }
+
+                return pfs
 
 
 def load_chebysev_calculator(path, x_path):
