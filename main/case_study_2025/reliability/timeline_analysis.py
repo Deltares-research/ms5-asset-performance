@@ -16,6 +16,8 @@ if __name__ == "__main__":
     chebysev_path = SCRIPT_DIR / "train/results/srg/chebysev/lr_1.0e-05_epochs_100000_fullprofile_True"
     results_path = SCRIPT_DIR / "results/reliability_timeline"
     results_path.mkdir(parents=True, exist_ok=True)
+    pflog_path = results_path / "pf_logs"
+    pflog_path.mkdir(parents=True, exist_ok=True)
 
     with open(setting_path, "r") as f:
         setting_data = json.load(f)
@@ -59,11 +61,11 @@ if __name__ == "__main__":
 
         runner.step(time, params)
 
-        runner.update_corrosion_ratio_pdf()
+        times = [iter_time for iter_time in params.times if iter_time >= time]
+        corrosion_ratio_prior = runner.update_corrosion_ratio_pdf("prior", times)
+        corrosion_ratio_posterior = runner.update_corrosion_ratio_pdf("posterior", times)
 
-        runner.log(results_path)
-
-        pfs_all = []
+        pfs = {}
         for cap_type in ["theoretical", "survived"]:
 
             if cap_type == "theoretical":
@@ -71,30 +73,32 @@ if __name__ == "__main__":
             elif cap_type == "survived":
                 moment_cap_actual = runner.moment_cap
 
+            pfs[cap_type] = {}
+
             for pdf_type in ["prior", "posterior"]:
 
                 if pdf_type == "prior":
-                    C50_pdf = np.array(runner.C50_prior)
+                    corrosion_ratio_pdf = corrosion_ratio_prior.copy()
                 elif pdf_type == "posterior":
-                    C50_pdf = np.array(runner.C50_posterior)
+                    corrosion_ratio_pdf = corrosion_ratio_posterior.copy()
 
-                fos = moment_cap_sample / moment_sample
-                fos = fos[moment_cap_sample >= moment_survived]
-                pf = np.mean(fos >= 1)
-
-                pf = pfs * C50_pdf
-                pf /= np.trapezoid(pf, C50_grid)
+                pf = pf_calculator.get_pf(moment_cap_actual, corrosion_ratio_prior, runner.corrosion_ratio_grid)
                 beta = norm.ppf(1-pf)
 
-                pfs_all.append({
+                pfs[cap_type][pdf_type] = {
                     "moment_cap_type": cap_type,
                     "C50_dist_type": pdf_type,
+                    "moment_cap": moment_cap_actual,
+                    "corrosion_ratio_pdf": corrosion_ratio_pdf.tolist(),
+                    "corrosion_ratio_pdf": corrosion_ratio_pdf.tolist(),
                     "pf": pf.tolist(),
                     "beta": beta.tolist(),
-                })
+                }
 
-        # with open(results_path/"timeline_results.json", "w") as f:
-        #     json.dump(results, f)
+        runner.log(results_path)
+
+        with open(pflog_path/f"time_{time:.0f}.json", "w") as f:
+            json.dump(pfs, f, indent=4)
 
         runner.finish_step()
 

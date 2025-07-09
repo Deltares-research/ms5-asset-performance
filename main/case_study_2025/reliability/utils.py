@@ -51,16 +51,12 @@ class TimelineRunner:
     water_lvl: float = -1.
     corrosion_rate: float = 0.022
     corrosion_ratio_grid: list = None
-    corrosion_ratio_pdf: list = None
     C50_grid: list = None
     C50_prior: list = None
     C50_posterior: Optional[list] = None
     moment_cap: float = field(init=False)
     corrosion_obs_times: list = field(init=False)
     corrosion_obs: list = field(init=False)
-
-    def __post_init__(self):
-        self.corrosion_ratio_pdf = self.update_corrosion_ratio_pdf(C50_pdf_type="prior")
 
     def time_step(self, time):
         self.timestep += 1
@@ -107,10 +103,8 @@ class TimelineRunner:
 
         if C50_pdf_type == "prior":
             C50_pdf = np.array(self.C50_prior)
-        elif C50_pdf_type == "prior":
+        elif C50_pdf_type == "posterior":
             C50_pdf = np.array(self.C50_posterior)
-
-        times = np.array([50, 55])
 
         C50_grid = np.array(self.C50_grid)[..., np.newaxis, np.newaxis]
         times = times[np.newaxis, ..., np.newaxis]
@@ -126,9 +120,9 @@ class TimelineRunner:
 
         # Integrate out C50
         corrosion_pdf *= C50_pdf[:, np.newaxis, np.newaxis]
-        corrosion_pdf = np.trapz(corrosion_pdf, self.C50_grid, axis=0)
+        corrosion_pdf = np.trapezoid(corrosion_pdf, self.C50_grid, axis=0)
 
-        return corrosion_pdf.tolist()
+        return corrosion_pdf
 
     def step(self, time, params):
 
@@ -150,8 +144,10 @@ class TimelineRunner:
 
     def log(self, path):
         if not isinstance(path, Path): path = Path(path)
+        path = path / "runner_log"
+        path.mkdir(parents=True, exist_ok=True)
         runner_dict = asdict(self)
-        with open(path/f"runnerlog_time_{self.time:.0f}.json", "w") as f:
+        with open(path/f"time_{self.time:.0f}.json", "w") as f:
             json.dump(runner_dict, f, indent=4)
 
 
@@ -252,6 +248,11 @@ class PfCalculator:
             np.save(cache_path/"mcs_moment_cache.npy", max_moments)
 
         self.max_moments = max_moments
+
+    def get_pf(self, moment_cap, corrosion_ratio_pdf, corrosion_ratio_grid):
+        fos = moment_cap / self.max_moments
+        pf_mcs = np.mean(fos < 1, axis=-1)
+        return np.trapezoid(pf_mcs * corrosion_ratio_pdf, corrosion_ratio_grid, axis=-1)
 
 
 def load_chebysev_calculator(path, x_path):
