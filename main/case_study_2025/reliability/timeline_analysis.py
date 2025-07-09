@@ -71,10 +71,16 @@ if __name__ == "__main__":
             if cap_type == "theoretical":
                 moment_cap_actual = runner.moment_cap_start
             elif cap_type == "survived":
-                moment_cap_actual = runner.moment_cap
+                if runner.moment_survived > runner.moment_cap_start:
+                    moment_cap_actual = runner.moment_survived
+                    time_survived = runner.time_survived
+                else:
+                    continue
+
+            moment_cap = moment_cap_actual * (1 - np.array(runner.corrosion_ratio_grid))
+            # TODO: moment cap corrosion when survived
 
             pfs[cap_type] = {}
-
             for pdf_type in ["prior", "posterior"]:
 
                 if pdf_type == "prior":
@@ -82,7 +88,7 @@ if __name__ == "__main__":
                 elif pdf_type == "posterior":
                     corrosion_ratio_pdf = corrosion_ratio_posterior.copy()
 
-                pf = pf_calculator.get_pf(moment_cap_actual, corrosion_ratio_prior, runner.corrosion_ratio_grid)
+                pf = pf_calculator.get_pf(moment_cap, corrosion_ratio_prior, runner.corrosion_ratio_grid)
                 beta = norm.ppf(1-pf)
 
                 pfs[cap_type][pdf_type] = {

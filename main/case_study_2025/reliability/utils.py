@@ -47,6 +47,7 @@ class TimelineRunner:
     start_thickness: float = 9.5
     EI_start: float = 30_000.
     moment_cap_start: float = 30.
+    time_survived: float = 0.
     moment_survived: float = 0.
     water_lvl: float = -1.
     corrosion_rate: float = 0.022
@@ -54,7 +55,6 @@ class TimelineRunner:
     C50_grid: list = None
     C50_prior: list = None
     C50_posterior: Optional[list] = None
-    moment_cap: float = field(init=False)
     corrosion_obs_times: list = field(init=False)
     corrosion_obs: list = field(init=False)
 
@@ -62,11 +62,10 @@ class TimelineRunner:
         self.timestep += 1
         self.time = time
 
-    def update_moment_cap(self, data):
-        moment_survived = max(self.moment_survived, data["max_moment"])
-        moment_cap = max(moment_survived, self.moment_cap_start)
-        self.moment_survived = moment_survived
-        self.moment_cap = moment_cap
+    def update_moment_cap(self, time, data):
+        if data["max_moment"] >= self.moment_survived:
+            self.moment_survived = data["max_moment"]
+            self.time_survived = time
 
     def read_corrosion_data(self, corrosion_obs_times, corrosion_obs):
         self.corrosion_obs_times = corrosion_obs_times.tolist()
@@ -128,7 +127,7 @@ class TimelineRunner:
 
         self.time_step(time)
 
-        self.update_moment_cap(params.setting[time])
+        self.update_moment_cap(time, params.setting[time])
 
         corrosion_obs_times, corrosion_obs = collect_corrosion_data(time, params.setting)
         self.read_corrosion_data(corrosion_obs_times, corrosion_obs)
@@ -250,7 +249,8 @@ class PfCalculator:
         self.max_moments = max_moments
 
     def get_pf(self, moment_cap, corrosion_ratio_pdf, corrosion_ratio_grid):
-        fos = moment_cap / self.max_moments
+        if isinstance(moment_cap, float): moment_cap = np.array([moment_cap])
+        fos = moment_cap[:, np.newaxis] / self.max_moments
         pf_mcs = np.mean(fos < 1, axis=-1)
         return np.trapezoid(pf_mcs * corrosion_ratio_pdf, corrosion_ratio_grid, axis=-1)
 
