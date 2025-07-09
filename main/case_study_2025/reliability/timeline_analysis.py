@@ -49,7 +49,8 @@ if __name__ == "__main__":
         corrosion_rate = params.corrosion_rate,
         corrosion_ratio_grid=pf_calculator.corrosion_ratio_grid.tolist(),
         C50_grid=corrosion_model.C50_grid.tolist(),
-        C50_prior=corrosion_model.C50_prior.tolist()
+        C50_prior=corrosion_model.C50_prior.tolist(),
+        obs_error_std=params.obs_error_std
     )
 
     results = {}
@@ -96,9 +97,10 @@ if __name__ == "__main__":
                     "C50_dist_type": pdf_type,
                     "moment_cap": moment_cap_actual,
                     "corrosion_ratio_pdf": corrosion_ratio_pdf.tolist(),
-                    "corrosion_ratio_pdf": corrosion_ratio_pdf.tolist(),
-                    "pf": pf.tolist(),
-                    "beta": beta.tolist(),
+                    "pf_current": pf.tolist(),
+                    "beta_current": beta.tolist(),
+                    "pf_forecast": {time: p for (time, p) in zip(times, pf.tolist())},
+                    "beta_forecast": {time: b for (time, b) in zip(times, beta.tolist())},
                 }
 
         runner.log(results_path)

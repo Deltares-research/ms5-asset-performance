@@ -27,7 +27,7 @@ class TimelineParameters:
     n_mcs: int = 100_000
     start_thickness: float = 9.5
     EI_start: float = 30_000.
-    moment_cap_start: float = 30.
+    moment_cap_start: float = 535.
     moment_survived: float = 0.
     water_lvl: float = -1.
     water_lvl: float = -1.
@@ -57,6 +57,7 @@ class TimelineRunner:
     C50_posterior: Optional[list] = None
     corrosion_obs_times: list = field(init=False)
     corrosion_obs: list = field(init=False)
+    obs_error_std: float = .1
 
     def time_step(self, time):
         self.timestep += 1
