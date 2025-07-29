@@ -141,13 +141,14 @@ class TimelineRunner:
     def finish_step(self):
         self.C50_prior = deepcopy(self.C50_posterior)
 
-    def log(self, path):
+    def log(self, pfs, path):
         if not isinstance(path, Path): path = Path(path)
         path = path / "runner_log"
         path.mkdir(parents=True, exist_ok=True)
         runner_dict = asdict(self)
         with open(path/f"time_{self.time:.0f}.json", "w") as f:
-            json.dump(runner_dict, f, indent=4)
+            # json.dump(runner_dict, f, indent=4)
+            json.dump(pfs, f, indent=4)
 
     def read_pfs(self, pfs):
         self.pfs = pfs

@@ -60,7 +60,7 @@ if __name__ == "__main__":
         pfs = pf_calculator.get_pfs(params, runner)
         runner.read_pfs(pfs)
 
-        runner.log(results_path)
+        runner.log(pfs, results_path)
 
         runner.finish_step()
 
