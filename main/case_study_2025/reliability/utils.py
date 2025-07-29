@@ -116,13 +116,12 @@ class TimelineRunner:
 
         corrosion_grid = np.array(self.corrosion_ratio_grid) * self.start_thickness
         corrosion_pdf = stats.truncnorm(loc=mu, scale=scale, a=lower_trunc, b=upper_trunc).pdf(corrosion_grid)
-        corrosion_pdf *= 1 / (1 / self.start_thickness)  # Scaling of PDF between corrosion and corrosion rate
-
-        # Integrate out C50
         corrosion_pdf *= C50_pdf[:, np.newaxis, np.newaxis]
         corrosion_pdf = np.trapezoid(corrosion_pdf, self.C50_grid, axis=0)
 
-        return corrosion_pdf
+        corrosion_ratio_pdf = corrosion_pdf * 1 / (1 / self.start_thickness)  # Scaling of PDF between corrosion and corrosion rate
+
+        return corrosion_ratio_pdf
 
     def step(self, time, params):
 
@@ -160,11 +159,11 @@ def collect_corrosion_data(time, data):
 
 
 class PfCalculator:
-    def __init__(self, n_grid, params, corrosion_model, fos_calculator, mcs_samples_path):
+    def __init__(self, n_grid, params, corrosion_model, moment_calculator, mcs_samples_path):
         self.corrosion_ratio_grid = np.linspace(0, 1, n_grid)
         self.params = params
         self.corrosion_model = corrosion_model
-        self.fos_calculator = fos_calculator
+        self.moment_calculator = moment_calculator
         self.n_mcs = self.params.n_mcs
         self.load_data(mcs_samples_path)
 
@@ -205,7 +204,7 @@ class PfCalculator:
 
         max_moments = []
         for (x,) in loader:
-            moments = self.fos_calculator.moments(x)
+            moments = self.moment_calculator.moments(x)
             max_moments.append(np.abs(moments).max(axis=-1))
 
         max_moments = np.concatenate(max_moments)
@@ -273,15 +272,16 @@ class PfCalculator:
             for pdf_type in ["prior", "posterior"]:
 
                 if cap_type == "theoretical":
-                    moment_cap_actual = runner.moment_cap_start
+                    moment_cap_eff = runner.moment_cap_start
                 elif cap_type == "survived":
                     if runner.moment_survived > runner.moment_cap_start:
-                        moment_cap_actual = runner.moment_survived
+                        moment_cap_eff = runner.moment_survived
                         time_survived = runner.time_survived
                     else:
-                        continue
+                        moment_cap_eff = runner.moment_cap_start
+                        time_survived = runner.time_survived
 
-                moment_cap = moment_cap_actual * (1 - np.array(runner.corrosion_ratio_grid))
+                moment_cap = moment_cap_eff * (1 - np.array(runner.corrosion_ratio_grid))
                 # TODO: moment cap corrosion when survived
 
                 if pdf_type == "prior":
@@ -295,7 +295,9 @@ class PfCalculator:
                 pfs[cap_type][pdf_type] = {
                     "moment_cap_type": cap_type,
                     "C50_dist_type": pdf_type,
-                    "moment_cap": moment_cap_actual,
+                    "moment_cap_start": runner.moment_cap_start,
+                    "moment_cap_effective": moment_cap_eff,
+                    "moment_survived": runner.moment_survived,
                     "corrosion_ratio_pdf": corrosion_ratio_pdf.tolist(),
                     "pf_current": pf[0],
                     "beta_current": beta[0],
@@ -303,7 +305,7 @@ class PfCalculator:
                     "beta_forecast": {time: b for (time, b) in zip(times, beta.tolist())},
                 }
 
-                return pfs
+        return pfs
 
 
 def load_chebysev_calculator(path, x_path):
@@ -313,7 +315,7 @@ def load_chebysev_calculator(path, x_path):
     n_points = len(x)
     wall_props = (1e+4, 0, x, None)
 
-    fos_calculator = ChebysevFoS(
+    moment_calculator = ChebysevFoS(
         n_points=n_points,
         wall_props=wall_props,
         x=x,
@@ -323,7 +325,7 @@ def load_chebysev_calculator(path, x_path):
         device=device
     )
 
-    return fos_calculator
+    return moment_calculator
 
 
 def plot_errorbar(x, xerr, y, color="b", whiskersize=0.1):

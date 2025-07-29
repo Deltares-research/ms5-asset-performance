@@ -64,26 +64,17 @@ class FoSCalculator:
 
     def moments(self, x):
 
-        EI, _, wall_locs, monitoring_locs = self.wall_props
+        _, _, wall_locs, monitoring_locs = self.wall_props
 
         with torch.no_grad():
             coeffs = self.model(x, return_coeffs=True)
         curvatures = coeffs @ self.model.basis_der
         curvatures = curvatures.cpu().numpy()
         curvatures /= (1_000)  # Convert [mm/m^2] displacements to [1/m].
-        moments = - EI * curvatures  # Minus for proper sign in moment convention
+        EI = x[:, -2].cpu().numpy()
+        moments = - EI[:, np.newaxis] * curvatures  # Minus for proper sign in moment convention
 
         return moments
-
-    def fos(self, x):
-
-        _, moment_cap, _, _ = self.wall_props
-
-        moments = self.moments(x)
-
-        fos = moment_cap / moments.max(axis=-1)
-
-        return fos
 
     def plot_moments(self, displacements, moments, path):
 

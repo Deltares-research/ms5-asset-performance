@@ -15,14 +15,12 @@ if __name__ == "__main__":
     chebysev_path = SCRIPT_DIR / "train/results/srg/chebysev/lr_1.0e-05_epochs_100000_fullprofile_True"
     results_path = SCRIPT_DIR / "results/reliability_timeline"
     results_path.mkdir(parents=True, exist_ok=True)
-    pflog_path = results_path / "pf_logs"
-    pflog_path.mkdir(parents=True, exist_ok=True)
 
     with open(setting_path, "r") as f:
         setting_data = json.load(f)
     setting_data = {float(key): val for (key, val) in setting_data.items()}
 
-    fos_calculator = load_chebysev_calculator(chebysev_path, z_path)
+    moment_calculator = load_chebysev_calculator(chebysev_path, z_path)
 
     params = TimelineParameters(setting=setting_data)
 
@@ -34,7 +32,7 @@ if __name__ == "__main__":
         start_thickness=params.start_thickness
     )
 
-    pf_calculator = PfCalculator(1_000, params, corrosion_model, fos_calculator, mcs_samples_path)
+    pf_calculator = PfCalculator(100, params, corrosion_model, moment_calculator, mcs_samples_path)
     pf_calculator.calculate_max_moments(results_path)
 
     runner = TimelineRunner(
@@ -54,7 +52,8 @@ if __name__ == "__main__":
 
         time = float(time)
 
-        if time > 50: break
+        # if time > 50:
+        #     break
 
         runner.step(time, params)
 
