@@ -32,21 +32,50 @@ if __name__ == "__main__":
     params = TimelineParameters(setting=setting_data)
 
     figs = []
-    times = params.times
+    all_times = params.times
     for i, time in enumerate(tqdm(params.setting.keys(), desc="Running time step")):
 
         log = read_log(log_path, int(time))
 
-        fig, axs = plt.subplots(1, 2)
+        fig, axs = plt.subplots(1, 2, figsize=(8, 6), sharex=True, sharey=True)
 
-        data = log["theoretical"]
         ax = axs[0]
-        ax.plot(times, data["posterior"])
+
+        data = log["theoretical"]["posterior"]
+        times_posterior = [float(key) for key in data["pf_forecast"].keys()]
+        pf_forecast_posterior = [float(val) for val in data["pf_forecast"].values()]
+        ax.plot(times_posterior, pf_forecast_posterior, c="r", label="Factual forecast")
+
+        data = log["theoretical"]["prior"]
+        times_prior = [float(key) for key in data["pf_forecast"].keys()]
+        pf_forecast_prior = [float(val) for val in data["pf_forecast"].values()]
+        ax.plot(times_posterior, pf_forecast_posterior, c="b", label="Counterfactual forecast")
+
         ax.set_xlabel("Time [yr]", fontsize=12)
         ax.set_ylabel("${P}_{f}$ [-]", fontsize=12)
         ax.set_yscale('log')
         ax.xaxis.grid(False)
         ax.yaxis.grid(True)
+        ax.legend(fontsize=10)
+        ax.set_title("Theoretical moment capacity", fontsize=12)
+
+        ax = axs[1]
+
+        data = log["survived"]["posterior"]
+        times_posterior = [float(key) for key in data["pf_forecast"].keys()]
+        pf_forecast_posterior = [float(val) for val in data["pf_forecast"].values()]
+        ax.plot(times_posterior, pf_forecast_posterior, c="r", label="Factual forecast")
+
+        data = log["theoretical"]["prior"]
+        times_prior = [float(key) for key in data["pf_forecast"].keys()]
+        pf_forecast_prior = [float(val) for val in data["pf_forecast"].values()]
+        ax.plot(times_posterior, pf_forecast_posterior, c="b", label="Counterfactual forecast")
+
+        ax.set_xlabel("Time [yr]", fontsize=12)
+        ax.xaxis.grid(False)
+        ax.yaxis.grid(True)
+        ax.legend(fontsize=10)
+        ax.set_title("Empirical moment capacity", fontsize=12)
 
         fig.savefig("dummy.png")
 
