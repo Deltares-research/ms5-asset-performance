@@ -6,7 +6,7 @@ from pathlib import Path
 import json
 from copy import deepcopy
 from main.case_study_2025.reliability.moment_calculation.chebysev_moments import FoSCalculator as ChebysevFoS
-from main.case_study_2025.reliability.chebysev_reliability import moment_mcs
+# from main.case_study_2025.reliability.chebysev_reliability import moment_mcs
 from dataclasses import dataclass, field, asdict
 from typing import Type, Optional
 import matplotlib.pyplot as plt
@@ -33,7 +33,7 @@ class TimelineParameters:
     water_lvl: float = -1.
     C50_mu: float = 1.5
     corrosion_rate: float = 0.022
-    obs_error_std: float = .1
+    obs_error_std: float = .01
     times: list = field(init=False)
 
     def __post_init__(self):
@@ -53,7 +53,8 @@ class TimelineRunner:
     obs_error_std: float = .1
     corrosion_ratio_grid: list = None
     C50_grid: list = None
-    C50_prior: list = None
+    C50_prior: list = None  # Prior to be updated per timestep
+    C50_prior_fixed: list = None  # Permanently store the prior here
     C50_posterior: Optional[list] = None
     corrosion_obs_times: list = field(init=False)
     corrosion_obs: list = field(init=False)
@@ -102,8 +103,8 @@ class TimelineRunner:
         if isinstance(times, list): times = np.array(times)
 
         if C50_pdf_type == "prior":
-            C50_pdf = np.array(self.C50_prior)
-        elif C50_pdf_type == "posterior":
+            C50_pdf = np.array(self.C50_prior_fixed)
+        else:
             C50_pdf = np.array(self.C50_posterior)
 
         C50_grid = np.array(self.C50_grid)[..., np.newaxis, np.newaxis]
@@ -299,6 +300,7 @@ class PfCalculator:
                     "moment_cap_start": runner.moment_cap_start,
                     "moment_cap_effective": moment_cap_eff,
                     "moment_survived": runner.moment_survived,
+                    "corrosion_ratio_grid": self.corrosion_ratio_grid.tolist(),
                     "corrosion_ratio_pdf": corrosion_ratio_pdf.tolist(),
                     "pf_current": pf[0],
                     "beta_current": beta[0],

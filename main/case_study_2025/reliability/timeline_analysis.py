@@ -45,15 +45,13 @@ if __name__ == "__main__":
         corrosion_ratio_grid=pf_calculator.corrosion_ratio_grid.tolist(),
         C50_grid=corrosion_model.C50_grid.tolist(),
         C50_prior=corrosion_model.C50_prior.tolist(),
+        C50_prior_fixed=corrosion_model.C50_prior.tolist(),
     )
 
     results = {}
     for time, data in tqdm(params.setting.items(), desc="Running time step"):
 
         time = float(time)
-
-        # if time > 50:
-        #     break
 
         runner.step(time, params)
 
