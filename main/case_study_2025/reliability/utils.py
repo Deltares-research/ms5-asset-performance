@@ -33,7 +33,7 @@ class TimelineParameters:
     water_lvl: float = -1.
     C50_mu: float = 1.5
     corrosion_rate: float = 0.022
-    obs_error_std: float = .01
+    obs_error_std: float = .1
     times: list = field(init=False)
 
     def __post_init__(self):
@@ -96,7 +96,7 @@ class TimelineRunner:
 
         self.C50_posterior = post.tolist()
 
-    def update_corrosion_ratio_pdf(self, C50_pdf_type="posterior", times=None):
+    def update_corrosion_ratio_pdf(self, C50_pdf_type="posterior", params=None, times=None):
 
         if times is None: times = self.time
         if isinstance(times, float): times = np.array([times])
@@ -110,10 +110,18 @@ class TimelineRunner:
         C50_grid = np.array(self.C50_grid)[..., np.newaxis, np.newaxis]
         times = times[np.newaxis, ..., np.newaxis]
 
-        mu = C50_grid * (1 + self.corrosion_rate / 1.5 * (times - 50))
-        scale = mu * 0.5
+        # Use corrosion differences to forecast conditionally to observation
+        d_times = times - self.corrosion_obs_times[-1]
+        dmu = C50_grid * self.corrosion_rate / 1.5 * d_times
+        mu = self.corrosion_obs[-1] + dmu
+        scale = params.obs_error_std + dmu * 0.5
         lower_trunc = (0 - mu) / scale
         upper_trunc = (self.start_thickness - mu) / scale
+
+        # mu = C50_grid * (1 + self.corrosion_rate / 1.5 * (times - 50))
+        # scale = mu * 0.5
+        # lower_trunc = (0 - mu) / scale
+        # upper_trunc = (self.start_thickness - mu) / scale
 
         corrosion_grid = np.array(self.corrosion_ratio_grid) * self.start_thickness
         corrosion_pdf = stats.truncnorm(loc=mu, scale=scale, a=lower_trunc, b=upper_trunc).pdf(corrosion_grid)
@@ -122,7 +130,7 @@ class TimelineRunner:
 
         corrosion_ratio_pdf = corrosion_pdf * 1 / (1 / self.start_thickness)  # Scaling of PDF between corrosion and corrosion rate
 
-        return corrosion_ratio_pdf
+        return corrosion_ratio_pdf, corrosion_pdf
 
     def step(self, time, params):
 
@@ -264,8 +272,8 @@ class PfCalculator:
 
         times = [iter_time for iter_time in params.times if iter_time >= time]
 
-        corrosion_ratio_prior = runner.update_corrosion_ratio_pdf("prior", times)
-        corrosion_ratio_posterior = runner.update_corrosion_ratio_pdf("posterior", times)
+        corrosion_ratio_prior, corrosion_pdf = runner.update_corrosion_ratio_pdf("prior", params, times)
+        corrosion_ratio_posterior, corrosion_pdf = runner.update_corrosion_ratio_pdf("posterior", params, times)
 
         pfs = {}
         for cap_type in ["theoretical", "survived"]:
@@ -302,6 +310,8 @@ class PfCalculator:
                     "moment_survived": runner.moment_survived,
                     "corrosion_ratio_grid": self.corrosion_ratio_grid.tolist(),
                     "corrosion_ratio_pdf": corrosion_ratio_pdf.tolist(),
+                    "corrosion_grid": (np.array(self.corrosion_ratio_grid)*params.start_thickness).tolist(),
+                    "corrosion_pdf": corrosion_pdf.tolist(),
                     "pf_current": pf[0],
                     "beta_current": beta[0],
                     "pf_forecast": {time: p for (time, p) in zip(times, pf.tolist())},

@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import numpy as np
 from scipy.integrate import cumulative_trapezoid
+from scipy.stats import norm
 from main.case_study_2025.reliability.utils import *
 from src.corrosion.corrosion_model import CorrosionModel
 from tqdm import tqdm
@@ -61,13 +62,88 @@ def plot_pf(log):
     return fig
 
 
-def plot_corrosion_ratio(log, params, a=0.05):
+def plot_corrosion(log, params, alpha=0.05):
 
     setting = params.setting
 
     all_times = list(setting.keys())
 
     fig, ax = plt.subplots(figsize=(8, 6))
+
+    data = log["theoretical"]["prior"]
+    times_forecast = [float(key) for key in data["pf_forecast"].keys()]
+    corrosion_grid = np.asarray(data["corrosion_grid"])
+    corrosion_pdf = np.asarray(data["corrosion_pdf"])
+    corrosion_cdf = cumulative_trapezoid(corrosion_pdf, corrosion_grid, axis=-1)
+    corrosion_mean = np.trapezoid(corrosion_pdf * corrosion_grid[np.newaxis, :], corrosion_grid, axis=-1)
+    corrosion_quantiles = np.stack((
+        corrosion_grid[np.argmin(np.abs(corrosion_cdf - alpha), axis=-1)],
+        corrosion_grid[np.argmin(np.abs(corrosion_cdf - (1 - alpha)), axis=-1)]
+    ))
+
+    ax.fill_between(times_forecast, corrosion_quantiles[0], corrosion_quantiles[1], color="b", alpha=0.3)
+    ax.plot(times_forecast, corrosion_quantiles[0], color="b", linewidth=0.2)
+    ax.plot(times_forecast, corrosion_quantiles[1], color="b", linewidth=0.2)
+    ax.plot(times_forecast, corrosion_mean, color="b", label="Counterfactual forecast")
+
+    data = log["theoretical"]["posterior"]
+    times_forecast = [float(key) for key in data["pf_forecast"].keys()]
+    corrosion_grid = np.asarray(data["corrosion_grid"])
+    corrosion_pdf = np.asarray(data["corrosion_pdf"])
+    corrosion_cdf = cumulative_trapezoid(corrosion_pdf, corrosion_grid, axis=-1)
+    corrosion_mean = np.trapezoid(corrosion_pdf*corrosion_grid[np.newaxis, :], corrosion_grid, axis=-1)
+    corrosion_quantiles = np.stack((
+                            corrosion_grid[np.argmin(np.abs(corrosion_cdf-alpha), axis=-1)],
+                            corrosion_grid[np.argmin(np.abs(corrosion_cdf-(1-alpha)), axis=-1)]
+    ))
+
+    ax.fill_between(times_forecast, corrosion_quantiles[0], corrosion_quantiles[1], color="r", alpha=0.3)
+    ax.plot(times_forecast, corrosion_quantiles[0], color="r", linewidth=0.2)
+    ax.plot(times_forecast, corrosion_quantiles[1], color="r", linewidth=0.2)
+    ax.plot(times_forecast, corrosion_mean, color="r", label="Factual forecast")
+
+    current_time = times_forecast[0]
+    past_times = [time for time in all_times if time <= current_time]
+    corrosion_obs = [val["corrosion"] for (key, val) in setting.items() if key <= current_time]
+    corrosion_obs_error = params.obs_error_std
+    ax.errorbar(x=past_times, y=corrosion_obs, yerr=corrosion_obs_error*norm.ppf(1-alpha), fmt='o', c="k", capsize=3)
+    ax.axvline(current_time, c="k", linestyle="--", linewidth=0.5)
+
+    ax.set_xlabel("Time [yr]", fontsize=12)
+    ax.set_ylabel("Corrosion [mm]", fontsize=12)
+    ax.set_xlim(min(all_times), max(all_times))
+    ax.set_ylim(0, params.start_thickness)
+    ax.xaxis.grid(False)
+    ax.yaxis.grid(True)
+    ax.legend(fontsize=10)
+
+    return fig
+
+
+def plot_corrosion_ratio(log, params, alpha=0.05):
+
+    setting = params.setting
+
+    all_times = list(setting.keys())
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    data = log["theoretical"]["prior"]
+    times_forecast = [float(key) for key in data["pf_forecast"].keys()]
+    corrosion_ratio_grid = np.asarray(data["corrosion_ratio_grid"])
+    corrosion_ratio_pdf = np.asarray(data["corrosion_ratio_pdf"])
+    corrosion_ratio_cdf = cumulative_trapezoid(corrosion_ratio_pdf, corrosion_ratio_grid, axis=-1)
+    corrosion_ratio_mean = np.trapezoid(corrosion_ratio_pdf * corrosion_ratio_grid[np.newaxis, :], corrosion_ratio_grid,
+                                        axis=-1)
+    corrosion_ratio_quantiles = np.stack((
+        corrosion_ratio_grid[np.argmin(np.abs(corrosion_ratio_cdf - alpha), axis=-1)],
+        corrosion_ratio_grid[np.argmin(np.abs(corrosion_ratio_cdf - (1 - alpha)), axis=-1)]
+    ))
+
+    ax.fill_between(times_forecast, corrosion_ratio_quantiles[0], corrosion_ratio_quantiles[1], color="b", alpha=0.3)
+    ax.plot(times_forecast, corrosion_ratio_quantiles[0], color="b", linewidth=0.2)
+    ax.plot(times_forecast, corrosion_ratio_quantiles[1], color="b", linewidth=0.2)
+    ax.plot(times_forecast, corrosion_ratio_mean, color="b", label="Counterfactual forecast")
 
     data = log["theoretical"]["posterior"]
     times_forecast = [float(key) for key in data["pf_forecast"].keys()]
@@ -76,8 +152,8 @@ def plot_corrosion_ratio(log, params, a=0.05):
     corrosion_ratio_cdf = cumulative_trapezoid(corrosion_ratio_pdf, corrosion_ratio_grid, axis=-1)
     corrosion_ratio_mean = np.trapezoid(corrosion_ratio_pdf*corrosion_ratio_grid[np.newaxis, :], corrosion_ratio_grid, axis=-1)
     corrosion_ratio_quantiles = np.stack((
-                            corrosion_ratio_grid[np.argmin(np.abs(corrosion_ratio_cdf-a), axis=-1)],
-                            corrosion_ratio_grid[np.argmin(np.abs(corrosion_ratio_cdf-(1-a)), axis=-1)]
+                            corrosion_ratio_grid[np.argmin(np.abs(corrosion_ratio_cdf-alpha), axis=-1)],
+                            corrosion_ratio_grid[np.argmin(np.abs(corrosion_ratio_cdf-(1-alpha)), axis=-1)]
     ))
 
     ax.fill_between(times_forecast, corrosion_ratio_quantiles[0], corrosion_ratio_quantiles[1], color="r", alpha=0.3)
@@ -85,30 +161,12 @@ def plot_corrosion_ratio(log, params, a=0.05):
     ax.plot(times_forecast, corrosion_ratio_quantiles[1], color="r", linewidth=0.2)
     ax.plot(times_forecast, corrosion_ratio_mean, color="r", label="Factual forecast")
 
-    data = log["theoretical"]["prior"]
-    times_forecast = [float(key) for key in data["pf_forecast"].keys()]
-    corrosion_ratio_grid = np.asarray(data["corrosion_ratio_grid"])
-    corrosion_ratio_pdf = np.asarray(data["corrosion_ratio_pdf"])
-    corrosion_ratio_cdf = cumulative_trapezoid(corrosion_ratio_pdf, corrosion_ratio_grid, axis=-1)
-    corrosion_ratio_mean = np.trapezoid(corrosion_ratio_pdf*corrosion_ratio_grid[np.newaxis, :], corrosion_ratio_grid, axis=-1)
-    corrosion_ratio_quantiles = np.stack((
-                            corrosion_ratio_grid[np.argmin(np.abs(corrosion_ratio_cdf-a), axis=-1)],
-                            corrosion_ratio_grid[np.argmin(np.abs(corrosion_ratio_cdf-(1-a)), axis=-1)]
-    ))
-    
-    ax.fill_between(times_forecast, corrosion_ratio_quantiles[0], corrosion_ratio_quantiles[1], color="b", alpha=0.3)
-    ax.plot(times_forecast, corrosion_ratio_quantiles[0], color="b", linewidth=0.2)
-    ax.plot(times_forecast, corrosion_ratio_quantiles[1], color="b", linewidth=0.2)
-    ax.plot(times_forecast, corrosion_ratio_mean, color="b", label="Counterfactual forecast")
-
     current_time = times_forecast[0]
     past_times = [time for time in all_times if time <= current_time]
     corrosion_ratio_obs = [val["corrosion_ratio"] for (key, val) in setting.items() if key <= current_time]
-    corrosion_ratio_obs_error = params.obs_error_std
-    ax.scatter(past_times, corrosion_ratio_obs, color="k", label="Observations")
-    ax.errorbar(x=past_times, y=corrosion_ratio_obs, yerr=corrosion_ratio_obs_error, fmt='none', c="k")
-
-    ax.axvline(current_time, c="k", linestyle="--")
+    corrosion_ratio_obs_error = params.obs_error_std / params.start_thickness
+    ax.errorbar(x=past_times, y=corrosion_ratio_obs, yerr=corrosion_ratio_obs_error*norm.ppf(1-alpha), fmt='o', c="k", capsize=3)
+    ax.axvline(current_time, c="k", linestyle="--", linewidth=0.5)
 
     ax.set_xlabel("Time [yr]", fontsize=12)
     ax.set_ylabel("Corrosion ratio [-]", fontsize=12)
@@ -208,11 +266,10 @@ if __name__ == "__main__":
         log = read_log(log_path, int(time))
 
         # fig = plot_pf(log)
-        # fig = plot_corrosion_ratio(log, params)
-        fig = plot_moment(log, params)
+        # fig = plot_corrosion(log, params)
+        fig = plot_corrosion_ratio(log, params)
+        # fig = plot_moment(log, params)
         fig.savefig("dummy.png")
-
-
 
 
         pass

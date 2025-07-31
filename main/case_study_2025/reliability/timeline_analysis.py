@@ -32,7 +32,7 @@ if __name__ == "__main__":
         start_thickness=params.start_thickness
     )
 
-    pf_calculator = PfCalculator(100, params, corrosion_model, moment_calculator, mcs_samples_path)
+    pf_calculator = PfCalculator(1_000, params, corrosion_model, moment_calculator, mcs_samples_path)
     pf_calculator.calculate_max_moments(results_path)
 
     runner = TimelineRunner(
