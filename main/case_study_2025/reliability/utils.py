@@ -103,9 +103,10 @@ class TimelineRunner:
         if isinstance(times, list): times = np.array(times)
 
         if C50_pdf_type == "prior":
-            C50_pdf = np.array(self.C50_prior_fixed)
+            C50_pdf = np.array(self.C50_prior_fixed).copy()
+            C50_pdf = np.array([1/2.5]*100) # <--- set wide prior to check effect TODO
         else:
-            C50_pdf = np.array(self.C50_posterior)
+            C50_pdf = np.array(self.C50_posterior).copy()
 
         C50_grid = np.array(self.C50_grid)[..., np.newaxis, np.newaxis]
         times = times[np.newaxis, ..., np.newaxis]
@@ -127,6 +128,7 @@ class TimelineRunner:
         corrosion_pdf = stats.truncnorm(loc=mu, scale=scale, a=lower_trunc, b=upper_trunc).pdf(corrosion_grid)
         corrosion_pdf *= C50_pdf[:, np.newaxis, np.newaxis]
         corrosion_pdf = np.trapezoid(corrosion_pdf, self.C50_grid, axis=0)
+        corrosion_pdf /= np.trapezoid(corrosion_pdf, corrosion_grid, axis=-1)[:, np.newaxis]
 
         corrosion_ratio_pdf = corrosion_pdf * 1 / (1 / self.start_thickness)  # Scaling of PDF between corrosion and corrosion rate
 
@@ -260,11 +262,19 @@ class PfCalculator:
 
         self.max_moments = max_moments
 
-    def get_pf(self, moment_cap, corrosion_ratio_pdf, corrosion_ratio_grid):
-        if isinstance(moment_cap, float): moment_cap = np.array([moment_cap])
-        fos = moment_cap[:, np.newaxis] / self.max_moments
+    def get_pf(self, moment_cap, corrosion_ratio_pdf, corrosion_ratio_grid, moment_survived=0.):
+        corrosion_ratio_grid = np.array(corrosion_ratio_grid)
+        corrosion_ratio_pdf = np.array(corrosion_ratio_pdf)
+        moment_cap_grid = moment_cap * (1 - corrosion_ratio_grid) + 1e-3
+        moment_cap_pdf = corrosion_ratio_pdf * (1/moment_cap)  # Variable change
+        moment_cap_grid = np.flip(moment_cap_grid)
+        moment_cap_pdf_truncated = np.flip(moment_cap_pdf, axis=-1).copy()
+        moment_cap_pdf_truncated = np.where(moment_cap_grid <= moment_survived, 0., moment_cap_pdf_truncated)
+        moment_cap_pdf_truncated /= np.trapezoid(moment_cap_pdf_truncated, moment_cap_grid, axis=-1)[:, None]
+
+        fos = moment_cap_time[:, np.newaxis] / (self.max_moments + 1e-5)
         pf_mcs = np.mean(fos < 1, axis=-1)
-        return np.trapezoid(pf_mcs * corrosion_ratio_pdf, corrosion_ratio_grid, axis=-1)
+        return np.trapz(pf_mcs * corrosion_ratio_pdf_truncated, corrosion_ratio_grid, axis=-1)
 
     def get_pfs(self, params, runner):
 
@@ -282,31 +292,35 @@ class PfCalculator:
             for pdf_type in ["prior", "posterior"]:
 
                 if cap_type == "theoretical":
-                    moment_cap_eff = runner.moment_cap_start
+                    # moment_cap_eff = runner.moment_cap_start
+                    moment_survived = 0.
                 elif cap_type == "survived":
-                    if runner.moment_survived > runner.moment_cap_start:
-                        moment_cap_eff = runner.moment_survived
-                        time_survived = runner.time_survived
-                    else:
-                        moment_cap_eff = runner.moment_cap_start
-                        time_survived = runner.time_survived
+                    moment_survived = runner.moment_survived
+                    time_survived = runner.time_survived
+                    # if runner.moment_survived > runner.moment_cap_start:
+                    #     moment_cap_eff = runner.moment_survived
+                    #     time_survived = runner.time_survived
+                    # else:
+                    #     moment_cap_eff = runner.moment_cap_start
+                    #     time_survived = runner.time_survived
 
-                moment_cap = moment_cap_eff * (1 - np.array(runner.corrosion_ratio_grid))
-                # TODO: moment cap corrosion when survived
+                # moment_cap = moment_cap_eff * (1 - np.array(runner.corrosion_ratio_grid))
+                # TODO: Back-calculate moment cap at start of timeline instead of corroded state when observed???
 
                 if pdf_type == "prior":
                     corrosion_ratio_pdf = corrosion_ratio_prior.copy()
                 elif pdf_type == "posterior":
                     corrosion_ratio_pdf = corrosion_ratio_posterior.copy()
 
-                pf = self.get_pf(moment_cap, corrosion_ratio_prior, runner.corrosion_ratio_grid)
+                pf = self.get_pf(runner.moment_cap_start, corrosion_ratio_pdf, runner.corrosion_ratio_grid, moment_survived)
                 beta = stats.norm.ppf(1 - pf)
 
                 pfs[cap_type][pdf_type] = {
                     "moment_cap_type": cap_type,
                     "C50_dist_type": pdf_type,
+                    "C50_pdf": runner.C50_posterior if pdf_type == "posterior" else runner.C50_prior_fixed,
                     "moment_cap_start": runner.moment_cap_start,
-                    "moment_cap_effective": moment_cap_eff,
+                    "time_survived": runner.time_survived,
                     "moment_survived": runner.moment_survived,
                     "corrosion_ratio_grid": self.corrosion_ratio_grid.tolist(),
                     "corrosion_ratio_pdf": corrosion_ratio_pdf.tolist(),

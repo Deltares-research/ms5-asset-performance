@@ -53,6 +53,8 @@ if __name__ == "__main__":
 
         time = float(time)
 
+        # if time > 51: break
+
         runner.step(time, params)
 
         pfs = pf_calculator.get_pfs(params, runner)
