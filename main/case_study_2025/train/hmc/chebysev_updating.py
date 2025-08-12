@@ -252,7 +252,7 @@ def train(param: str = "Wall_SheetPilingElementEI", draws: int = 10, tune: int =
     plt.plot(grid, loglikes)
     plt.axvline(ref_vals[idx], c="k")
     plt.close()
-    fig.savefig('dummy.png')
+    fig.savefig('dummy2.png')
 
 
     # df = pd.DataFrame(

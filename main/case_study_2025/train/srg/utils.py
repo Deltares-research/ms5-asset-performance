@@ -6,19 +6,25 @@ import seaborn as sns
 from pathlib import Path
 
 
-def load_data(path, full_profile=False):
+def load_data(path, target="displacement", full_profile=False):
 
     df = pd.read_csv(path)
 
-    X_cols = [col for col in df.columns if col.split("_")[0] != "disp" and col != "index"]
+    X_cols = [col for col in df.columns if col.split("_")[0] != "disp" and col.split("_")[0] != "moment" and col != "index"]
     X_cols = [col for col in X_cols if "soilcurko2" not in col and "soilcurko3" not in col]
     X = df[X_cols].values
 
     idx_locs = list(range(1, 151, 10))
-    if full_profile:
-        y_cols = [col for col in df.columns if col.split("_")[0] == "disp"]
-    else:
-        y_cols = [col for col in df.columns if col.split("_")[0] == "disp" and int(col.split("_")[-1]) in idx_locs]
+    if target == "displacement":
+        if full_profile:
+            y_cols = [col for col in df.columns if col.split("_")[0] == "disp"]
+        else:
+            y_cols = [col for col in df.columns if col.split("_")[0] == "disp" and int(col.split("_")[-1]) in idx_locs]
+    elif target == "moment":
+        if full_profile:
+            y_cols = [col for col in df.columns if col.split("_")[0] == "moment"]
+        else:
+            y_cols = [col for col in df.columns if col.split("_")[0] == "moment" and int(col.split("_")[-1]) in idx_locs]
     y = df[y_cols].values
 
     # Remove extreme outliers which probably correspond to numerical error in DSheetPiling

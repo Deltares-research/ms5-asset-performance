@@ -4,9 +4,10 @@ from torch.utils.data import DataLoader, TensorDataset
 from scipy import stats
 from pathlib import Path
 import json
+import orjson
 from copy import deepcopy
-from main.case_study_2025.reliability.moment_calculation.chebysev_moments import FoSCalculator as ChebysevFoS
-# from main.case_study_2025.reliability.chebysev_reliability import moment_mcs
+# from main.case_study_2025.reliability.moment_calculation.chebysev_moments import FoSCalculator as ChebysevFoS
+from main.case_study_2025.reliability.moment_calculation.mlp_moments_direct import FoSCalculator as MLPMoments
 from dataclasses import dataclass, field, asdict
 from typing import Type, Optional
 import matplotlib.pyplot as plt
@@ -152,14 +153,24 @@ class TimelineRunner:
     def finish_step(self):
         self.C50_prior = deepcopy(self.C50_posterior)
 
-    def log(self, pfs, path):
+    def log(self, time, pfs, path):
         if not isinstance(path, Path): path = Path(path)
         path = path / "runner_log"
         path.mkdir(parents=True, exist_ok=True)
-        runner_dict = asdict(self)
-        with open(path/f"time_{self.time:.0f}.json", "w") as f:
-            # json.dump(runner_dict, f, indent=4)
-            json.dump(pfs, f, indent=4)
+        # runner_dict = asdict(self)
+        # json_bytes = orjson.dumps(pfs)
+        path = path / f"{time}"
+        for cap_type in ["theoretical", "survived"]:
+            for pdf_type in ["prior", "posterior"]:
+                new_path = path / f"{cap_type}/{pdf_type}"
+                new_path.mkdir(parents=True, exist_ok=True)
+                pf = pfs[cap_type][pdf_type]
+                fos = pf.pop("fos")
+                survival = pf.pop("survival")
+                with open(path/f"{cap_type}/{pdf_type}/data.json", "w") as f:
+                    json.dump(pf, f, indent=4)
+                np.save(new_path/"fos.npy", fos)
+                np.save(new_path/"survival.npy", survival)
 
     def read_pfs(self, pfs):
         self.pfs = pfs
@@ -262,19 +273,34 @@ class PfCalculator:
 
         self.max_moments = max_moments
 
-    def get_pf(self, moment_cap, corrosion_ratio_pdf, corrosion_ratio_grid, moment_survived=0.):
+    def get_pf(self, moment_cap, corrosion_ratio_pdf, corrosion_ratio_grid, moment_survived=0., time_survived=0.):
+
         corrosion_ratio_grid = np.array(corrosion_ratio_grid)
         corrosion_ratio_pdf = np.array(corrosion_ratio_pdf)
-        moment_cap_grid = moment_cap * (1 - corrosion_ratio_grid) + 1e-3
-        moment_cap_pdf = corrosion_ratio_pdf * (1/moment_cap)  # Variable change
+
+        moment_cap_grid = moment_cap * (1 - corrosion_ratio_grid)
         moment_cap_grid = np.flip(moment_cap_grid)
-        moment_cap_pdf_truncated = np.flip(moment_cap_pdf, axis=-1).copy()
-        moment_cap_pdf_truncated = np.where(moment_cap_grid <= moment_survived, 0., moment_cap_pdf_truncated)
+        moment_cap_pdf = corrosion_ratio_pdf * (1/moment_cap)  # Variable change
+        moment_cap_pdf = np.flip(moment_cap_pdf, axis=-1)
+
+        # if moment_survived > 0.:
+        #     moment_survived_grid = moment_survived * (1 - corrosion_ratio_grid)
+        #     moment_survived_grid = np.flip(moment_survived_grid)
+        #     moment_cap_survived_matrix = np.eye(moment_cap_grid.size)
+        #     # moment_cap_survived_matrix = np.zeros((moment_cap_grid.size, moment_survived_grid.size))
+        #     # for i in range(moment_cap_survived_matrix.shape[0]):
+        #     #     moment_cap_survived_matrix[i] = moment_cap_grid >= moment_survived_grid[i]
+        #     moment_cap_pdf_truncated = moment_cap_pdf[..., np.newaxis] * moment_cap_survived_matrix[np.newaxis, ...]
+        #     moment_cap_pdf_truncated = moment_cap_pdf_truncated / (np.trapezoid(moment_cap_pdf_truncated, moment_survived_grid, axis=-1)[..., None] + 1e-5)
+        #     moment_cap_pdf2 = np.trapezoid(moment_cap_pdf_truncated, moment_survived_grid, axis=-1)
+
+        moment_cap_pdf_truncated = np.where(moment_cap_grid <= moment_survived, 0., moment_cap_pdf)
         moment_cap_pdf_truncated /= np.trapezoid(moment_cap_pdf_truncated, moment_cap_grid, axis=-1)[:, None]
 
-        fos = moment_cap_time[:, np.newaxis] / (self.max_moments + 1e-5)
+        fos = moment_cap_grid[:, np.newaxis] / (self.max_moments + 1e-5)
+        survival = moment_survived >= self.max_moments
         pf_mcs = np.mean(fos < 1, axis=-1)
-        return np.trapz(pf_mcs * corrosion_ratio_pdf_truncated, corrosion_ratio_grid, axis=-1)
+        return np.trapz(pf_mcs * moment_cap_pdf, moment_cap_grid, axis=-1), moment_cap_pdf_truncated, fos, survival
 
     def get_pfs(self, params, runner):
 
@@ -288,68 +314,77 @@ class PfCalculator:
         pfs = {}
         for cap_type in ["theoretical", "survived"]:
 
-            pfs[cap_type] = {}
-            for pdf_type in ["prior", "posterior"]:
-
-                if cap_type == "theoretical":
-                    # moment_cap_eff = runner.moment_cap_start
-                    moment_survived = 0.
-                elif cap_type == "survived":
-                    moment_survived = runner.moment_survived
-                    time_survived = runner.time_survived
-                    # if runner.moment_survived > runner.moment_cap_start:
-                    #     moment_cap_eff = runner.moment_survived
-                    #     time_survived = runner.time_survived
-                    # else:
-                    #     moment_cap_eff = runner.moment_cap_start
-                    #     time_survived = runner.time_survived
-
+            if cap_type == "theoretical":
+                # moment_cap_eff = runner.moment_cap_start
+                moment_survived = 0.
+                time_survived = 0.
+            elif cap_type == "survived":
+                moment_survived = runner.moment_survived
+                time_survived = runner.time_survived
+                # if runner.moment_survived > runner.moment_cap_start:
+                #     moment_cap_eff = runner.moment_survived
+                #     time_survived = runner.time_survived
+                # else:
+                #     moment_cap_eff = runner.moment_cap_start
+                #     time_survived = runner.time_survived
                 # moment_cap = moment_cap_eff * (1 - np.array(runner.corrosion_ratio_grid))
                 # TODO: Back-calculate moment cap at start of timeline instead of corroded state when observed???
+
+            pfs[cap_type] = {}
+            for pdf_type in ["prior", "posterior"]:
 
                 if pdf_type == "prior":
                     corrosion_ratio_pdf = corrosion_ratio_prior.copy()
                 elif pdf_type == "posterior":
                     corrosion_ratio_pdf = corrosion_ratio_posterior.copy()
 
-                pf = self.get_pf(runner.moment_cap_start, corrosion_ratio_pdf, runner.corrosion_ratio_grid, moment_survived)
-                beta = stats.norm.ppf(1 - pf)
+                output = self.get_pf(runner.moment_cap_start, corrosion_ratio_pdf, runner.corrosion_ratio_grid, moment_survived, time_survived)
+                pf, moment_cap_pdf_truncated, fos, survival = output
+                beta = np.minimum(stats.norm.ppf(1 - pf), 10)
+                beta = np.maximum(beta, -10)
+                # beta = beta.astype(np.float16).tolist()
+                # pf = pf.astype(np.float16).tolist()
 
                 pfs[cap_type][pdf_type] = {
+                    "current_time": time,
                     "moment_cap_type": cap_type,
                     "C50_dist_type": pdf_type,
                     "C50_pdf": runner.C50_posterior if pdf_type == "posterior" else runner.C50_prior_fixed,
                     "moment_cap_start": runner.moment_cap_start,
                     "time_survived": runner.time_survived,
                     "moment_survived": runner.moment_survived,
-                    "corrosion_ratio_grid": self.corrosion_ratio_grid.tolist(),
-                    "corrosion_ratio_pdf": corrosion_ratio_pdf.tolist(),
+                    "moment_cap_effective": max(runner.moment_cap_start, moment_survived),
+                    "corrosion_ratio_grid": self.corrosion_ratio_grid.astype(np.float16).tolist(),
+                    "corrosion_ratio_pdf": corrosion_ratio_pdf.astype(np.float32).tolist(),
                     "corrosion_grid": (np.array(self.corrosion_ratio_grid)*params.start_thickness).tolist(),
                     "corrosion_pdf": corrosion_pdf.tolist(),
+                    "moment_cap_pdf_truncated": moment_cap_pdf_truncated.tolist(),
+                    "fos": np.greater_equal(fos, 1.),
+                    "survival": survival,
                     "pf_current": pf[0],
                     "beta_current": beta[0],
-                    "pf_forecast": {time: p for (time, p) in zip(times, pf.tolist())},
-                    "beta_forecast": {time: b for (time, b) in zip(times, beta.tolist())},
+                    "pf_forecast": {str(time): p for (time, p) in zip(times, pf)},
+                    "beta_forecast": {str(time): b for (time, b) in zip(times, beta)},
                 }
+
+                pass
 
         return pfs
 
 
-def load_chebysev_calculator(path, x_path):
+def load_moment_calculator(path, x_path):
 
     with open(x_path, "r") as f: x = np.array(json.load(f))
 
     n_points = len(x)
     wall_props = (1e+4, 0, x, None)
 
-    moment_calculator = ChebysevFoS(
-        n_points=n_points,
+    moment_calculator = MLPMoments(
+        n_points=50,
         wall_props=wall_props,
-        x=x,
         model_path=path / "torch_weights.pth",
         scaler_x_path=path / "scaler_x.joblib",
         scaler_y_path=path / "scaler_y.joblib",
-        device=device
     )
 
     return moment_calculator

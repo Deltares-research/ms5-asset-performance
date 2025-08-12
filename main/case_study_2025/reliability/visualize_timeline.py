@@ -1,6 +1,8 @@
 import json
+import orjson
 from pathlib import Path
 import numpy as np
+import pandas as pd
 from scipy.integrate import cumulative_trapezoid
 from scipy.stats import norm
 from main.case_study_2025.reliability.utils import *
@@ -8,16 +10,23 @@ from src.corrosion.corrosion_model import CorrosionModel
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
+import seaborn as sns
 
 
 def read_log(log_path, time):
-    path = log_path / f"time_{time}.json"
-    with open(path, "r") as f:
-        log = json.load(f)
+    log = {}
+    for cap_type in ["theoretical", "survived"]:
+        log[cap_type] = {}
+        for pdf_type in ["prior", "posterior"]:
+            path = log_path / f"{cap_type}/{pdf_type}"
+            with open(path / "data.json", "r") as f:
+                log[cap_type][pdf_type] = json.load(f)
+            log[cap_type][pdf_type]["fos"] = np.load(path / "fos.npy")
+            log[cap_type][pdf_type]["survival"] = np.load(path / "survival.npy")
     return log
 
 
-def plot_pf(log):
+def plot_pf(log, current_time):
 
     fig, axs = plt.subplots(1, 2, figsize=(8, 6), sharex=True, sharey=True)
 
@@ -269,15 +278,56 @@ def plot_moment(log, params, alpha=0.05):
     return fig
 
 
+def plot_scatter(log, mcs_data, rvs=["Klei_soilphi", "Corrosion_ratio"]):
+
+    def make_df(data, mcs_data):
+        fos = data["fos"].flatten()
+        survival = data["survival"].flatten()
+        cols_keep = [
+            'Klei_soilcohesion', 'Klei_soilphi', 'Klei_soilcurkb1', 'Zand_soilphi', 'Zand_soilcurkb1',
+            'Zandvast_soilphi',
+            'Zandvast_soilcurkb1', 'Zandlos_soilphi', 'Zandlos_soilcurkb1'
+        ]
+
+        df = pd.DataFrame(
+            data=np.hstack((mcs_data, fos[:, np.newaxis], survival[:, np.newaxis])),
+            columns=cols_keep + ["Corrosion_ratio", "FoS", "Survival"]
+        )
+
+        df["hue"] = 0
+        df.loc[df["FoS"]*df["Survival"] == 1, "hue"] = "Safety_Survival"
+        df.loc[df["FoS"]*(1-df["Survival"]) == 1, "hue"] = "Safety_NonSurvival"
+        df.loc[1-df["FoS"]==1, "hue"] = "Failure"
+
+        return df
+
+    fig, axs = plt.subplots(2, 2, sharex=True, sharey=True, figsize=(12, 12))
+    i = 0
+    for cap_type in ["theoretical", "survived"]:
+        for pdf_type in ["prior", "posterior"]:
+            df = make_df(log[cap_type][pdf_type], mcs_data)
+            np.random.seed(42)
+            idx = np.random.randint(low=0, high=mcs_data.shape[0]-1, size=1_000)
+            df = df.iloc[idx]
+            sns.scatterplot(data=df, x=rvs[0], y=rvs[1], hue="hue",  ax=axs.flatten()[i])
+            axs.flatten()[i].set(title=f"{cap_type}-{pdf_type}")
+            i += 1
+
+    return fig
+
+
+
 if __name__ == "__main__":
 
     SCRIPT_DIR = Path(__file__).resolve().parent.parent
     setting_path = SCRIPT_DIR / "data/setting/case_study.json"
     z_path = SCRIPT_DIR / "data/setting/z.json"
     mcs_samples_path = SCRIPT_DIR / f"data/mc_samples_normal_100000000.npy"
+    moment_path = SCRIPT_DIR / "train/results/srg/mlp_moment/lr_1.0e-05_epochs_100000_fullprofile_True"
     results_path = SCRIPT_DIR / "results/reliability_timeline"
-    plots_path = results_path / "plots"
     log_path = results_path / "runner_log"
+    plots_path = results_path / "plots"
+    plots_path.mkdir(parents=True, exist_ok=True)
 
     with open(setting_path, "r") as f:
         setting_data = json.load(f)
@@ -285,21 +335,74 @@ if __name__ == "__main__":
 
     params = TimelineParameters(setting=setting_data)
 
-    figs = []
+    moment_calculator = load_moment_calculator(moment_path, z_path)
+
+    corrosion_model = CorrosionModel(
+        n_grid=100,
+        C50_mu=params.C50_mu,
+        corrosion_rate=params.corrosion_rate,
+        obs_error_std=params.obs_error_std,
+        start_thickness=params.start_thickness
+    )
+
+    pf_calculator = PfCalculator(1_000, params, corrosion_model, moment_calculator, mcs_samples_path)
+
+    # mcs_data = pf_calculator.mcs_samples_torch.cpu().numpy()
+    # mcs_data = np.hstack((mcs_data, np.zeros(mcs_data.shape[0])[..., np.newaxis]))
+    # mcs_data = np.repeat(mcs_data[..., np.newaxis], pf_calculator.corrosion_ratio_grid.size, axis=-1)
+    # for i, corrosion_ratio in enumerate(pf_calculator.corrosion_ratio_grid):
+    #     mcs_data[:, -1, i] = np.tile(corrosion_ratio, reps=mcs_data.shape[0])
+    # mcs_data = mcs_data.transpose(0, 2, 1).reshape(-1, mcs_data.shape[1], order="F")
+    # np.save(log_path/"mcs_data.npy", mcs_data)
+    mcs_data = np.load(log_path/"mcs_data.npy")
+
+
+    pf_figs = []
+    corrosion_figs = []
+    corrosion_ratio_figs = []
+    moment_figs = []
+    scatter_figs = []
     all_times = params.times
     for i, time in enumerate(tqdm(params.setting.keys(), desc="Running time step")):
 
-        log = read_log(log_path, int(time))
+        log = read_log(log_path/f"{time}", int(time))
 
-        # fig = plot_pf(log)
-        # fig = plot_corrosion(log, params)
-        # fig = plot_corrosion_ratio(log, params)
+        fig = plot_pf(log, float(time))
+        fig.suptitle(f"Time={time}")
+        pf_figs.append(fig)
+
+        fig = plot_corrosion(log, params)
+        fig.suptitle(f"Time={time}")
+        corrosion_figs.append(fig)
+
+        fig = plot_corrosion_ratio(log, params)
+        fig.suptitle(f"Time={time}")
+        corrosion_ratio_figs.append(fig)
+
         fig = plot_moment(log, params)
-        fig.savefig("dummy.png")
+        fig.suptitle(f"Time={time}")
+        moment_figs.append(fig)
 
+        fig = plot_scatter(log, mcs_data)
+        fig.suptitle(f"Time={time}")
+        scatter_figs.append(fig)
 
-        pass
+    pp = PdfPages(plots_path/"pf_plots.pdf")
+    [pp.savefig(fig) for fig in pf_figs]
+    pp.close()
 
-    pp = PdfPages(plots_path/"plots.pdf")
-    [pp.savefig(fig) for fig in figs]
+    pp = PdfPages(plots_path/"corrosion_plots.pdf")
+    [pp.savefig(fig) for fig in corrosion_figs]
+    pp.close()
+
+    pp = PdfPages(plots_path/"corrosion_ratio_plots.pdf")
+    [pp.savefig(fig) for fig in corrosion_ratio_figs]
+    pp.close()
+
+    pp = PdfPages(plots_path/"moment_plots.pdf")
+    [pp.savefig(fig) for fig in moment_figs]
+    pp.close()
+
+    pp = PdfPages(plots_path/"scatter_plots.pdf")
+    [pp.savefig(fig) for fig in scatter_figs]
     pp.close()

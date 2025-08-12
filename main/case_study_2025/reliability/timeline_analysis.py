@@ -12,7 +12,7 @@ if __name__ == "__main__":
     setting_path = SCRIPT_DIR / "data/setting/case_study.json"
     z_path = SCRIPT_DIR / "data/setting/z.json"
     mcs_samples_path = SCRIPT_DIR / f"data/mc_samples_normal_100000000.npy"
-    chebysev_path = SCRIPT_DIR / "train/results/srg/chebysev/lr_1.0e-05_epochs_100000_fullprofile_True"
+    moment_path = SCRIPT_DIR / "train/results/srg/mlp_moment/lr_1.0e-05_epochs_100000_fullprofile_True"
     results_path = SCRIPT_DIR / "results/reliability_timeline"
     results_path.mkdir(parents=True, exist_ok=True)
 
@@ -20,7 +20,7 @@ if __name__ == "__main__":
         setting_data = json.load(f)
     setting_data = {float(key): val for (key, val) in setting_data.items()}
 
-    moment_calculator = load_chebysev_calculator(chebysev_path, z_path)
+    moment_calculator = load_moment_calculator(moment_path, z_path)
 
     params = TimelineParameters(setting=setting_data)
 
@@ -51,16 +51,16 @@ if __name__ == "__main__":
     results = {}
     for time, data in tqdm(params.setting.items(), desc="Running time step"):
 
-        time = float(time)
+        # if time > 55: break
 
-        # if time > 51: break
+        time = float(time)
 
         runner.step(time, params)
 
         pfs = pf_calculator.get_pfs(params, runner)
-        runner.read_pfs(pfs)
+        # runner.read_pfs(pfs)
 
-        runner.log(pfs, results_path)
+        runner.log(time, pfs, results_path)
 
         runner.finish_step()
 
