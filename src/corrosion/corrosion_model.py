@@ -1,5 +1,6 @@
 import numpy as np
 from numpy.typing import NDArray
+from scipy import stats
 from scipy.stats import truncnorm, norm
 from typing import List, Tuple, Dict, Optional, Type, NamedTuple
 from dataclasses import dataclass
@@ -75,7 +76,7 @@ class CorrosionModel:
                               obs_error_std: float=0.1, n_timelines: int = 1, seed: int = 42) -> NDArray[np.float32]:
         """
         Corrosion observations over a timeline are fully correlated -> there is only one truly random variable for
-        for generating observations: C50
+        generating observations: C50
 
         Observation randomness is added to enable meaningful Bayesian updating.
 
@@ -94,9 +95,10 @@ class CorrosionModel:
         obs_time = obs_time[:, np.newaxis, np.newaxis]
         obs_mean = C50[np.newaxis, np.newaxis, :] * (1 + self.corrosion_rate / 1.5 * (obs_time - 50))
         np.random.seed(seed)
-        obs_error = np.random.normal(loc=0, scale=1, size=(n_times, n_timelines, C50.size))
+        # obs_error = np.random.normal(loc=0, scale=1, size=(n_times, n_timelines, C50.size)).squeeze()
+        obs_error = stats.truncnorm(loc=0, scale=1, a=0, b=np.inf).rvs(size=(n_times, n_timelines, C50.size)).squeeze()
         obs_error = np.cumsum(obs_error, axis=0)
-        obs = obs_mean + obs_error * obs_error_std
+        obs = obs_mean.squeeze() + obs_error * obs_error_std
 
         return obs.squeeze()
 

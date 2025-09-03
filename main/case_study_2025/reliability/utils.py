@@ -1,10 +1,10 @@
 import numpy as np
+import pandas as pd
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from scipy import stats
 from pathlib import Path
 import json
-import orjson
 from copy import deepcopy
 # from main.case_study_2025.reliability.moment_calculation.chebysev_moments import FoSCalculator as ChebysevFoS
 from main.case_study_2025.reliability.moment_calculation.mlp_moments_direct import FoSCalculator as MLPMoments
@@ -25,10 +25,11 @@ else:
 @dataclass
 class TimelineParameters:
     setting: dict
-    n_mcs: int = 100_000
+    # n_mcs: int = 100_000
+    n_mcs: int = 1_770
     start_thickness: float = 9.5
     EI_start: float = 30_000.
-    moment_cap_start: float = 535.
+    moment_cap_start: float = 700.
     moment_survived: float = 0.
     water_lvl: float = -1.
     water_lvl: float = -1.
@@ -209,7 +210,12 @@ class PfCalculator:
         return  corrosion_ratio_sample
 
     def load_data(self, path):
-        mcs_samples = np.load(path)
+        # mcs_samples = np.load(path)
+        mcs_samples = pd.read_csv(path)
+        X_cols = [col for col in mcs_samples.columns if col.split("_")[0] != "disp" and col.split("_")[
+            0] != "moment" and col != "index" and col != "Unnamed: 0"]
+        X_cols = X_cols[:-1]
+        mcs_samples = mcs_samples.loc[:, X_cols].values
         mcs_samples = mcs_samples[:self.n_mcs]
         mcs_samples = mcs_samples[:, :-1]  # Remove EI column
         self.mcs_samples_torch = torch.from_numpy(mcs_samples.astype(np.float32)).to(device=device)
@@ -226,7 +232,9 @@ class PfCalculator:
         loader = DataLoader(dataset, batch_size=1_000, shuffle=True)
 
         max_moments = []
-        for (x,) in loader:
+        # for (x,) in loader:
+        for x in samples:
+            x = x.reshape(1, -1)
             moments = self.moment_calculator.moments(x)
             max_moments.append(np.abs(moments).max(axis=-1))
 
@@ -300,7 +308,7 @@ class PfCalculator:
         fos = moment_cap_grid[:, np.newaxis] / (self.max_moments + 1e-5)
         survival = moment_survived >= self.max_moments
         pf_mcs = np.mean(fos < 1, axis=-1)
-        return np.trapz(pf_mcs * moment_cap_pdf, moment_cap_grid, axis=-1), moment_cap_pdf_truncated, fos, survival
+        return np.trapz(pf_mcs * moment_cap_pdf_truncated, moment_cap_grid, axis=-1), moment_cap_pdf_truncated, fos, survival
 
     def get_pfs(self, params, runner):
 
@@ -308,11 +316,13 @@ class PfCalculator:
 
         times = [iter_time for iter_time in params.times if iter_time >= time]
 
-        corrosion_ratio_prior, corrosion_pdf = runner.update_corrosion_ratio_pdf("prior", params, times)
-        corrosion_ratio_posterior, corrosion_pdf = runner.update_corrosion_ratio_pdf("posterior", params, times)
+        corrosion_ratio_prior, corrosion_pdf_prior = runner.update_corrosion_ratio_pdf("prior", params, times)
+        corrosion_ratio_posterior, corrosion_pdf_posterior = runner.update_corrosion_ratio_pdf("posterior", params, times)
 
         pfs = {}
         for cap_type in ["theoretical", "survived"]:
+
+            runner.moment_survived = 450.
 
             if cap_type == "theoretical":
                 # moment_cap_eff = runner.moment_cap_start
@@ -320,7 +330,6 @@ class PfCalculator:
                 time_survived = 0.
             elif cap_type == "survived":
                 moment_survived = runner.moment_survived
-                time_survived = runner.time_survived
                 # if runner.moment_survived > runner.moment_cap_start:
                 #     moment_cap_eff = runner.moment_survived
                 #     time_survived = runner.time_survived
@@ -352,12 +361,12 @@ class PfCalculator:
                     "C50_pdf": runner.C50_posterior if pdf_type == "posterior" else runner.C50_prior_fixed,
                     "moment_cap_start": runner.moment_cap_start,
                     "time_survived": runner.time_survived,
-                    "moment_survived": runner.moment_survived,
+                    "moment_survived": moment_survived,
                     "moment_cap_effective": max(runner.moment_cap_start, moment_survived),
                     "corrosion_ratio_grid": self.corrosion_ratio_grid.astype(np.float16).tolist(),
                     "corrosion_ratio_pdf": corrosion_ratio_pdf.astype(np.float32).tolist(),
                     "corrosion_grid": (np.array(self.corrosion_ratio_grid)*params.start_thickness).tolist(),
-                    "corrosion_pdf": corrosion_pdf.tolist(),
+                    "corrosion_pdf": corrosion_pdf_posterior.tolist() if pdf_type == "posterior" else corrosion_pdf_prior.tolist(),
                     "moment_cap_pdf_truncated": moment_cap_pdf_truncated.tolist(),
                     "fos": np.greater_equal(fos, 1.),
                     "survival": survival,
@@ -367,20 +376,20 @@ class PfCalculator:
                     "beta_forecast": {str(time): b for (time, b) in zip(times, beta)},
                 }
 
-                pass
-
         return pfs
 
 
 def load_moment_calculator(path, x_path):
 
-    with open(x_path, "r") as f: x = np.array(json.load(f))
-
-    n_points = len(x)
-    wall_props = (1e+4, 0, x, None)
+    # with open(x_path, "r") as f:
+    #     x = np.array(json.load(f))
+    #
+    # n_points = len(x)
+    wall_props = (1e+4, 0, [], None)
 
     moment_calculator = MLPMoments(
-        n_points=50,
+        # n_points=50,
+        n_points=1,
         wall_props=wall_props,
         model_path=path / "torch_weights.pth",
         scaler_x_path=path / "scaler_x.joblib",

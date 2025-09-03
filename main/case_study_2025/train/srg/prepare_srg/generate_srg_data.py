@@ -74,34 +74,43 @@ def sample_disp(
 
 def draw_sample(
         model: DSheetPiling,
+        df,
         rv_names,
-        packages,
         result_path: str | Path,
-        data_path
 ) -> None:
 
     if not isinstance(result_path, Path): result_path = Path(Path(result_path).as_posix())
-    # if result_path.exists(): shutil.rmtree(result_path)  # Delete files
     result_path.mkdir(parents=True, exist_ok=True)
 
-    if not isinstance(data_path, Path): data_path = Path(Path(data_path).as_posix())
+    samples = df.values
+    samples = samples[:2_000]
 
-    all_packages = [f for f in data_path.iterdir() if f.is_file()]
-    packages = [f for f in all_packages if int(f.name.split("_")[1]) in packages]
+    disp_sample, moment_sample = sample_disp(samples, rv_names, model)
 
-    for package in packages:
+    results = {
+        "sample": df[cols_keep].values.tolist(),
+        "displacement": disp_sample,
+        "moment": moment_sample,
+    }
 
-        path = result_path/package.name
-        path = path.with_suffix(".json")
+    idx = [i for (i, d) in enumerate(disp_sample) if len(d[0]) == 150]
+    print(f"NUMBER OF USABLE SAMPLES COLLECTED: {len(idx)}")
 
-        rv_samples = np.load(package)
+    samples = samples[idx]
+    disp_sample = [d for (i, d) in enumerate(disp_sample) if i in idx]
+    moment_sample = [d for (i, d) in enumerate(moment_sample) if i in idx]
 
-        run_index = rv_samples[:, 0].tolist()
-        rv_samples = rv_samples[:, 1:]
+    disp_sample_np = np.array(disp_sample).squeeze()
+    moment_sample_np = np.array(moment_sample).squeeze()
+    data = np.c_[df[cols_keep].values[:len(samples)], disp_sample_np, moment_sample_np]
+    df_srg = pd.DataFrame(
+        data=data,
+        columns=cols_keep + [f"disp_{i}" for i in range(1, disp_sample_np.shape[1]+1)] + [f"moment_{i}" for i in range(1, moment_sample_np.shape[1]+1)]
+    )
+    df_srg.to_csv(result_path/"surrogate_data.csv")
 
-        disp_sample, moment_sample = sample_disp(rv_samples, rv_names, model)
-
-        log(run_index, disp_sample, moment_sample, path)
+    # with open(result_path / "surrogate_data.json", "w") as f:
+    #     json.dump(results, f, indent=4)
 
 
 def split_packages(path, samples_per_split=1_000):
@@ -145,19 +154,15 @@ if __name__ == "__main__":
     samples_path = r"../../../data/1M_parameter_samples_uniformly_distributed.csv"
     samples_path = Path(Path(samples_path).as_posix())
     df = pd.read_csv(samples_path)
+    df["water_lvl"] = -1.1 + (df["water_lvl"] - df["water_lvl"].min()) / (df["water_lvl"].max() - df["water_lvl"].min()) * (-0.5+1.1)
     rv_names = list(df.columns)
 
     cols_keep = [
         'Klei_soilcohesion', 'Klei_soilphi', 'Klei_soilcurkb1','Zand_soilphi', 'Zand_soilcurkb1','Zandvast_soilphi',
         'Zandvast_soilcurkb1','Zandlos_soilphi', 'Zandlos_soilcurkb1','Wall_SheetPilingElementEI', 'water_lvl'
     ]
-    df = df.loc[:, cols_keep]
+    # df = df.loc[:, cols_keep]
 
-    # split_packages(samples_path, samples_per_split=1_000)
-
-    # packages = list(range(1, 100))
-    packages = [i for i in range(1, 100) if i not in [1, 10, 11, 12, 13, 14, 15, 16, 17]]
-    data_path = r"../../../data/data_packages"
-    result_path = r"../../../data/result_packages"
-    draw_sample(geomodel, rv_names, packages=packages, result_path=result_path, data_path=data_path)
+    result_path = Path(__file__).parents[3] / "data"
+    draw_sample(geomodel, df, rv_names, result_path=result_path)
 

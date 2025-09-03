@@ -5,7 +5,7 @@ import numpy as np
 from numpy.typing import NDArray
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, r2_score
 from main.case_study_2025.train.srg.utils import load_data, plot
 
 import torch
@@ -38,6 +38,7 @@ class MLP(nn.Module):
             prev_dim = hidden_dim
 
         layers.append(nn.Linear(prev_dim, output_dim))
+        layers.append(nn.Tanh())
 
         self.net = nn.Sequential(*layers)
 
@@ -46,20 +47,38 @@ class MLP(nn.Module):
 
 
 @app.command()
-def train(epochs: int = 1_000, lr: float = 1e-4, full_profile: bool = True, quiet: bool = False):
+def train(epochs: int = 10_000, lr: float = 1e-5, full_profile: bool = True, quiet: bool = False):
 
     base_dir = Path(__file__).resolve().parent
 
     data_dir = base_dir.parent / "data"
-    data_path = data_dir / "srg_data_20250808_141329.csv"
+    # data_path = data_dir / "srg_data_20250808_141329.csv"
+    data_path = Path(__file__).parents[2] / "data/surrogate_data.csv"
 
     output_path = base_dir.parent / f"results/srg/mlp_moment/lr_{lr:.1e}_epochs_{epochs:d}_fullprofile_{full_profile}"
     output_path.mkdir(parents=True, exist_ok=True)
 
     X, y = load_data(data_path, full_profile=full_profile, target="moment")
 
-    # Keep only points along wall that have a decently high moment value
-    y = y[:, 60: 110]
+    # targets = np.abs(y).max(1)
+    # targets = np.where(y.min(1) <= -600, y.max(1), targets)
+    # targets = np.where(y.max(1) >= 600, np.abs(y).min(1), targets)
+    # y = targets.reshape(-1, 1)
+
+    y = y[:, 60:110]
+    # targets = np.stack((np.abs(y.min(1)), np.abs(y.max(1)))).T
+    # idx = np.where(np.all(targets <= 600, axis=1))[0]
+    # X, y = X[idx], y[idx]
+    cutoff = 500
+    # X = X[y.max(1)<cutoff]
+    # y = y[y.max(1)<cutoff]
+    # X = X[y.min(1)>-cutoff]
+    # y = y[y.min(1)>-cutoff]
+
+    y = np.abs(y).max(1)
+    X = X[np.all(np.c_[y>=300, y<=500], axis=-1)]
+    y = y[np.all(np.c_[y>=300, y<=500], axis=-1)]
+    y = y.reshape(-1, 1)
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
@@ -82,20 +101,19 @@ def train(epochs: int = 1_000, lr: float = 1e-4, full_profile: bool = True, quie
     model = MLP(
         input_dim=X.shape[-1],
         hidden_dims=[1024, 512, 256, 128, 64, 32],
+        # hidden_dims=[256, 128, 64, 32],
         output_dim=y.shape[-1]
     ).to(device)
 
     torch.manual_seed(42)
 
-   # criterion = nn.MSELoss()
-    criterion = torch.nn.HuberLoss(delta=1.0)
-   # criterion = torch.nn.SmoothL1Loss()
+    # criterion = torch.nn.MSELoss()
+    # criterion = torch.nn.HuberLoss(delta=1.0)
+    criterion = torch.nn.L1Loss()
     
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.5, patience=10
-    )
+    scheduler = torch.optim.lr_scheduler.LinearLR(optimizer=optimizer, start_factor=1., end_factor=.01, total_iters=int(epochs*0.8))
 
     x_torch = torch.tensor(X_train_scaled, dtype=torch.float32, device=device)
     y_torch = torch.tensor(y_train_scaled, dtype=torch.float32, device=device)
@@ -112,7 +130,7 @@ def train(epochs: int = 1_000, lr: float = 1e-4, full_profile: bool = True, quie
         loss.backward()
         optimizer.step()
         epoch_loss = loss.item()
-        scheduler.step(epoch_loss)
+        scheduler.step()
         epoch_losses.append(epoch_loss)
 
     epoch_losses = np.asarray(epoch_losses)
@@ -120,11 +138,15 @@ def train(epochs: int = 1_000, lr: float = 1e-4, full_profile: bool = True, quie
     model.eval()
 
     with torch.no_grad():
+        # X_test=torch.tensor([ 6.7792e+00,  2.8947e+01,  2.0389e+04,  4.0065e+01,  1.1157e+04,
+        #   3.1426e+01,  4.4213e+04,  3.6907e+01,  1.0310e+04,  3.0000e+04,
+        #  -1.0000e+00]).to("cpu").reshape(1, -1)
         y_hat = inference(model, X_test, scaler_x, scaler_y)
-        rmse = mean_squared_error(y_hat, y_test)
+        rmse = np.sqrt(mean_squared_error(y_test.squeeze(), y_hat.squeeze()))
+        r2 = r2_score(y_test.squeeze(), y_hat.squeeze())
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    message = f"lr={lr:.1e} | {epochs:d} epochs | RMSE: {rmse:.2f}"
+    message = f"lr={lr:.1e} | {epochs:d} epochs | RMSE: {rmse:.2f} | R2: {r2:.2f}"
     with open(output_path/"training_log.txt", "a") as f:
         f.write(f"{timestamp} | " + message)
 

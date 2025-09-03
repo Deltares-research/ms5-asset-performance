@@ -11,8 +11,9 @@ if __name__ == "__main__":
     SCRIPT_DIR = Path(__file__).resolve().parent.parent
     setting_path = SCRIPT_DIR / "data/setting/case_study.json"
     z_path = SCRIPT_DIR / "data/setting/z.json"
-    mcs_samples_path = SCRIPT_DIR / f"data/mc_samples_normal_100000000.npy"
-    moment_path = SCRIPT_DIR / "train/results/srg/mlp_moment/lr_1.0e-05_epochs_100000_fullprofile_True"
+    # mcs_samples_path = SCRIPT_DIR / f"data/mc_samples_normal_10000000.npy"
+    mcs_samples_path = SCRIPT_DIR / f"data/surrogate_data.csv"
+    moment_path = SCRIPT_DIR / "train/results/srg/mlp_moment/lr_1.0e-05_epochs_10000_fullprofile_True"
     results_path = SCRIPT_DIR / "results/reliability_timeline"
     results_path.mkdir(parents=True, exist_ok=True)
 
@@ -51,14 +52,11 @@ if __name__ == "__main__":
     results = {}
     for time, data in tqdm(params.setting.items(), desc="Running time step"):
 
-        # if time > 55: break
-
         time = float(time)
 
         runner.step(time, params)
 
         pfs = pf_calculator.get_pfs(params, runner)
-        # runner.read_pfs(pfs)
 
         runner.log(time, pfs, results_path)
 

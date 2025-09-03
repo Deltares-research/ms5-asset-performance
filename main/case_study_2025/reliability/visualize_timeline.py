@@ -1,5 +1,4 @@
 import json
-import orjson
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -28,19 +27,19 @@ def read_log(log_path, time):
 
 def plot_pf(log, current_time):
 
-    fig, axs = plt.subplots(1, 2, figsize=(8, 6), sharex=True, sharey=True)
+    fig, axs = plt.subplots(2, 1, figsize=(8, 8), sharex=True, sharey=False)
 
     ax = axs[0]
 
     data = log["theoretical"]["posterior"]
     times_forecast = [float(key) for key in data["pf_forecast"].keys()]
     pf_forecast_posterior = [float(val) for val in data["pf_forecast"].values()]
-    ax.plot(times_forecast, pf_forecast_posterior, c="r", label="Factual forecast")
+    ax.plot(times_forecast, pf_forecast_posterior, c="r", label="Posterior forecast")
 
     data = log["theoretical"]["prior"]
     times_prior = [float(key) for key in data["pf_forecast"].keys()]
     pf_forecast_prior = [float(val) for val in data["pf_forecast"].values()]
-    ax.plot(times_forecast, pf_forecast_posterior, c="b", label="Counterfactual forecast")
+    ax.plot(times_forecast, pf_forecast_prior, c="b", label="Prior forecast")
 
     ax.annotate("", xy=(current_time, 0), xytext=(current_time, 0.1), arrowprops=dict(arrowstyle='->', color="k", linewidth=3))
     ax.set_xlabel("Time [yr]", fontsize=12)
@@ -56,16 +55,18 @@ def plot_pf(log, current_time):
     data = log["survived"]["posterior"]
     times_forecast = [float(key) for key in data["pf_forecast"].keys()]
     pf_forecast_posterior = [float(val) for val in data["pf_forecast"].values()]
-    ax.plot(times_forecast, pf_forecast_posterior, c="r", label="Factual forecast")
+    ax.plot(times_forecast, pf_forecast_posterior, c="r", label="Posterior forecast")
 
-    data = log["theoretical"]["prior"]
+    data = log["survived"]["prior"]
     times_prior = [float(key) for key in data["pf_forecast"].keys()]
     pf_forecast_prior = [float(val) for val in data["pf_forecast"].values()]
-    ax.plot(times_forecast, pf_forecast_posterior, c="b", label="Counterfactual forecast")
+    ax.plot(times_forecast, pf_forecast_prior, c="b", label="Prior forecast")
     
     ax.axvline(current_time, c="k", linestyle="--", linewidth=0.5)
     ax.annotate("", xy=(current_time, 0), xytext=(current_time, 0.1), arrowprops=dict(arrowstyle='->', color="k", linewidth=3))
     ax.set_xlabel("Time [yr]", fontsize=12)
+    ax.set_ylabel("${P}_{f}$ [-]", fontsize=12)
+    ax.set_yscale('log')
     ax.xaxis.grid(False)
     ax.yaxis.grid(True)
     ax.legend(fontsize=10)
@@ -96,7 +97,7 @@ def plot_corrosion(log, params, alpha=0.05):
     ax.fill_between(times_forecast, corrosion_quantiles[0], corrosion_quantiles[1], color="b", alpha=0.3)
     ax.plot(times_forecast, corrosion_quantiles[0], color="b", linewidth=0.2)
     ax.plot(times_forecast, corrosion_quantiles[1], color="b", linewidth=0.2)
-    ax.plot(times_forecast, corrosion_mean, color="b", label="Counterfactual forecast")
+    ax.plot(times_forecast, corrosion_mean, color="b", label="Prior forecast")
 
     data = log["theoretical"]["posterior"]
     times_forecast = [float(key) for key in data["pf_forecast"].keys()]
@@ -112,7 +113,7 @@ def plot_corrosion(log, params, alpha=0.05):
     ax.fill_between(times_forecast, corrosion_quantiles[0], corrosion_quantiles[1], color="r", alpha=0.3)
     ax.plot(times_forecast, corrosion_quantiles[0], color="r", linewidth=0.2)
     ax.plot(times_forecast, corrosion_quantiles[1], color="r", linewidth=0.2)
-    ax.plot(times_forecast, corrosion_mean, color="r", label="Factual forecast")
+    ax.plot(times_forecast, corrosion_mean, color="r", label="Posterior forecast")
 
     current_time = times_forecast[0]
     past_times = [time for time in all_times if time <= current_time]
@@ -156,7 +157,7 @@ def plot_corrosion_ratio(log, params, alpha=0.05):
     ax.fill_between(times_forecast, corrosion_ratio_quantiles[0], corrosion_ratio_quantiles[1], color="b", alpha=0.3)
     ax.plot(times_forecast, corrosion_ratio_quantiles[0], color="b", linewidth=0.2)
     ax.plot(times_forecast, corrosion_ratio_quantiles[1], color="b", linewidth=0.2)
-    ax.plot(times_forecast, corrosion_ratio_mean, color="b", label="Counterfactual forecast")
+    ax.plot(times_forecast, corrosion_ratio_mean, color="b", label="Prior forecast")
 
     data = log["theoretical"]["posterior"]
     times_forecast = [float(key) for key in data["pf_forecast"].keys()]
@@ -172,7 +173,7 @@ def plot_corrosion_ratio(log, params, alpha=0.05):
     ax.fill_between(times_forecast, corrosion_ratio_quantiles[0], corrosion_ratio_quantiles[1], color="r", alpha=0.3)
     ax.plot(times_forecast, corrosion_ratio_quantiles[0], color="r", linewidth=0.2)
     ax.plot(times_forecast, corrosion_ratio_quantiles[1], color="r", linewidth=0.2)
-    ax.plot(times_forecast, corrosion_ratio_mean, color="r", label="Factual forecast")
+    ax.plot(times_forecast, corrosion_ratio_mean, color="r", label="Posterior forecast")
 
     current_time = times_forecast[0]
     past_times = [time for time in all_times if time <= current_time]
@@ -201,15 +202,14 @@ def plot_moment(log, params, alpha=0.05):
 
     fig, ax = plt.subplots(figsize=(8, 6))
 
-    data = log["theoretical"]["posterior"]
+    data = log["survived"]["posterior"]
     times_forecast = [float(key) for key in data["pf_forecast"].keys()]
     moment_cap_effective = data["moment_cap_effective"]
     corrosion_ratio_grid = np.asarray(data["corrosion_ratio_grid"])
     corrosion_ratio_pdf = np.asarray(data["corrosion_ratio_pdf"])
     moment_cap = data["moment_cap_start"]
     time_survived = data["time_survived"]
-    # moment_survived = data["moment_survived"]
-    moment_survived = 420
+    moment_survived = data["moment_survived"]
 
     moment_cap_grid = moment_cap * (1 - corrosion_ratio_grid) + 1e-3
     moment_cap_pdf = corrosion_ratio_pdf * (1 / moment_cap)  # Variable change
@@ -228,9 +228,9 @@ def plot_moment(log, params, alpha=0.05):
     ax.fill_between(times_forecast, moment_cap_quantiles[0], moment_cap_quantiles[1], color="r", alpha=0.3)
     ax.plot(times_forecast, moment_cap_quantiles[0], color="r", linewidth=0.2)
     ax.plot(times_forecast, moment_cap_quantiles[1], color="r", linewidth=0.2)
-    ax.plot(times_forecast, moment_cap_mean, color="r", label="Factual forecast")
+    ax.plot(times_forecast, moment_cap_mean, color="r", label="Posterior forecast")
 
-    data = log["theoretical"]["prior"]
+    data = log["survived"]["prior"]
     times_forecast = [float(key) for key in data["pf_forecast"].keys()]
     moment_cap_effective = data["moment_cap_effective"]
     corrosion_ratio_grid = np.asarray(data["corrosion_ratio_grid"])
@@ -256,7 +256,7 @@ def plot_moment(log, params, alpha=0.05):
     ax.fill_between(times_forecast, moment_cap_quantiles[0], moment_cap_quantiles[1], color="b", alpha=0.3)
     ax.plot(times_forecast, moment_cap_quantiles[0], color="b", linewidth=0.2)
     ax.plot(times_forecast, moment_cap_quantiles[1], color="b", linewidth=0.2)
-    ax.plot(times_forecast, moment_cap_mean, color="b", label="Counterfactual forecast")
+    ax.plot(times_forecast, moment_cap_mean, color="b", label="Prior forecast")
 
     current_time = times_forecast[0]
     past_times = [time for time in all_times if time <= current_time]
@@ -271,6 +271,7 @@ def plot_moment(log, params, alpha=0.05):
     ax.set_xlabel("Time [yr]", fontsize=12)
     ax.set_ylabel("Moment capacity [kNm]", fontsize=12)
     ax.set_xlim(min(all_times), max(all_times))
+    ax.set_ylim(300, 800)
     ax.xaxis.grid(False)
     ax.yaxis.grid(True)
     ax.legend(fontsize=10, loc="lower right")
@@ -281,20 +282,24 @@ def plot_moment(log, params, alpha=0.05):
 def plot_scatter(log, mcs_data, rvs=["Klei_soilphi", "Corrosion_ratio"]):
 
     def make_df(data, mcs_data):
-        fos = data["fos"].flatten()
+        fos = data["fos"]
         survival = data["survival"].flatten()
+        moment_survived = data["moment_survived"]
+        moment_cap = data["moment_cap_effective"]
         cols_keep = [
             'Klei_soilcohesion', 'Klei_soilphi', 'Klei_soilcurkb1', 'Zand_soilphi', 'Zand_soilcurkb1',
             'Zandvast_soilphi',
             'Zandvast_soilcurkb1', 'Zandlos_soilphi', 'Zandlos_soilcurkb1'
         ]
 
+        mcs_data = np.repeat(mcs_data[:, :-1], fos.shape[0], axis=0)
         df = pd.DataFrame(
-            data=np.hstack((mcs_data, fos[:, np.newaxis], survival[:, np.newaxis])),
-            columns=cols_keep + ["Corrosion_ratio", "FoS", "Survival"]
+            data=np.hstack((mcs_data,  np.repeat(np.array(data["corrosion_ratio_grid"]), fos.shape[-1])[:, np.newaxis], fos.flatten()[:, np.newaxis])),
+            columns=cols_keep + ["Corrosion_ratio", "FoS"]
         )
+        df["Survival"] = moment_cap * (1-df["Corrosion_ratio"]) >= moment_survived
 
-        df["hue"] = 0
+        df["hue"] = ""
         df.loc[df["FoS"]*df["Survival"] == 1, "hue"] = "Safety_Survival"
         df.loc[df["FoS"]*(1-df["Survival"]) == 1, "hue"] = "Safety_NonSurvival"
         df.loc[1-df["FoS"]==1, "hue"] = "Failure"
@@ -307,8 +312,8 @@ def plot_scatter(log, mcs_data, rvs=["Klei_soilphi", "Corrosion_ratio"]):
         for pdf_type in ["prior", "posterior"]:
             df = make_df(log[cap_type][pdf_type], mcs_data)
             np.random.seed(42)
-            idx = np.random.randint(low=0, high=mcs_data.shape[0]-1, size=1_000)
-            df = df.iloc[idx]
+            # idx = np.random.randint(low=0, high=mcs_data.shape[0]-1, size=1_000)
+            # df = df.iloc[idx]
             sns.scatterplot(data=df, x=rvs[0], y=rvs[1], hue="hue",  ax=axs.flatten()[i])
             axs.flatten()[i].set(title=f"{cap_type}-{pdf_type}")
             i += 1
@@ -316,13 +321,13 @@ def plot_scatter(log, mcs_data, rvs=["Klei_soilphi", "Corrosion_ratio"]):
     return fig
 
 
-
 if __name__ == "__main__":
 
     SCRIPT_DIR = Path(__file__).resolve().parent.parent
     setting_path = SCRIPT_DIR / "data/setting/case_study.json"
     z_path = SCRIPT_DIR / "data/setting/z.json"
-    mcs_samples_path = SCRIPT_DIR / f"data/mc_samples_normal_100000000.npy"
+    # mcs_samples_path = SCRIPT_DIR / f"data/mc_samples_normal_10000000.npy"
+    mcs_samples_path = SCRIPT_DIR / f"data/surrogate_data.csv"
     moment_path = SCRIPT_DIR / "train/results/srg/mlp_moment/lr_1.0e-05_epochs_100000_fullprofile_True"
     results_path = SCRIPT_DIR / "results/reliability_timeline"
     log_path = results_path / "runner_log"
@@ -354,8 +359,13 @@ if __name__ == "__main__":
     #     mcs_data[:, -1, i] = np.tile(corrosion_ratio, reps=mcs_data.shape[0])
     # mcs_data = mcs_data.transpose(0, 2, 1).reshape(-1, mcs_data.shape[1], order="F")
     # np.save(log_path/"mcs_data.npy", mcs_data)
-    mcs_data = np.load(log_path/"mcs_data.npy")
-
+    # mcs_data = np.load(log_path/"mcs_data.npy")
+    # mcs_data = np.load(log_path/"mcs_data.npy")
+    mcs_samples = pd.read_csv(mcs_samples_path)
+    X_cols = [col for col in mcs_samples.columns if col.split("_")[0] != "disp" and col.split("_")[
+        0] != "moment" and col != "index" and col != "Unnamed: 0"]
+    X_cols = X_cols[:-1]
+    mcs_data = mcs_samples.loc[:, X_cols].values
 
     pf_figs = []
     corrosion_figs = []
@@ -364,6 +374,9 @@ if __name__ == "__main__":
     scatter_figs = []
     all_times = params.times
     for i, time in enumerate(tqdm(params.setting.keys(), desc="Running time step")):
+
+        if i > 0:
+            continue
 
         log = read_log(log_path/f"{time}", int(time))
 

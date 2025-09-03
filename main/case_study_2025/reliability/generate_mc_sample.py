@@ -9,10 +9,10 @@ if __name__ == "__main__":
 
     SCRIPT_DIR = Path(__file__).resolve().parent
 
-    n = 100_000_000
+    n = 10_000_000
     seed = 42
 
-    param_dist_path = SCRIPT_DIR / "../data/parameter_distributions.csv"
+    param_dist_path = SCRIPT_DIR.parent / "data/parameter_distributions.csv"
     output_path = SCRIPT_DIR.parent / f"data/mc_samples_normal_{n}.npy"
 
     parameter_dists = pd.read_csv(param_dist_path)

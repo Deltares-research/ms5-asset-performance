@@ -24,8 +24,18 @@ def run_model(params, model):
 
 if __name__ == "__main__":
 
-    df = pd.read_csv(r"data/true_params.csv", index_col="parameter")
-    true_params = df["value"].to_dict()
+    cols_keep = [
+        'Klei_soilcohesion', 'Klei_soilphi', 'Klei_soilcurkb1','Zand_soilphi', 'Zand_soilcurkb1','Zandvast_soilphi',
+        'Zandvast_soilcurkb1','Zandlos_soilphi', 'Zandlos_soilcurkb1','Wall_SheetPilingElementEI', 'water_lvl'
+    ]
+
+    samples_path = Path(__file__).parent / "data/1M_parameter_samples_uniformly_distributed.csv"
+    df = pd.read_csv(samples_path)
+    df = df[cols_keep]
+    true_values = df.iloc[0]
+
+    # df = pd.read_csv(r"data/true_params.csv", index_col="parameter")
+    true_params = true_values.to_dict()
 
     times = [50 + time for time in range(0, 31)]
     corossion_model = CorrosionModel()
@@ -45,11 +55,11 @@ if __name__ == "__main__":
         deformations, moments, z = run_model(time_params, geomodel)
         data[float(time)] = {
             "time": float(time),
-            "corrosion": corrosion,
-            "corrosion_ratio": corrosion_ratio,
-            "EI_corroded": EI_corroded,
+            "corrosion": corrosion.tolist(),
+            "corrosion_ratio": corrosion_ratio.tolist(),
+            "EI_corroded": EI_corroded.tolist(),
             "true_params": true_params,
-            "time_params": time_params,
+            "time_params": {key: val.tolist() if isinstance(val, np.ndarray) else val for (key, val) in time_params.items()},
             "z": z,
             "z_monitoring": z,
             "deformations": deformations,
@@ -58,7 +68,7 @@ if __name__ == "__main__":
             "max_moment": max([fabs(m) for m in moments])
         }
 
-    path = Path(r"data/setting")
+    path = Path(__file__).parent / "data/setting"
     path.mkdir(parents=True, exist_ok=True)
     with open(path/"case_study.json", "w") as f:
         json.dump(data, f, indent=4)

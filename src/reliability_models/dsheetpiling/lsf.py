@@ -61,6 +61,8 @@ def unpack_wall_data(params: Dict[str, float], wall_dict: Dict[str, float]) -> D
     wall_names = list(wall_dict.keys())
     for (key, val) in params.items():
         name = key.split("_")[-1]
+        if isinstance(val, np.ndarray):
+            val = val[0]
         if not name in wall_names:
             continue
         wall_dict[name] = float(val)
