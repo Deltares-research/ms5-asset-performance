@@ -1,17 +1,12 @@
 import os
 import json
 import pymc as pm
-import arviz as az
 import pandas as pd
-import numpy as np
 import pytensor
 import pytensor.tensor as pt
-from pathlib import Path
 import joblib
-import typer
 from main.case_study_2025.train.hmc.utils import *
-from main.case_study_2025.train.srg.chebysev_train import Chebysev, MinMaxScaler
-import matplotlib.pyplot as plt
+from main.case_study_2025.train.srg.OLD.chebysev_train import Chebysev
 import typer
 
 

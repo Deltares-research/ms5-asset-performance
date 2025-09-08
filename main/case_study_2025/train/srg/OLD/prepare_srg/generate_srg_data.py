@@ -151,7 +151,7 @@ if __name__ == "__main__":
     geomodel_path = os.environ["MODEL_PATH"]  # model_path defined as environment variable
     geomodel = DSheetPiling(geomodel_path)
 
-    samples_path = r"../../../data/1M_parameter_samples_uniformly_distributed.csv"
+    samples_path = r"../../../../data/1M_parameter_samples_uniformly_distributed.csv"
     samples_path = Path(Path(samples_path).as_posix())
     df = pd.read_csv(samples_path)
     df["water_lvl"] = -1.1 + (df["water_lvl"] - df["water_lvl"].min()) / (df["water_lvl"].max() - df["water_lvl"].min()) * (-0.5+1.1)

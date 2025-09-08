@@ -33,7 +33,7 @@ def time_pf(rm, df, times):
 
 if __name__ == "__main__":
 
-    output_path = Path(r"../../results/ptk")
+    output_path = Path(r"../../../results/ptk")
 
     soil_states, other_states = parse_parameter_dist(r"../../data/parameter_distributions.csv")
     water_state = MvnRV(mus=[-0.8], stds=[0.2], names=["water_lvl"])

@@ -1,18 +1,11 @@
-import os
 import numpy as np
-import pickle
 import joblib
 import arviz as az
 import torch
 import xarray as xr
 from pathlib import Path
-import json
-from typing import Optional
-from scipy.signal import savgol_filter
-from numpy.polynomial.chebyshev import chebvander
-from main.case_study_2025.train.srg.chebysev_train import Chebysev, MinMaxScaler
+from main.case_study_2025.train.srg.OLD.chebysev_train import Chebysev
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
 
 
 class FoSCalculator:

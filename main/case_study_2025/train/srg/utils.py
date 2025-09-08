@@ -5,6 +5,8 @@ from matplotlib.backends.backend_pdf import PdfPages
 import seaborn as sns
 from pathlib import Path
 
+from sklearn.metrics import r2_score
+
 
 def load_data(path, target="displacement", full_profile=False):
 
@@ -49,10 +51,14 @@ def plot_predictions(inference, model, x_train, x_test, y_train, y_test, scaler_
     y_hat_test = inference(model, x_test, scaler_x, scaler_y)
 
     figs = []
+    r2 = r2_score(y_test, y_hat_test)
     zipped = zip(y_train.T, y_hat_train.T, y_test.T, y_hat_test.T)
     for i_point, (y_t_train, y_p_train, y_t_test, y_p_test) in enumerate(zipped):
         fig = plt.figure()
-        fig.suptitle(f"Point #{i_point + 1:d} along wall", fontsize=14)
+        if y_train.shape[1] != 1:
+            fig.suptitle(f"Point #{i_point + 1:d} along wall\n"+"${R}^{2}$="+f"{r2*100:.0f}%", fontsize=14)
+        else:
+            fig.suptitle("Maximum moment along wall\n"+"${R}^{2}$="+f"{r2*100:.0f}%", fontsize=14)
         plt.scatter(y_t_train, y_p_train, marker='x', c='b', label="Train")
         plt.scatter(y_t_test, y_p_test, marker='x', c='r', label="Test")
         plt.axline((0, 0), slope=1, c='k')

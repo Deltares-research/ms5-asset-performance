@@ -1,17 +1,11 @@
-import os
 import numpy as np
-import pickle
 import joblib
 import arviz as az
 import torch
 import xarray as xr
 from pathlib import Path
-import json
-from typing import Optional
-from scipy.signal import savgol_filter
-from main.case_study_2025.train.srg.cnn_train import CNN, MinMaxScaler
+from main.case_study_2025.train.srg.OLD.mlp_train import MLP
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
 
 
 class FoSCalculator:
@@ -19,13 +13,11 @@ class FoSCalculator:
     def __init__(self, n_points, wall_props, model_path, posterior_path, scaler_x_path, scaler_y_path):
 
         if not isinstance(model_path, Path): model_path = Path(Path(model_path).as_posix())
-        self.model = CNN(
+        self.model = MLP(
             input_dim=11,
             hidden_dims=[1024, 512, 256, 128, 64, 32],
-            output_len=n_points,
-            kernel_size=49,
+            output_dim=n_points
         )
-
         self.model.load_state_dict(torch.load(model_path))
         self.model.eval()
 
@@ -51,14 +43,14 @@ class FoSCalculator:
 
     def _curvature(self, displacements, dLs):
 
-        # u = displacements.copy() / 1_000
-        #
-        # padding = (
-        #     (0, 0),  # no padding on axis 0
-        #     (2, 2),  # pad two columns on axis 1 -> double derivative -> moments have the shape of displacements
-        # )
-        # displacements_padded = np.pad(displacements.copy(), pad_width=padding, mode='edge')
-        # dy2_dx2 = np.diff(displacements_padded, n=2, axis=-1)[..., 1:-1] / (dLs ** 2 + 1e-6)
+        displacements = displacements.copy() / 1_000
+
+        padding = (
+            (0, 0),  # no padding on axis 0
+            (2, 2),  # pad two columns on axis 1 -> double derivative -> moments have the shape of displacements
+        )
+        displacements_padded = np.pad(displacements.copy(), pad_width=padding, mode='edge')
+        dy2_dx2 = np.diff(displacements_padded, n=2, axis=-1)[..., 1:-1] / (dLs ** 2 + 1e-6)
 
         # # TODO: Fix moment estimation using simple double derivative calculation
         # x = np.cumsum(dLs)
@@ -68,19 +60,7 @@ class FoSCalculator:
         #         spline = UnivariateSpline(x, disp_chain_sample, s=1e-8)
         #         dy2_dx2[i, j] = spline.derivative(n=2)(x)
 
-        dx = 0.06
-        u = displacements.copy() / 1_000
-        curvature = np.zeros_like(u)
-        curvature[:, 2:-2] = (
-        -u[:, 0:-4] + 16 * u[:, 1:-3] - 30 * u[:, 2:-2] + 16 * u[:, 3:-1] - u[:, 4:]
-                             ) / (12 * dx ** 2 + 1e-6)
-
-        curvature[:, :2] = curvature[:, 2:3]  # replicate near-boundary values
-        curvature[:, -2:] = curvature[:, -3:-2]
-
-        curvature = savgol_filter(curvature, 11, 3, axis=1)
-
-        return curvature
+        return dy2_dx2
 
     def moments(self, displacements):
 
