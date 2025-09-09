@@ -4,16 +4,15 @@ import numpy as np
 from main.case_study_2025.reliability.utils import *
 from src.corrosion.corrosion_model import CorrosionModel
 from tqdm import tqdm
+from argparse import ArgumentParser
 
 
-if __name__ == "__main__":
+def main(n_mcs_samples=10_000_000, n_corrosion_grid=100, n_corrosion_ratio_grid=1_000, n_mcs=1_000_000):
 
     SCRIPT_DIR = Path(__file__).resolve().parent.parent
-    setting_path = SCRIPT_DIR / "data/setting/case_study.json"
-    z_path = SCRIPT_DIR / "data/setting/z.json"
-    # mcs_samples_path = SCRIPT_DIR / f"data/mc_samples_normal_10000000.npy"
-    mcs_samples_path = SCRIPT_DIR / f"data/surrogate_data.csv"
-    moment_path = SCRIPT_DIR / "train/results/srg/mlp_moment/lr_1.0e-05_epochs_10000_fullprofile_True"
+    setting_path = SCRIPT_DIR / "data/case_study.json"
+    mcs_samples_path = SCRIPT_DIR / f"data/mc_samples_normal_{n_mcs_samples}.npy"
+    moment_model_path = SCRIPT_DIR / f"results/surrogate/mlp_moment/lr_1.0e-04_epochs_10000"
     results_path = SCRIPT_DIR / "results/reliability_timeline"
     results_path.mkdir(parents=True, exist_ok=True)
 
@@ -21,19 +20,19 @@ if __name__ == "__main__":
         setting_data = json.load(f)
     setting_data = {float(key): val for (key, val) in setting_data.items()}
 
-    moment_calculator = load_moment_calculator(moment_path, z_path)
+    moment_calculator = load_moment_calculator(moment_model_path)
 
-    params = TimelineParameters(setting=setting_data)
+    params = TimelineParameters(setting=setting_data, n_mcs=n_mcs)
 
     corrosion_model = CorrosionModel(
-        n_grid=100,
+        n_grid=n_corrosion_grid,
         C50_mu=params.C50_mu,
         corrosion_rate=params.corrosion_rate,
         obs_error_std=params.obs_error_std,
         start_thickness=params.start_thickness
     )
 
-    pf_calculator = PfCalculator(1_000, params, corrosion_model, moment_calculator, mcs_samples_path)
+    pf_calculator = PfCalculator(n_corrosion_ratio_grid, params, corrosion_model, moment_calculator, mcs_samples_path)
     pf_calculator.calculate_max_moments(results_path)
 
     runner = TimelineRunner(
@@ -56,9 +55,14 @@ if __name__ == "__main__":
 
         runner.step(time, params)
 
-        pfs = pf_calculator.get_pfs(params, runner)
+        results = pf_calculator.calculate(params, runner)
 
-        runner.log(time, pfs, results_path)
+        runner.log(time, results, results_path)
 
         runner.finish_step()
+
+
+if __name__ == "__main__":
+
+    main()
 

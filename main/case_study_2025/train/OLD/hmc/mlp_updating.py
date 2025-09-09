@@ -5,8 +5,8 @@ import pandas as pd
 import pytensor
 import pytensor.tensor as pt
 import joblib
-from main.case_study_2025.train.hmc.utils import *
-from main.case_study_2025.train.srg.OLD.mlp_train import MLP
+from main.case_study_2025.train.OLD.hmc.utils import *
+from main.case_study_2025.train.surrogate.OLD.mlp_train import MLP
 import typer
 
 
@@ -25,7 +25,7 @@ def train(draws: int = 1_000, tune: int = 1_000, targetaccept: float = 0.8, seed
 
     SCRIPT_DIR = Path(__file__).resolve().parent
 
-    mlp_path = SCRIPT_DIR / "../results/srg/mlp/lr_1.0e-06_epochs_100000"
+    mlp_path = SCRIPT_DIR / "../results/surrogate/mlp/lr_1.0e-06_epochs_100000"
     torch_path = mlp_path / "torch_weights.pth"
     param_dist_path = SCRIPT_DIR / "../../data/parameter_distributions.csv"
     obs_path = SCRIPT_DIR / "../../data/setting"
@@ -103,7 +103,7 @@ def train(draws: int = 1_000, tune: int = 1_000, targetaccept: float = 0.8, seed
 def train(param: str = "Klei_soilcurkb1", draws: int = 1_000, tune: int = 1_000, targetaccept: float = 0.8, seed: int = 42):
     SCRIPT_DIR = Path(__file__).resolve().parent
 
-    mlp_path = SCRIPT_DIR / "../results/srg/mlp/lr_1.0e-06_epochs_100000"
+    mlp_path = SCRIPT_DIR / "../results/surrogate/mlp/lr_1.0e-06_epochs_100000"
     torch_path = mlp_path / "torch_weights.pth"
     param_dist_path = SCRIPT_DIR / "../../data/parameter_distributions.csv"
     obs_path = SCRIPT_DIR / "../../data/setting"

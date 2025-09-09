@@ -9,6 +9,8 @@ from src.reliability_models.dsheetpiling.lsf import *
 from src.corrosion.corrosion_model import CorrosionModel
 import collections
 from tqdm import tqdm
+from dotenv import load_dotenv
+from argparse import ArgumentParser
 
 
 def run_model(params, model):
@@ -22,30 +24,34 @@ def run_model(params, model):
     return model.results.displacement[0], model.results.moment[0], model.results.z
 
 
-if __name__ == "__main__":
+def main():
 
-    cols_keep = [
+    rv_names = [
         'Klei_soilcohesion', 'Klei_soilphi', 'Klei_soilcurkb1','Zand_soilphi', 'Zand_soilcurkb1','Zandvast_soilphi',
         'Zandvast_soilcurkb1','Zandlos_soilphi', 'Zandlos_soilcurkb1','Wall_SheetPilingElementEI', 'water_lvl'
     ]
 
-    samples_path = Path(__file__).parent / "data/1M_parameter_samples_uniformly_distributed.csv"
-    df = pd.read_csv(samples_path)
-    df = df[cols_keep]
-    true_values = df.iloc[0]
+    srg_samples_path = Path(__file__).parents[1] / "data/surrogate_data.csv"
+    env_path = Path(__file__).parents[3] / ".env"
 
-    # df = pd.read_csv(r"data/true_params.csv", index_col="parameter")
+    load_dotenv(env_path)
+
+    df = pd.read_csv(srg_samples_path)
+    true_values = df[rv_names].iloc[0]
     true_params = true_values.to_dict()
 
-    times = [50 + time for time in range(0, 31)]
+    monitoring_cols = [col for col in df.columns if col.split("_")[0] == "disp"]
+    monitoring_locs = [int(monitoring_col.split("_")[-1]) for monitoring_col in monitoring_cols]
+
+    times = [50 + time for time in range(0, 31, 1)]
     corossion_model = CorrosionModel()
     corrosions = corossion_model.generate_observations(np.array(times), seed=42)
 
-    geomodel_path = os.environ["MODEL_PATH"]  # model_path defined as environment variable
+    geomodel_path = os.environ["DSHEET_MODEL_PATH"]  # model_path defined as environment variable
     geomodel = DSheetPiling(geomodel_path)
-    monitoring_locs = list(range(1, 156, 10))
 
     data = {}
+    moments_survived = []
     for i, time in enumerate(tqdm(times)):
         corrosion = corrosions[i]
         corrosion_ratio = corrosion / corossion_model.start_thickness
@@ -53,6 +59,9 @@ if __name__ == "__main__":
         time_params = deepcopy(true_params)
         time_params["Wall_SheetPilingElementEI"] = EI_corroded
         deformations, moments, z = run_model(time_params, geomodel)
+        # Maximum survived moment is 80% of the one met in D-SheetPiling, bound to 600 to fix D-SheetPiling non-convergence.
+        moment_survived = min(600, np.abs(moments).max().item() * 0.8)
+        moments_survived.append(moment_survived)
         data[float(time)] = {
             "time": float(time),
             "corrosion": corrosion.tolist(),
@@ -60,16 +69,19 @@ if __name__ == "__main__":
             "EI_corroded": EI_corroded.tolist(),
             "true_params": true_params,
             "time_params": {key: val.tolist() if isinstance(val, np.ndarray) else val for (key, val) in time_params.items()},
-            "z": z,
-            "z_monitoring": z,
             "deformations": deformations,
-            "deformations_monitoring": [d for i, d in enumerate(deformations) if i in monitoring_locs],
             "moments": moments,
-            "max_moment": max([fabs(m) for m in moments])
+            "max_moment": max([fabs(m) for m in moments]),
+            "moment_survived": max(moments_survived)
         }
 
-    path = Path(__file__).parent / "data/setting"
-    path.mkdir(parents=True, exist_ok=True)
-    with open(path/"case_study.json", "w") as f:
+    data_path = Path(__file__).parents[1] / "data"
+    data_path.mkdir(parents=True, exist_ok=True)
+    with open(data_path/"case_study.json", "w") as f:
         json.dump(data, f, indent=4)
+
+
+if __name__ == "__main__":
+
+    main()
 

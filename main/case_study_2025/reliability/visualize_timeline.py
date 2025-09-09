@@ -271,7 +271,7 @@ def plot_moment(log, params, alpha=0.05):
     ax.set_xlabel("Time [yr]", fontsize=12)
     ax.set_ylabel("Moment capacity [kNm]", fontsize=12)
     ax.set_xlim(min(all_times), max(all_times))
-    ax.set_ylim(300, 800)
+    ax.set_ylim(300, 1_200)
     ax.xaxis.grid(False)
     ax.yaxis.grid(True)
     ax.legend(fontsize=10, loc="lower right")
@@ -324,11 +324,9 @@ def plot_scatter(log, mcs_data, rvs=["Klei_soilphi", "Corrosion_ratio"]):
 if __name__ == "__main__":
 
     SCRIPT_DIR = Path(__file__).resolve().parent.parent
-    setting_path = SCRIPT_DIR / "data/setting/case_study.json"
-    z_path = SCRIPT_DIR / "data/setting/z.json"
-    # mcs_samples_path = SCRIPT_DIR / f"data/mc_samples_normal_10000000.npy"
+    setting_path = SCRIPT_DIR / "data/case_study.json"
     mcs_samples_path = SCRIPT_DIR / f"data/surrogate_data.csv"
-    moment_path = SCRIPT_DIR / "train/results/srg/mlp_moment/lr_1.0e-05_epochs_100000_fullprofile_True"
+    moment_path = SCRIPT_DIR / "train/results/surrogate/mlp_moment/lr_1.0e-04_epochs_100000"
     results_path = SCRIPT_DIR / "results/reliability_timeline"
     log_path = results_path / "runner_log"
     plots_path = results_path / "plots"
@@ -340,33 +338,6 @@ if __name__ == "__main__":
 
     params = TimelineParameters(setting=setting_data)
 
-    moment_calculator = load_moment_calculator(moment_path, z_path)
-
-    corrosion_model = CorrosionModel(
-        n_grid=100,
-        C50_mu=params.C50_mu,
-        corrosion_rate=params.corrosion_rate,
-        obs_error_std=params.obs_error_std,
-        start_thickness=params.start_thickness
-    )
-
-    pf_calculator = PfCalculator(1_000, params, corrosion_model, moment_calculator, mcs_samples_path)
-
-    # mcs_data = pf_calculator.mcs_samples_torch.cpu().numpy()
-    # mcs_data = np.hstack((mcs_data, np.zeros(mcs_data.shape[0])[..., np.newaxis]))
-    # mcs_data = np.repeat(mcs_data[..., np.newaxis], pf_calculator.corrosion_ratio_grid.size, axis=-1)
-    # for i, corrosion_ratio in enumerate(pf_calculator.corrosion_ratio_grid):
-    #     mcs_data[:, -1, i] = np.tile(corrosion_ratio, reps=mcs_data.shape[0])
-    # mcs_data = mcs_data.transpose(0, 2, 1).reshape(-1, mcs_data.shape[1], order="F")
-    # np.save(log_path/"mcs_data.npy", mcs_data)
-    # mcs_data = np.load(log_path/"mcs_data.npy")
-    # mcs_data = np.load(log_path/"mcs_data.npy")
-    mcs_samples = pd.read_csv(mcs_samples_path)
-    X_cols = [col for col in mcs_samples.columns if col.split("_")[0] != "disp" and col.split("_")[
-        0] != "moment" and col != "index" and col != "Unnamed: 0"]
-    X_cols = X_cols[:-1]
-    mcs_data = mcs_samples.loc[:, X_cols].values
-
     pf_figs = []
     corrosion_figs = []
     corrosion_ratio_figs = []
@@ -374,9 +345,6 @@ if __name__ == "__main__":
     scatter_figs = []
     all_times = params.times
     for i, time in enumerate(tqdm(params.setting.keys(), desc="Running time step")):
-
-        if i > 0:
-            continue
 
         log = read_log(log_path/f"{time}", int(time))
 
@@ -396,9 +364,9 @@ if __name__ == "__main__":
         fig.suptitle(f"Time={time}")
         moment_figs.append(fig)
 
-        fig = plot_scatter(log, mcs_data)
-        fig.suptitle(f"Time={time}")
-        scatter_figs.append(fig)
+        # fig = plot_scatter(log, mcs_data)
+        # fig.suptitle(f"Time={time}")
+        # scatter_figs.append(fig)
 
     pp = PdfPages(plots_path/"pf_plots.pdf")
     [pp.savefig(fig) for fig in pf_figs]

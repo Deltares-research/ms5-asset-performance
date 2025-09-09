@@ -2,12 +2,11 @@ import os
 import json
 from pathlib import Path
 import numpy as np
-from numpy.polynomial.chebyshev import chebvander, chebder
 from numpy.typing import NDArray
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
-from main.case_study_2025.train.srg.utils import load_data, plot
+from main.case_study_2025.train.surrogate.utils import load_data, plot
 
 import torch
 import torch.nn as nn
@@ -26,70 +25,50 @@ from datetime import datetime
 app = typer.Typer()
 
 
-def make_chebyshev_basis(x, degree=10):
-    x_scaled = 2 * (x - x.min()) / (x.max() - x.min()) - 1
-    phi = chebvander(x_scaled, degree)  # shape (n_points, degree+1)
-    return phi
-
-
-def make_chebyshev_basis_second_derivative(x, degree):
-    x_scaled = 2 * (x - x.min()) / (x.max() - x.min()) - 1
-    T = np.polynomial.chebyshev.chebvander(x_scaled, degree)
-
-    T_dd = np.zeros_like(T)
-    for k in range(degree + 1):
-        coefs = np.zeros(degree + 1)
-        coefs[k] = 1
-        d2T_coefs = chebder(coefs, m=2)
-        T_dd[:, k] = np.polynomial.chebyshev.chebval(x_scaled, d2T_coefs)
-
-    # Rescale derivatives from d²/d(𝑥̃)² to d²/dx²
-    dx_dxtilde_sq = (2 / (x.max() - x.min())) ** 2
-    T_dd_rescaled = T_dd * dx_dxtilde_sq
-
-    return T_dd_rescaled
-
-
-class Chebysev(nn.Module):
-    def __init__(self, input_dim, hidden_dims, degree, x):
+class CNN(nn.Module):
+    def __init__(self, input_dim: int, hidden_dims=[128, 64], output_len: int = 156, kernel_size: int = 5):
         super().__init__()
+
         layers = []
-
         prev_dim = input_dim
-        for hidden_dim in hidden_dims:
-            layers.append(nn.Linear(prev_dim, hidden_dim))
+
+        for h in hidden_dims:
+            layers.append(nn.Linear(prev_dim, h))
             layers.append(nn.ReLU())
-            prev_dim = hidden_dim
+            prev_dim = h
 
-        layers.append(nn.Linear(prev_dim, degree+1))
-
+        layers.append(nn.Linear(prev_dim, output_len))  # 🔧 Fix: output_len, not output_dim
         self.net = nn.Sequential(*layers)
 
-        phi = torch.from_numpy(make_chebyshev_basis(x, degree)).float()
-        self.register_buffer("basis", phi.T)  # shape (degree+1, n_points)
+        self.kernel_size = kernel_size
+        self.smoother = nn.Conv1d(
+            in_channels=1,
+            out_channels=1,
+            kernel_size=kernel_size,
+            padding=kernel_size // 2,
+            bias=False,
+        )
 
-        phi_der = torch.from_numpy(make_chebyshev_basis_second_derivative(x, degree)).float()
-        self.register_buffer("basis_der", phi_der.T)  # shape (degree+1, n_points)
+        # Initialize smoother as a uniform averaging filter
+        with torch.no_grad():
+            self.smoother.weight[:] = 1.0 / kernel_size
 
-    def forward(self, x, return_coeffs=False):
-        coeffs = self.net(x)               # shape (batch, degree+1)
-        if return_coeffs: return coeffs
-        return coeffs @ self.basis         # shape (batch, n_points)
+    def forward(self, x):
+        x = self.net(x)           # (batch_size, output_len)
+        x = x.unsqueeze(1)        # (batch_size, 1, output_len)
+        x = self.smoother(x)      # smoothing along spatial axis
+        return x.squeeze(1)       # (batch_size, output_len)
 
 
 @app.command()
-def train(epochs: int = 1_000, lr: float = 1e-4, full_profile: bool = False, quiet: bool = False):
+def train(epochs: int = 1_000, lr: float = 1e-4, full_profile: bool = True, quiet: bool = False):
 
     base_dir = Path(__file__).resolve().parent
 
     data_dir = base_dir.parent / "data"
     data_path = data_dir / "srg_data_20250604_100638.csv"
-    if full_profile:
-        z_path = base_dir.parent.parent / "data/setting/z.json"
-    else:
-        z_path = base_dir.parent.parent / "data/setting/z_monitoring.json"
 
-    output_path = base_dir.parent / f"results/srg/chebysev/lr_{lr:.1e}_epochs_{epochs:d}_fullprofile_{full_profile}"
+    output_path = base_dir.parent / f"results/srg/cnn/lr_{lr:.1e}_epochs_{epochs:d}_fullprofile_{full_profile}"
     output_path.mkdir(parents=True, exist_ok=True)
 
     X, y = load_data(data_path, full_profile)
@@ -112,13 +91,11 @@ def train(epochs: int = 1_000, lr: float = 1e-4, full_profile: bool = False, qui
         device = torch.device("cpu")
         print("⚠️ MPS and CUDA not available — using CPU")
 
-    with open(z_path, "r") as f: z = np.array(json.load(f))
-
-    model = Chebysev(
+    model = CNN(
         input_dim=X.shape[-1],
         hidden_dims=[1024, 512, 256, 128, 64, 32],
-        x=z,
-        degree=10
+        output_len=y.shape[-1],
+        kernel_size=49,
     ).to(device)
 
     torch.manual_seed(42)

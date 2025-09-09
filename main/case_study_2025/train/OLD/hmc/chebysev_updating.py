@@ -5,8 +5,8 @@ import pandas as pd
 import pytensor
 import pytensor.tensor as pt
 import joblib
-from main.case_study_2025.train.hmc.utils import *
-from main.case_study_2025.train.srg.OLD.chebysev_train import Chebysev
+from main.case_study_2025.train.OLD.hmc.utils import *
+from main.case_study_2025.train.surrogate.OLD.chebysev_train import Chebysev
 import typer
 
 
@@ -25,7 +25,7 @@ def train(draws: int = 1_000, tune: int = 1_000, targetaccept: float = 0.8, seed
 
     SCRIPT_DIR = Path(__file__).resolve().parent
 
-    chebysev_path = SCRIPT_DIR / "../results/srg/chebysev/lr_1.0e-05_epochs_100000_fullprofile_False"
+    chebysev_path = SCRIPT_DIR / "../results/surrogate/chebysev/lr_1.0e-05_epochs_100000_fullprofile_False"
     torch_path = chebysev_path / "torch_weights.pth"
     param_dist_path = SCRIPT_DIR / "../../data/parameter_distributions.csv"
     obs_path = SCRIPT_DIR / "../../data/setting"
@@ -110,7 +110,7 @@ def train(draws: int = 1_000, tune: int = 1_000, targetaccept: float = 0.8, seed
 def train(param: str = "Wall_SheetPilingElementEI", draws: int = 10, tune: int = 10, targetaccept: float = 0.8, seed: int = 42):
     SCRIPT_DIR = Path(__file__).resolve().parent
 
-    chebysev_path = SCRIPT_DIR / "../results/srg/chebysev/lr_1.0e-05_epochs_100000_fullprofile_False"
+    chebysev_path = SCRIPT_DIR / "../results/surrogate/chebysev/lr_1.0e-05_epochs_100000_fullprofile_False"
     torch_path = chebysev_path / "torch_weights.pth"
     param_dist_path = SCRIPT_DIR / "../../data/parameter_distributions.csv"
     obs_path = SCRIPT_DIR / "../../data/setting"

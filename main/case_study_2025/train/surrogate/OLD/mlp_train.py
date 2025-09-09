@@ -6,7 +6,7 @@ from numpy.typing import NDArray
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
-from main.case_study_2025.train.srg.utils import load_data, plot
+from main.case_study_2025.train.surrogate.utils import load_data, plot
 
 import torch
 import torch.nn as nn

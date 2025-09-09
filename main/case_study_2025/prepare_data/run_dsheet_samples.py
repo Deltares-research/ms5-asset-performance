@@ -34,13 +34,11 @@ def sample_disp(rv_sample, rv_names, model):
     return disp_sample, moment_sample
 
 
-if __name__ == "__main__":
-
-    n_samples_to_use = 1_000
+def main(n_samples_to_use=1_000):
 
     path = Path(__file__).parent
 
-    load_dotenv(path.parents[2]/".env")
+    load_dotenv(path.parents[2] / ".env")
 
     geomodel_path = os.environ["DSHEET_MODEL_PATH"]
     data_path = path.parent / "data/srg_samples_uniform_100000.npy"
@@ -48,8 +46,8 @@ if __name__ == "__main__":
     result_path.mkdir(exist_ok=True, parents=True)
 
     rv_names = [
-        'Klei_soilcohesion', 'Klei_soilphi', 'Klei_soilcurkb1','Zand_soilphi', 'Zand_soilcurkb1','Zandvast_soilphi',
-        'Zandvast_soilcurkb1','Zandlos_soilphi', 'Zandlos_soilcurkb1','Wall_SheetPilingElementEI', 'water_lvl'
+        'Klei_soilcohesion', 'Klei_soilphi', 'Klei_soilcurkb1', 'Zand_soilphi', 'Zand_soilcurkb1', 'Zandvast_soilphi',
+        'Zandvast_soilcurkb1', 'Zandlos_soilphi', 'Zandlos_soilcurkb1', 'Wall_SheetPilingElementEI', 'water_lvl'
     ]
 
     samples = np.load(data_path)[:n_samples_to_use]
@@ -65,13 +63,19 @@ if __name__ == "__main__":
         "moment": moment_sample,
     }
 
-    with open(result_path/"surrogate_data.json", "w") as f:
+    with open(result_path / "surrogate_data.json", "w") as f:
         json.dump(results, f, indent=4)
 
     data = np.c_[np.array(samples), np.array(disp_sample), np.array(moment_sample)]
     df_srg = pd.DataFrame(
         data=data,
-        columns=rv_names+[f"disp_{i}" for i in range(1, len(disp_sample[0])+1)]+[f"moment_{i}" for i in range(1, len(moment_sample[0])+1)]
+        columns=rv_names + [f"disp_{i}" for i in range(1, len(disp_sample[0]) + 1)] + [f"moment_{i}" for i in range(1, len(moment_sample[0]) + 1)]
     )
-    df_srg.to_csv(result_path/"surrogate_data.csv")
+
+    df_srg.to_csv(result_path / "surrogate_data.csv")
+
+
+if __name__ == "__main__":
+
+    main(n_samples_to_use=1_000)
 

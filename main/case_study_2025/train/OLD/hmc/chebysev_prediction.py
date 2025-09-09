@@ -1,15 +1,15 @@
 import json
-from main.case_study_2025.train.hmc.utils import *
+from main.case_study_2025.train.OLD.hmc.utils import *
 from main.case_study_2025.fos_calculation.moment_calculation.chebysev_moments import FoSCalculator
-from main.case_study_2025.train.srg.utils import load_data
+from main.case_study_2025.train.surrogate.utils import load_data
 
 
 if __name__ == "__main__":
 
-    model_path = r"../results/srg/chebysev/lr_1.0e-05_epochs_100000_fullprofile_True/torch_weights.pth"
+    model_path = r"../results/surrogate/chebysev/lr_1.0e-05_epochs_100000_fullprofile_True/torch_weights.pth"
     posterior_path = r"../../results/hmc/posterior_data.netcdf"
-    scaler_x_path = r"../results/srg/chebysev/lr_1.0e-05_epochs_100000_fullprofile_True/scaler_x.joblib"
-    scaler_y_path = r"../results/srg/chebysev/lr_1.0e-05_epochs_100000_fullprofile_True/scaler_y.joblib"
+    scaler_x_path = r"../results/surrogate/chebysev/lr_1.0e-05_epochs_100000_fullprofile_True/scaler_x.joblib"
+    scaler_y_path = r"../results/surrogate/chebysev/lr_1.0e-05_epochs_100000_fullprofile_True/scaler_y.joblib"
     srg_data_path = r"../data/srg_data_20250604_100638.csv"
 
     X_srg, y_srg = load_data(srg_data_path, full_profile=True)
@@ -29,7 +29,7 @@ if __name__ == "__main__":
     X = X.reshape(-1, X.shape[-1])
 
     # Append water level which was not an RV in the PYMC model
-    with open(r"../../data/setting/case_study.json", "r") as f: data = json.load(f)
+    with open(r"../../../data/setting/case_study.json", "r") as f: data = json.load(f)
     water_lvl = data['12']["true_params"]["Water_lvl"]
     X = np.column_stack((X, np.ones(X.shape[0])*water_lvl))
 

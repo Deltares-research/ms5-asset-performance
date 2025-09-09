@@ -5,7 +5,7 @@ import torch
 import xarray as xr
 from pathlib import Path
 from scipy.signal import savgol_filter
-from main.case_study_2025.train.srg.OLD.cnn_train import CNN
+from main.case_study_2025.train.surrogate.OLD.cnn_train import CNN
 import matplotlib.pyplot as plt
 
 

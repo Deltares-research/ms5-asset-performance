@@ -19,8 +19,8 @@ for est in "${estimators[@]}"; do
   for d in "${maxdepths[@]}"; do
     for lr in "${lrs[@]}"; do
       echo "Running: n_estimators=$est | max_depth=$d | lr=$lr" | tee -a "$log_file"
-#      result=$(python "$SCRIPT_DIR/train/srg/xgb_train.py" --n-estimators "$est" --max-depth "$d" --lr "$lr" 2>&1 | tee /dev/tty)
-      result=$(python -m main.case_study_2025.train.srg.xgb_train --n-estimators "$est" --max-depth "$d" --lr "$lr" 2>&1 | tee /dev/tty)
+#      result=$(python "$SCRIPT_DIR/train/surrogate/xgb_train.py" --n-estimators "$est" --max-depth "$d" --lr "$lr" 2>&1 | tee /dev/tty)
+      result=$(python -m main.case_study_2025.train.surrogate.xgb_train --n-estimators "$est" --max-depth "$d" --lr "$lr" 2>&1 | tee /dev/tty)
       result="${result}\n"
       echo "$result" >> "$log_file"
       summary=$(echo "$result" | grep "\[SUMMARY\]")

@@ -25,11 +25,10 @@ else:
 @dataclass
 class TimelineParameters:
     setting: dict
-    # n_mcs: int = 100_000
-    n_mcs: int = 1_770
+    n_mcs: int = 100_000
     start_thickness: float = 9.5
     EI_start: float = 30_000.
-    moment_cap_start: float = 700.
+    moment_cap_start: float = 1_000.
     moment_survived: float = 0.
     water_lvl: float = -1.
     water_lvl: float = -1.
@@ -67,9 +66,8 @@ class TimelineRunner:
         self.time = time
 
     def update_moment_cap(self, time, data):
-        if data["max_moment"] >= self.moment_survived:
-            self.moment_survived = data["max_moment"]
-            self.time_survived = time
+        self.moment_survived = data["moment_survived"]
+        self.time_survived = time
 
     def read_corrosion_data(self, corrosion_obs_times, corrosion_obs):
         self.corrosion_obs_times = corrosion_obs_times.tolist()
@@ -210,33 +208,22 @@ class PfCalculator:
         return  corrosion_ratio_sample
 
     def load_data(self, path):
-        # mcs_samples = np.load(path)
-        mcs_samples = pd.read_csv(path)
-        X_cols = [col for col in mcs_samples.columns if col.split("_")[0] != "disp" and col.split("_")[
-            0] != "moment" and col != "index" and col != "Unnamed: 0"]
-        X_cols = X_cols[:-1]
-        mcs_samples = mcs_samples.loc[:, X_cols].values
+        mcs_samples = np.load(path)
         mcs_samples = mcs_samples[:self.n_mcs]
-        mcs_samples = mcs_samples[:, :-1]  # Remove EI column
         self.mcs_samples_torch = torch.from_numpy(mcs_samples.astype(np.float32)).to(device=device)
 
-    def moment_mcs(self, water_lvl, EI):
+    def moment_mcs(self, EI):
 
-        samples = torch.column_stack((
-            self.mcs_samples_torch,
-            torch.from_numpy(EI.astype(np.float32)).to(device=device),
-            torch.from_numpy(water_lvl.astype(np.float32)).to(device=device)
-        ))
+        samples = deepcopy(self.mcs_samples_torch)
+        samples[:, -2] = torch.tensor(EI)
 
         dataset = TensorDataset(samples)
-        loader = DataLoader(dataset, batch_size=1_000, shuffle=True)
+        loader = DataLoader(dataset, batch_size=min(1_000, samples.shape[0]), shuffle=True)
 
         max_moments = []
-        # for (x,) in loader:
-        for x in samples:
-            x = x.reshape(1, -1)
-            moments = self.moment_calculator.moments(x)
-            max_moments.append(np.abs(moments).max(axis=-1))
+        for (x,) in loader:
+            moments = self.moment_calculator.moments(x).squeeze()
+            max_moments.append(moments)
 
         max_moments = np.concatenate(max_moments)
 
@@ -248,15 +235,11 @@ class PfCalculator:
 
         EI_sample = np.array([EI] * self.params.n_mcs)
 
-        water_lvl_sample = np.array([self.params.water_lvl] * self.params.n_mcs)
-
-        max_moment_sample = self.moment_mcs(water_lvl_sample, EI_sample)
+        max_moment_sample = self.moment_mcs(EI_sample)
 
         return max_moment_sample
 
     def calculate_max_moments(self, path):
-
-        if not isinstance(path, Path): path = Path(path)
 
         cache_path = path / "cache"
         cache_path.mkdir(parents=True, exist_ok=True)
@@ -281,7 +264,7 @@ class PfCalculator:
 
         self.max_moments = max_moments
 
-    def get_pf(self, moment_cap, corrosion_ratio_pdf, corrosion_ratio_grid, moment_survived=0., time_survived=0.):
+    def get_pf(self, moment_cap, corrosion_ratio_pdf, corrosion_ratio_grid, moment_survived=0.):
 
         corrosion_ratio_grid = np.array(corrosion_ratio_grid)
         corrosion_ratio_pdf = np.array(corrosion_ratio_pdf)
@@ -291,17 +274,6 @@ class PfCalculator:
         moment_cap_pdf = corrosion_ratio_pdf * (1/moment_cap)  # Variable change
         moment_cap_pdf = np.flip(moment_cap_pdf, axis=-1)
 
-        # if moment_survived > 0.:
-        #     moment_survived_grid = moment_survived * (1 - corrosion_ratio_grid)
-        #     moment_survived_grid = np.flip(moment_survived_grid)
-        #     moment_cap_survived_matrix = np.eye(moment_cap_grid.size)
-        #     # moment_cap_survived_matrix = np.zeros((moment_cap_grid.size, moment_survived_grid.size))
-        #     # for i in range(moment_cap_survived_matrix.shape[0]):
-        #     #     moment_cap_survived_matrix[i] = moment_cap_grid >= moment_survived_grid[i]
-        #     moment_cap_pdf_truncated = moment_cap_pdf[..., np.newaxis] * moment_cap_survived_matrix[np.newaxis, ...]
-        #     moment_cap_pdf_truncated = moment_cap_pdf_truncated / (np.trapezoid(moment_cap_pdf_truncated, moment_survived_grid, axis=-1)[..., None] + 1e-5)
-        #     moment_cap_pdf2 = np.trapezoid(moment_cap_pdf_truncated, moment_survived_grid, axis=-1)
-
         moment_cap_pdf_truncated = np.where(moment_cap_grid <= moment_survived, 0., moment_cap_pdf)
         moment_cap_pdf_truncated /= np.trapezoid(moment_cap_pdf_truncated, moment_cap_grid, axis=-1)[:, None]
 
@@ -310,7 +282,7 @@ class PfCalculator:
         pf_mcs = np.mean(fos < 1, axis=-1)
         return np.trapz(pf_mcs * moment_cap_pdf_truncated, moment_cap_grid, axis=-1), moment_cap_pdf_truncated, fos, survival
 
-    def get_pfs(self, params, runner):
+    def calculate(self, params, runner):
 
         time = runner.time
 
@@ -319,27 +291,15 @@ class PfCalculator:
         corrosion_ratio_prior, corrosion_pdf_prior = runner.update_corrosion_ratio_pdf("prior", params, times)
         corrosion_ratio_posterior, corrosion_pdf_posterior = runner.update_corrosion_ratio_pdf("posterior", params, times)
 
-        pfs = {}
+        results = {}
         for cap_type in ["theoretical", "survived"]:
 
-            runner.moment_survived = 450.
-
             if cap_type == "theoretical":
-                # moment_cap_eff = runner.moment_cap_start
                 moment_survived = 0.
-                time_survived = 0.
             elif cap_type == "survived":
                 moment_survived = runner.moment_survived
-                # if runner.moment_survived > runner.moment_cap_start:
-                #     moment_cap_eff = runner.moment_survived
-                #     time_survived = runner.time_survived
-                # else:
-                #     moment_cap_eff = runner.moment_cap_start
-                #     time_survived = runner.time_survived
-                # moment_cap = moment_cap_eff * (1 - np.array(runner.corrosion_ratio_grid))
-                # TODO: Back-calculate moment cap at start of timeline instead of corroded state when observed???
 
-            pfs[cap_type] = {}
+            results[cap_type] = {}
             for pdf_type in ["prior", "posterior"]:
 
                 if pdf_type == "prior":
@@ -347,14 +307,12 @@ class PfCalculator:
                 elif pdf_type == "posterior":
                     corrosion_ratio_pdf = corrosion_ratio_posterior.copy()
 
-                output = self.get_pf(runner.moment_cap_start, corrosion_ratio_pdf, runner.corrosion_ratio_grid, moment_survived, time_survived)
+                output = self.get_pf(runner.moment_cap_start, corrosion_ratio_pdf, runner.corrosion_ratio_grid, moment_survived)
                 pf, moment_cap_pdf_truncated, fos, survival = output
                 beta = np.minimum(stats.norm.ppf(1 - pf), 10)
                 beta = np.maximum(beta, -10)
-                # beta = beta.astype(np.float16).tolist()
-                # pf = pf.astype(np.float16).tolist()
 
-                pfs[cap_type][pdf_type] = {
+                results[cap_type][pdf_type] = {
                     "current_time": time,
                     "moment_cap_type": cap_type,
                     "C50_dist_type": pdf_type,
@@ -376,20 +334,14 @@ class PfCalculator:
                     "beta_forecast": {str(time): b for (time, b) in zip(times, beta)},
                 }
 
-        return pfs
+        return results
 
 
-def load_moment_calculator(path, x_path):
+def load_moment_calculator(path):
 
-    # with open(x_path, "r") as f:
-    #     x = np.array(json.load(f))
-    #
-    # n_points = len(x)
     wall_props = (1e+4, 0, [], None)
 
     moment_calculator = MLPMoments(
-        # n_points=50,
-        n_points=1,
         wall_props=wall_props,
         model_path=path / "torch_weights.pth",
         scaler_x_path=path / "scaler_x.joblib",

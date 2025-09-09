@@ -4,7 +4,7 @@ import arviz as az
 import torch
 import xarray as xr
 from pathlib import Path
-from main.case_study_2025.train.srg.OLD.mlp_train import MLP
+from main.case_study_2025.train.surrogate.OLD.mlp_train import MLP
 import matplotlib.pyplot as plt
 
 

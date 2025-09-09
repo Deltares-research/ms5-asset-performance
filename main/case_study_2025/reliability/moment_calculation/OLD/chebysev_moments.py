@@ -4,7 +4,7 @@ import arviz as az
 import torch
 import xarray as xr
 from pathlib import Path
-from main.case_study_2025.train.srg.OLD.chebysev_train import Chebysev
+from main.case_study_2025.train.surrogate.OLD.chebysev_train import Chebysev
 import matplotlib.pyplot as plt
 
 

@@ -2,27 +2,25 @@ import os
 import numpy as np
 import pickle
 import joblib
-import arviz as az
 import torch
-import xarray as xr
 from pathlib import Path
 import json
 from typing import Optional
 from scipy.interpolate import UnivariateSpline
-from main.case_study_2025.train.srg.mlp_moment_train import MLP, MinMaxScaler
+from main.case_study_2025.train.surrogate.mlp_moment_train import MLP, MinMaxScaler
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 
 class FoSCalculator:
 
-    def __init__(self, n_points, wall_props, model_path, scaler_x_path, scaler_y_path):
+    def __init__(self, wall_props, model_path, scaler_x_path, scaler_y_path):
 
         if not isinstance(model_path, Path): model_path = Path(Path(model_path).as_posix())
         self.model = MLP(
             input_dim=11,
             hidden_dims=[1024, 512, 256, 128, 64, 32],
-            output_dim=n_points
+            output_dim=1
         )
         self.model.load_state_dict(torch.load(model_path))
         self.model.eval()
@@ -36,7 +34,6 @@ class FoSCalculator:
         self.wall_props = wall_props
 
     def inference(self, X):
-        if isinstance(X, xr.DataArray): X = X.values
         X_scaled = self.scaler_x.transform(X.cpu().numpy())
         X_scaled_tensor = torch.from_numpy(X_scaled).float()
         y_scaled = self.model(X_scaled_tensor)

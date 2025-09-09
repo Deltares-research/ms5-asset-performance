@@ -6,7 +6,7 @@ from numpy.typing import NDArray
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
-from main.case_study_2025.train.srg.utils import load_data, plot
+from main.case_study_2025.train.surrogate.utils import load_data, plot
 import joblib
 from tqdm import tqdm
 from datetime import datetime
@@ -59,17 +59,18 @@ def main(epochs: int = 10_000, lr: float = 1e-5, full_profile: bool = True, quie
     data_dir = base_dir.parent / "data"
     data_path = Path(__file__).parents[2] / "data/surrogate_data.csv"
 
-    output_path = base_dir.parent.parent / f"results/srg/mlp_moment/lr_{lr:.1e}_epochs_{epochs:d}_fullprofile_{full_profile}"
+    output_path = base_dir.parent.parent / f"results/surrogate/mlp_moment/lr_{lr:.1e}_epochs_{epochs:d}"
     output_path.mkdir(parents=True, exist_ok=True)
 
     X, y = load_data(data_path, full_profile=full_profile, target="moment")
 
     y = y[:, 60: 110]  # Keep only locations with important information
-    moment_cutoffs = (100, 600)
+    moment_cutoff = 600
 
     y = np.abs(y).max(1)
-    X = X[np.all(np.c_[y>=moment_cutoffs[0], y<=moment_cutoffs[1]], axis=-1)]
-    y = y[np.all(np.c_[y>=moment_cutoffs[0], y<=moment_cutoffs[1]], axis=-1)]
+    # Bound maximum moment, reject samples with too high moment (indicates D-SheetPiling non-convergence)
+    X = X[y<=moment_cutoff]
+    y = y[y<=moment_cutoff]
     y = y.reshape(-1, 1)
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
