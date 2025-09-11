@@ -24,7 +24,7 @@ def run_model(params, model):
     return model.results.displacement[0], model.results.moment[0], model.results.z
 
 
-def main():
+def main(interval=1):
 
     rv_names = [
         'Klei_soilcohesion', 'Klei_soilphi', 'Klei_soilcurkb1','Zand_soilphi', 'Zand_soilcurkb1','Zandvast_soilphi',
@@ -43,7 +43,7 @@ def main():
     monitoring_cols = [col for col in df.columns if col.split("_")[0] == "disp"]
     monitoring_locs = [int(monitoring_col.split("_")[-1]) for monitoring_col in monitoring_cols]
 
-    times = [50 + time for time in range(0, 31, 1)]
+    times = [50 + time for time in range(0, 31, interval)]
     corossion_model = CorrosionModel()
     corrosions = corossion_model.generate_observations(np.array(times), seed=42)
 
@@ -83,5 +83,9 @@ def main():
 
 if __name__ == "__main__":
 
-    main()
+    parser = ArgumentParser()
+    parser.add_argument("--interval", type=int, default=1)
+    args = parser.parse_args()
+
+    main(interval=args.interval)
 

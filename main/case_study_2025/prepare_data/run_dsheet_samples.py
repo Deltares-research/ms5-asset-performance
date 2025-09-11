@@ -77,5 +77,9 @@ def main(n_samples_to_use=1_000):
 
 if __name__ == "__main__":
 
+    parser = ArgumentParser()
+    parser.add_argument("--n_samples_to_use", type=int, default=1_000)
+    args = parser.parse_args()
+
     main(n_samples_to_use=1_000)
 
