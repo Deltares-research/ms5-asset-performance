@@ -12,6 +12,31 @@ from dataclasses import dataclass, field, asdict
 from typing import Type, Optional
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+from typing import Optional, Tuple, Dict, Any, List
+from numpy.typing import NDArray
+
+
+"""
+Reliability utilities for D-SheetPiling corrosion and structural capacity modeling.
+
+This module provides:
+- Timeline parameters and runner classes to manage corrosion progression and
+  update posterior distributions for structural reliability.
+- Monte Carlo simulation (MCS) tools for estimating maximum moments and failure
+  probabilities (Pf).
+- Plotting utilities for factors of safety (FoS) and probability distributions.
+
+Classes:
+    TimelineParameters: Defines simulation settings and corrosion parameters.
+    TimelineRunner: Advances the reliability timeline, updates corrosion and moment capacity.
+    PfCalculator: Computes failure probabilities via MCS.
+
+Functions:
+    collect_corrosion_data: Collect corrosion data up to a given time.
+    load_moment_calculator: Load an MLP-based surrogate for bending moment prediction.
+    plot_errorbar: Plot mean + error bars on a 2D axis.
+    plot_fos_hist: Plot FoS histogram with optional lognormal fit.
+"""
 
 
 if torch.backends.mps.is_available() and torch.backends.mps.is_built():
@@ -24,6 +49,22 @@ else:
 
 @dataclass
 class TimelineParameters:
+    """
+    Container for simulation parameters across the reliability timeline.
+
+    Attributes:
+        setting (dict): Case study settings loaded from JSON.
+        n_mcs (int): Number of Monte Carlo samples. Default = 100,000.
+        start_thickness (float): Initial wall thickness [mm].
+        EI_start (float): Initial flexural stiffness.
+        moment_cap_start (float): Initial bending moment capacity.
+        moment_survived (float): Maximum survived bending moment.
+        water_lvl (float): Initial water level.
+        C50_mu (float): Mean value for corrosion parameter C50.
+        corrosion_rate (float): Corrosion rate coefficient.
+        obs_error_std (float): Standard deviation of observation error.
+        times (list): Extracted time steps from case study setting.
+    """
     setting: dict
     n_mcs: int = 100_000
     start_thickness: float = 9.5
@@ -43,6 +84,28 @@ class TimelineParameters:
 
 @dataclass
 class TimelineRunner:
+    """
+    Manage state updates across the reliability timeline.
+
+    Attributes:
+        time (float): Current time step.
+        timestep (int): Current timestep index.
+        start_thickness (float): Initial wall thickness.
+        moment_cap_start (float): Starting bending moment capacity.
+        time_survived (float): Time when moment capacity was last updated.
+        moment_survived (float): Maximum survived moment so far.
+        water_lvl (float): Water level.
+        corrosion_rate (float): Corrosion rate coefficient.
+        obs_error_std (float): Observation error std.
+        corrosion_ratio_grid (list): Discretization grid for corrosion ratios.
+        C50_grid (list): Grid for C50 parameter.
+        C50_prior (list): Prior distribution for C50.
+        C50_prior_fixed (list): Fixed prior for C50 (reference).
+        C50_posterior (Optional[list]): Posterior distribution for C50.
+        corrosion_obs_times (list): Times of corrosion observations.
+        corrosion_obs (list): Observed corrosion values.
+        pfs (dict): Failure probabilities logged.
+    """
     time: float = 0.
     timestep: int = -1
     start_thickness: float = 9.5
@@ -61,20 +124,30 @@ class TimelineRunner:
     corrosion_obs: list = field(init=False)
     pfs: dict = field(init=False)
 
-    def time_step(self, time):
+    def time_step(self, time: float) -> None:
+        """Advance to a new time step."""
         self.timestep += 1
         self.time = time
 
-    def update_moment_cap(self, time, data):
+    def update_moment_cap(self, time: float, data: dict) -> None:
+        """Update moment capacity from case study data."""
         self.moment_survived = data["moment_survived"]
         self.time_survived = time
 
-    def read_corrosion_data(self, corrosion_obs_times, corrosion_obs):
+    def read_corrosion_data(self, corrosion_obs_times: NDArray, corrosion_obs: NDArray) -> None:
+        """Store observed corrosion data up to the current timestep."""
         self.corrosion_obs_times = corrosion_obs_times.tolist()
         self.corrosion_obs = corrosion_obs.tolist()
 
-    def update_C50(self, C50_mu, corrosion_rate, obs_error_std):
+    def update_C50(self, C50_mu: float, corrosion_rate: float, obs_error_std: float) -> None:
+        """
+        Update posterior distribution of C50 given new corrosion observations.
 
+        Args:
+            C50_mu (float): Mean C50 value.
+            corrosion_rate (float): Corrosion rate coefficient.
+            obs_error_std (float): Observation error standard deviation.
+        """
         log_prior = np.log(self.C50_prior)
 
         C50_grid = np.array(self.C50_grid)[:, np.newaxis]
@@ -96,8 +169,21 @@ class TimelineRunner:
 
         self.C50_posterior = post.tolist()
 
-    def update_corrosion_ratio_pdf(self, C50_pdf_type="posterior", params=None, times=None):
+    def update_corrosion_ratio_pdf(
+            self, C50_pdf_type: str = "posterior", params: Optional[TimelineParameters] = None,
+            times: Optional[list] = None
+    ) -> Tuple[NDArray, NDArray]:
+        """
+        Update the PDF of corrosion ratio conditional on observations and C50 distribution.
 
+        Args:
+            C50_pdf_type (str): Use 'prior' or 'posterior' for C50.
+            params (TimelineParameters): Timeline parameters.
+            times (list | float, optional): Time points for evaluation.
+
+        Returns:
+            Tuple[NDArray, NDArray]: (corrosion_ratio_pdf, corrosion_pdf)
+        """
         if times is None: times = self.time
         if isinstance(times, float): times = np.array([times])
         if isinstance(times, list): times = np.array(times)
@@ -134,8 +220,8 @@ class TimelineRunner:
 
         return corrosion_ratio_pdf, corrosion_pdf
 
-    def step(self, time, params):
-
+    def step(self, time: float, params: TimelineParameters) -> None:
+        """Advance the runner one step and update state."""
         self.time_step(time)
 
         self.update_moment_cap(time, params.setting[time])
@@ -149,10 +235,12 @@ class TimelineRunner:
             obs_error_std=params.obs_error_std
         )
 
-    def finish_step(self):
+    def finish_step(self) -> None:
+        """Finalize the timestep and set prior to posterior for next step."""
         self.C50_prior = deepcopy(self.C50_posterior)
 
-    def log(self, time, pfs, path):
+    def log(self, time: float, pfs: dict, path: Path) -> None:
+        """Log probability of failure results for current time step."""
         if not isinstance(path, Path): path = Path(path)
         path = path / "runner_log"
         path.mkdir(parents=True, exist_ok=True)
@@ -171,16 +259,45 @@ class TimelineRunner:
                 np.save(new_path/"fos.npy", fos)
                 np.save(new_path/"survival.npy", survival)
 
-    def read_pfs(self, pfs):
+    def read_pfs(self, pfs: dict) -> None:
+        """Load previously stored failure probabilities."""
         self.pfs = pfs
 
-def collect_corrosion_data(time, data):
+def collect_corrosion_data(time: float, data: dict) -> Tuple[NDArray, NDArray]:
+    """
+    Collect corrosion observations up to a given time.
+
+    Args:
+        time (float): Current simulation time.
+        data (dict): Case study dictionary with time-corrosion mappings.
+
+    Returns:
+        Tuple[NDArray, NDArray]: (corrosion_obs_times, corrosion_obs)
+    """
     corrosion_obs_times = np.array([float(key) for key in data.keys() if float(key) <= time])
     corrosion_obs = np.array([val["corrosion"] for (key, val) in data.items() if float(key) <= time])
     return corrosion_obs_times, corrosion_obs
 
 
 class PfCalculator:
+    """
+    Monte Carlo simulator for probability of failure (Pf) estimation.
+
+    Args:
+        n_grid (int): Discretization size for corrosion ratio.
+        params (TimelineParameters): Timeline simulation parameters.
+        corrosion_model (object): Corrosion model instance.
+        moment_calculator (object): Surrogate model for moments.
+        mcs_samples_path (Path): Path to stored Monte Carlo samples.
+
+    Methods:
+        sample_corrosion_ratios: Sample corrosion ratios from truncated normal.
+        load_data: Load Monte Carlo input samples.
+        moment_mcs: Compute maximum moments given EI degradation.
+        calculate_max_moments: Cache or compute max moments across corrosion ratios.
+        get_pf: Compute failure probability given capacity and PDF.
+        calculate: Full reliability calculation (prior vs posterior).
+    """
     def __init__(self, n_grid, params, corrosion_model, moment_calculator, mcs_samples_path):
         self.corrosion_ratio_grid = np.linspace(0, 1, n_grid)
         self.params = params
@@ -189,8 +306,17 @@ class PfCalculator:
         self.n_mcs = self.params.n_mcs
         self.load_data(mcs_samples_path)
 
-    def sample_corrosion_ratios(self, C50, times):
+    def sample_corrosion_ratios(self, C50: np.ndarray, times: np.ndarray) -> np.ndarray:
+        """
+        Sample corrosion ratios from a truncated normal distribution.
 
+        Args:
+            C50 (np.ndarray): C50 corrosion parameter values.
+            times (np.ndarray): Time points for sampling.
+
+        Returns:
+            np.ndarray: Corrosion ratio samples of shape (len(C50), len(times), n_mcs).
+        """
         C50 = np.array(C50)
         times = np.array(times)
 
@@ -207,13 +333,27 @@ class PfCalculator:
 
         return  corrosion_ratio_sample
 
-    def load_data(self, path):
+    def load_data(self, path: Path) -> None:
+        """
+        Load Monte Carlo samples from disk.
+
+        Args:
+            path (Path): Path to NumPy `.npy` file containing Monte Carlo samples.
+        """
         mcs_samples = np.load(path)
         mcs_samples = mcs_samples[:self.n_mcs]
         self.mcs_samples_torch = torch.from_numpy(mcs_samples.astype(np.float32)).to(device=device)
 
-    def moment_mcs(self, EI):
+    def moment_mcs(self, EI: np.ndarray) -> np.ndarray:
+        """
+        Compute maximum bending moments for Monte Carlo samples at given stiffness.
 
+        Args:
+            EI (np.ndarray): Flexural stiffness values for each simulation.
+
+        Returns:
+            np.ndarray: Maximum moments for all samples.
+        """
         samples = deepcopy(self.mcs_samples_torch)
         samples[:, -2] = torch.tensor(EI)
 
@@ -229,8 +369,16 @@ class PfCalculator:
 
         return max_moments
 
-    def calculate_max_moments_corrosion_ratio(self, corrosion_ratio):
+    def calculate_max_moments_corrosion_ratio(self, corrosion_ratio: float) -> np.ndarray:
+        """
+        Compute max moments for a given corrosion ratio.
 
+        Args:
+            corrosion_ratio (float): Ratio of corrosion thickness loss to start thickness.
+
+        Returns:
+            np.ndarray: Maximum moments for Monte Carlo samples.
+        """
         EI = self.params.EI_start * (1 - corrosion_ratio)
 
         EI_sample = np.array([EI] * self.params.n_mcs)
@@ -239,8 +387,16 @@ class PfCalculator:
 
         return max_moment_sample
 
-    def calculate_max_moments(self, path):
+    def calculate_max_moments(self, path: Path) -> None:
+        """
+        Compute or load cached maximum moment samples across corrosion ratios.
 
+        Args:
+            path (Path): Path to store or load cached results (`cache/mcs_moment_cache.npy`).
+
+        Sets:
+            self.max_moments (np.ndarray): Max moment samples for all corrosion ratios.
+        """
         cache_path = path / "cache"
         cache_path.mkdir(parents=True, exist_ok=True)
 
@@ -264,8 +420,29 @@ class PfCalculator:
 
         self.max_moments = max_moments
 
-    def get_pf(self, moment_cap, corrosion_ratio_pdf, corrosion_ratio_grid, moment_survived=0.):
+    def get_pf(
+        self,
+        moment_cap: float,
+        corrosion_ratio_pdf: np.ndarray,
+        corrosion_ratio_grid: np.ndarray,
+        moment_survived: float = 0.0,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Compute probability of failure (Pf) given capacity and corrosion distribution.
 
+        Args:
+            moment_cap (float): Starting bending moment capacity.
+            corrosion_ratio_pdf (np.ndarray): PDF over corrosion ratio.
+            corrosion_ratio_grid (np.ndarray): Corrosion ratio discretization grid.
+            moment_survived (float, optional): Minimum survived moment threshold. Defaults to 0.
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+                - Pf (np.ndarray): Failure probabilities over time.
+                - moment_cap_pdf_truncated (np.ndarray): Truncated moment capacity PDFs.
+                - fos (np.ndarray): Factor of safety values.
+                - survival (np.ndarray): Survival indicators.
+        """
         corrosion_ratio_grid = np.array(corrosion_ratio_grid)
         corrosion_ratio_pdf = np.array(corrosion_ratio_pdf)
 
@@ -282,8 +459,18 @@ class PfCalculator:
         pf_mcs = np.mean(fos < 1, axis=-1)
         return np.trapz(pf_mcs * moment_cap_pdf_truncated, moment_cap_grid, axis=-1), moment_cap_pdf_truncated, fos, survival
 
-    def calculate(self, params, runner):
+    def calculate(self, params, runner) -> Dict[str, Dict[str, Any]]:
+        """
+        Run full reliability analysis (prior and posterior).
 
+        Args:
+            params (TimelineParameters): Timeline simulation parameters.
+            runner (TimelineRunner): Runner with current time, corrosion, and capacity state.
+
+        Returns:
+            Dict[str, Dict[str, Any]]: Nested results for each (cap_type, pdf_type).
+                Contains Pf, β, PDFs, survival indicators, and forecasts.
+        """
         time = runner.time
 
         times = [iter_time for iter_time in params.times if iter_time >= time]
@@ -337,8 +524,16 @@ class PfCalculator:
         return results
 
 
-def load_moment_calculator(path):
+def load_moment_calculator(path: Path) -> MLPMoments:
+    """
+    Load the MLP-based surrogate model for bending moment calculation.
 
+    Args:
+        path (Path): Path to saved model weights and scalers.
+
+    Returns:
+        MLPMoments: Loaded surrogate model.
+    """
     wall_props = (1e+4, 0, [], None)
 
     moment_calculator = MLPMoments(
@@ -351,15 +546,33 @@ def load_moment_calculator(path):
     return moment_calculator
 
 
-def plot_errorbar(x, xerr, y, color="b", whiskersize=0.1):
+def plot_errorbar(x: float, xerr: list, y: float, color: str = "b", whiskersize: float = 0.1) -> None:
+    """
+    Plot a point estimate with horizontal error bars.
+
+    Args:
+        x (float): Mean value.
+        xerr (list): Lower and upper error bounds.
+        y (float): Vertical position.
+        color (str, optional): Plot color. Defaults to "b".
+        whiskersize (float, optional): Length of whisker ticks. Defaults to 0.1.
+    """
     plt.scatter(x, y, c=color)
     plt.hlines(y, xmin=min(xerr), xmax=max(xerr), colors=color)
     plt.vlines(min(xerr), ymin=y-whiskersize/2, ymax=y+whiskersize/2, colors=color)
     plt.vlines(max(xerr), ymin=y-whiskersize/2, ymax=y+whiskersize/2, colors=color)
 
 
-def plot_fos_hist(fos, path=None, modelfit="lognormal", ci_alpha=0.05):
+def plot_fos_hist(fos: NDArray, path: Optional[Path] = None, modelfit: str = "lognormal", ci_alpha: float = 0.05) -> None:
+    """
+    Plot histogram of factor of safety (FoS) with optional lognormal fit.
 
+    Args:
+        fos (NDArray): Factor of safety samples.
+        path (Optional[Path]): Path to save figure. If None, does not save.
+        modelfit (str): Distribution fit type ('lognormal'). Defaults to 'lognormal'.
+        ci_alpha (float): Confidence interval alpha. Defaults to 0.05.
+    """
     fig = plt.figure()
 
     pf_mcs = np.mean(fos<1)

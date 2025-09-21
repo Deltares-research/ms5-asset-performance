@@ -12,7 +12,35 @@ from matplotlib.backends.backend_pdf import PdfPages
 import seaborn as sns
 
 
-def read_log(log_path, time):
+"""
+Visualization utilities for reliability timeline analysis of D-SheetPiling.
+
+This script:
+- Reads logged reliability results from runner logs.
+- Produces plots for:
+    * Probability of failure (Pf) forecasts
+    * Corrosion progression
+    * Corrosion ratio forecasts
+    * Moment capacity degradation
+    * Scatterplots of random variables vs. reliability outcomes
+- Exports figures to PDF files under `results/reliability_timeline/plots`.
+
+Functions return matplotlib Figure objects for flexible use.
+"""
+
+
+def read_log(log_path: Path, time: float) -> Dict[str, Dict[str, Any]]:
+    """
+    Read log data for a given time step.
+
+    Args:
+        log_path (Path): Path to the log directory (runner_log/<time>).
+        time (float): Current time step.
+
+    Returns:
+        dict: Nested dict of log data for ["theoretical"]["prior"/"posterior"]
+              and ["survived"]["prior"/"posterior"].
+    """
     log = {}
     for cap_type in ["theoretical", "survived"]:
         log[cap_type] = {}
@@ -25,8 +53,17 @@ def read_log(log_path, time):
     return log
 
 
-def plot_pf(log, current_time):
+def plot_pf(log: Dict[str, Any], current_time: float) -> plt.Figure:
+    """
+    Plot probability of failure (Pf) forecasts for theoretical and empirical capacity.
 
+    Args:
+        log (dict): Log dictionary returned by `read_log`.
+        current_time (float): Current time step.
+
+    Returns:
+        matplotlib.figure.Figure: The generated Pf plot.
+    """
     fig, axs = plt.subplots(2, 1, figsize=(8, 8), sharex=True, sharey=False)
 
     ax = axs[0]
@@ -75,8 +112,18 @@ def plot_pf(log, current_time):
     return fig
 
 
-def plot_corrosion(log, params, alpha=0.05):
+def plot_corrosion(log: Dict[str, Any], params: TimelineParameters, alpha: float = 0.05) -> plt.Figure:
+    """
+    Plot corrosion depth progression (prior vs posterior forecast).
 
+    Args:
+        log (dict): Log dictionary for current time.
+        params (TimelineParameters): Simulation parameters (with settings, thickness, etc.).
+        alpha (float, optional): Confidence level (1-alpha). Defaults to 0.05.
+
+    Returns:
+        matplotlib.figure.Figure: The generated corrosion plot.
+    """
     setting = params.setting
 
     all_times = list(setting.keys())
@@ -134,8 +181,18 @@ def plot_corrosion(log, params, alpha=0.05):
     return fig
 
 
-def plot_corrosion_ratio(log, params, alpha=0.05):
+def plot_corrosion_ratio(log: Dict[str, Any], params: TimelineParameters, alpha: float = 0.05) -> plt.Figure:
+    """
+    Plot corrosion ratio progression (prior vs posterior forecast).
 
+    Args:
+        log (dict): Log dictionary for current time.
+        params (TimelineParameters): Simulation parameters.
+        alpha (float, optional): Confidence level (1-alpha). Defaults to 0.05.
+
+    Returns:
+        matplotlib.figure.Figure: The generated corrosion ratio plot.
+    """
     setting = params.setting
 
     all_times = list(setting.keys())
@@ -194,8 +251,18 @@ def plot_corrosion_ratio(log, params, alpha=0.05):
     return fig
 
 
-def plot_moment(log, params, alpha=0.05):
+def plot_moment(log: Dict[str, Any], params: TimelineParameters, alpha: float = 0.05) -> plt.Figure:
+    """
+    Plot bending moment capacity degradation (prior vs posterior).
 
+    Args:
+        log (dict): Log dictionary for current time.
+        params (TimelineParameters): Simulation parameters.
+        alpha (float, optional): Confidence level (1-alpha). Defaults to 0.05.
+
+    Returns:
+        matplotlib.figure.Figure: The generated moment plot.
+    """
     setting = params.setting
 
     all_times = list(setting.keys())
@@ -279,8 +346,18 @@ def plot_moment(log, params, alpha=0.05):
     return fig
 
 
-def plot_scatter(log, mcs_data, rvs=["Klei_soilphi", "Corrosion_ratio"]):
+def plot_scatter(log: Dict[str, Any], mcs_data: np.ndarray, rvs: List[str] = ["Klei_soilphi", "Corrosion_ratio"]) -> plt.Figure:
+    """
+    Scatter plot of random variables vs. reliability outcomes.
 
+    Args:
+        log (dict): Log dictionary for current time.
+        mcs_data (np.ndarray): Monte Carlo samples (input features).
+        rvs (List[str], optional): Variables to plot on x and y axes. Defaults to ["Klei_soilphi", "Corrosion_ratio"].
+
+    Returns:
+        matplotlib.figure.Figure: The generated scatter plot.
+    """
     def make_df(data, mcs_data):
         fos = data["fos"]
         survival = data["survival"].flatten()
@@ -321,8 +398,14 @@ def plot_scatter(log, mcs_data, rvs=["Klei_soilphi", "Corrosion_ratio"]):
     return fig
 
 
-if __name__ == "__main__":
-
+def main() -> None:
+    """
+    Main execution:
+    - Reads case study settings.
+    - Iterates through all time steps.
+    - Reads logs and generates plots for Pf, corrosion, corrosion ratio, and moment capacity.
+    - Exports figures into PDF reports under `results/reliability_timeline/plots`.
+    """
     SCRIPT_DIR = Path(__file__).resolve().parent.parent
     setting_path = SCRIPT_DIR / "data/case_study.json"
     mcs_samples_path = SCRIPT_DIR / f"data/surrogate_data.csv"
@@ -345,8 +428,7 @@ if __name__ == "__main__":
     scatter_figs = []
     all_times = params.times
     for i, time in enumerate(tqdm(params.setting.keys(), desc="Running time step")):
-
-        log = read_log(log_path/f"{time}", int(time))
+        log = read_log(log_path / f"{time}", int(time))
 
         fig = plot_pf(log, float(time))
         fig.suptitle(f"Time={time}")
@@ -368,22 +450,28 @@ if __name__ == "__main__":
         # fig.suptitle(f"Time={time}")
         # scatter_figs.append(fig)
 
-    pp = PdfPages(plots_path/"pf_plots.pdf")
+    pp = PdfPages(plots_path / "pf_plots.pdf")
     [pp.savefig(fig) for fig in pf_figs]
     pp.close()
 
-    pp = PdfPages(plots_path/"corrosion_plots.pdf")
+    pp = PdfPages(plots_path / "corrosion_plots.pdf")
     [pp.savefig(fig) for fig in corrosion_figs]
     pp.close()
 
-    pp = PdfPages(plots_path/"corrosion_ratio_plots.pdf")
+    pp = PdfPages(plots_path / "corrosion_ratio_plots.pdf")
     [pp.savefig(fig) for fig in corrosion_ratio_figs]
     pp.close()
 
-    pp = PdfPages(plots_path/"moment_plots.pdf")
+    pp = PdfPages(plots_path / "moment_plots.pdf")
     [pp.savefig(fig) for fig in moment_figs]
     pp.close()
 
-    pp = PdfPages(plots_path/"scatter_plots.pdf")
-    [pp.savefig(fig) for fig in scatter_figs]
-    pp.close()
+    # pp = PdfPages(plots_path / "scatter_plots.pdf")
+    # [pp.savefig(fig) for fig in scatter_figs]
+    # pp.close()
+
+
+if __name__ == "__main__":
+
+    main()
+
