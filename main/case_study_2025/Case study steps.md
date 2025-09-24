@@ -37,6 +37,9 @@ python -m main.case_study_2025.prepare_data.prepare_samples.generate_setting --i
 ```
 The argument `interval` controls the year interval between observations. 
 
+
+++++ run dsheetpiling
+
 ## Training the surrogate model
 
 The case study trains a Multi-Layer Perceptron (MLP) neural network as a surrogate model. The MLP models the maximum absolute moment developed long the wall. The input of training are the surrogate samples, while the training target is the maximum absolute moment developed per input sample as estimted by D-Sheet{iling.
@@ -49,6 +52,8 @@ pyhton -m main.case_study_2025.train.surrogate.mlp_moments_train --epochs 10_000
 The results of training (diagnostic figures, data scalers and trained weights) are stored in `main/case_study_2025/results/surrogate/mlp_moment`.
 
 ## Evaluating the timeline
+
+++++ ref to EC7 corrosion model
 
 The next step is to assess the reliability of the sheet pile wall along the timeline of the setting of the case study. This includes:
 * Pre-training an MCS dataset: the code generates a grid of corrosion ratios and performs an MCS per point of the grid, using the drawn MCS samples and the trained surrogate model. Per value of the corrosion ratio, the stiffness and moment capacity of the sheet pile wall changes. In this way, the code calculates and caches the conditional probability of failure given the value of the corrosion ratio and during the analysis it only needs to calculate the total failure probability as the expectation of the conditional ones. This is controlled by the PDF of the corrosion ratio, which is dependent on time (through the implemented corrosion model) and the information extracted via updating with the available data.

@@ -446,11 +446,12 @@ class PfCalculator:
         corrosion_ratio_grid = np.array(corrosion_ratio_grid)
         corrosion_ratio_pdf = np.array(corrosion_ratio_pdf)
 
-        moment_cap_grid = moment_cap * (1 - corrosion_ratio_grid)
+        moment_cap_grid = moment_cap * (1 - corrosion_ratio_grid)  # Linear model for capacity reduction (SIMPLIFICATION)
         moment_cap_grid = np.flip(moment_cap_grid)
         moment_cap_pdf = corrosion_ratio_pdf * (1/moment_cap)  # Variable change
         moment_cap_pdf = np.flip(moment_cap_pdf, axis=-1)
 
+        #TODO: Cancel samples that dont meet the survived moment --> easy eay to apply survived moment degradation
         moment_cap_pdf_truncated = np.where(moment_cap_grid <= moment_survived, 0., moment_cap_pdf)
         moment_cap_pdf_truncated /= np.trapezoid(moment_cap_pdf_truncated, moment_cap_grid, axis=-1)[:, None]
 
