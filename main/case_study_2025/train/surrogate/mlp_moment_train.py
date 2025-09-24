@@ -19,7 +19,34 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 
+"""
+Train a surrogate Multi-Layer Perceptron (MLP) for predicting maximum bending moment
+from D-SheetPiling surrogate data.
+
+This script:
+- Loads surrogate samples and target moments.
+- Preprocesses data with scaling and train/test split.
+- Trains an MLP with configurable hyperparameters.
+- Evaluates performance (RMSE, R²).
+- Saves model weights, scalers, logs, and plots.
+
+Usage:
+    python train_mlp.py --epochs 10000 --lr 1e-4
+"""
+
+
 class MLP(nn.Module):
+    """
+    Multi-Layer Perceptron (MLP) for regression.
+
+    Architecture:
+        [Linear -> ReLU]* + [Linear -> Tanh]
+
+    Args:
+        input_dim (int): Number of input features.
+        hidden_dims (Sequence[int]): Sizes of hidden layers.
+        output_dim (int): Number of output targets.
+    """
     def __init__(self, input_dim, hidden_dims, output_dim):
 
         super().__init__()
@@ -37,10 +64,39 @@ class MLP(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x):
+        """
+        Forward pass through the MLP.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, input_dim).
+
+        Returns:
+            torch.Tensor: Predicted tensor of shape (batch_size, output_dim).
+        """
         return self.net(x)
 
 
-def inference(model, x, scaler_x, scaler_y, device=None):
+def inference(
+    model: nn.Module,
+    x: NDArray,
+    scaler_x: MinMaxScaler,
+    scaler_y: MinMaxScaler,
+    device: Optional[torch.device] = None,
+) -> NDArray:
+    """
+    Perform inference with the trained MLP model.
+
+    Args:
+        model (nn.Module): Trained PyTorch model.
+        x (NDArray): Input features (N x d).
+        scaler_x (MinMaxScaler): Fitted input scaler.
+        scaler_y (MinMaxScaler): Fitted target scaler.
+        device (Optional[torch.device]): Torch device (CPU, CUDA, or MPS).
+            Defaults to model device if None.
+
+    Returns:
+        NDArray: Predicted target values (N x output_dim).
+    """
     if device is None:
         device = next(model.parameters()).device
     x_scaled = scaler_x.transform(x)
@@ -52,8 +108,26 @@ def inference(model, x, scaler_x, scaler_y, device=None):
     return y_hat
 
 
-def main(epochs: int = 10_000, lr: float = 1e-5, full_profile: bool = True, quiet: bool = False):
+def main(epochs: int = 10_000, lr: float = 1e-5) -> None:
+    """
+    Train and evaluate an MLP surrogate model for bending moment prediction.
 
+    Steps:
+        1. Load surrogate data and preprocess.
+        2. Train MLP with Adam optimizer and linear LR scheduler.
+        3. Evaluate with RMSE and R².
+        4. Save weights, scalers, logs, and plots.
+
+    Args:
+        epochs (int, optional): Number of training epochs. Defaults to 10,000.
+        lr (float, optional): Learning rate for optimizer. Defaults to 1e-5.
+
+    Saves:
+        - `torch_weights.pth` (model weights)
+        - `scaler_x.joblib` / `scaler_y.joblib` (fitted scalers)
+        - `training_log.txt` (performance log)
+        - Plots of predictions and loss history
+    """
     base_dir = Path(__file__).resolve().parent
 
     data_dir = base_dir.parent / "data"
@@ -162,14 +236,10 @@ if __name__ == "__main__":
 
     parser.add_argument('--epochs', type=int, default=10_000)
     parser.add_argument('--lr', type=float, default=1e-4)
-    parser.add_argument('--full_profile', action='store_false')
-    parser.add_argument('--quiet', action='store_false')
     args = parser.parse_args()
 
     main(
         epochs=args.epochs,
         lr=args.lr,
-        full_profile=args.full_profile,
-        quiet=args.quiet
     )
 

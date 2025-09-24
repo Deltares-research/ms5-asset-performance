@@ -7,9 +7,34 @@ from src.reliability_models.dsheetpiling.lsf import *
 from pathlib import Path
 import json
 from tqdm import tqdm
+from typing import List, Dict
 
 
-def run_model(rvs, model, rv_names):
+"""
+Surrogate data generator for D-SheetPiling model simulations.
+
+This script:
+- Loads surrogate random variable samples.
+- Runs the D-SheetPiling geotechnical model on a subset of samples.
+- Extracts displacements and bending moments.
+- Saves results as both JSON (`surrogate_data.json`) and CSV (`surrogate_data.csv`).
+
+Intended for building surrogate models of structural response under uncertainty.
+"""
+
+
+def run_model(rvs: List[float], model: DSheetPiling, rv_names: List[str]) -> DSheetPilingResults:
+    """
+    Run a D-SheetPiling model simulation for a single set of random variables.
+
+    Args:
+        rvs (np.ndarray): 1D array of random variable values.
+        model (DSheetPiling): Initialized D-SheetPiling model instance.
+        rv_names (List[str]): Names of the random variables in order.
+
+    Returns:
+        DSheetPilingResults: Results of the model run (displacements, moments, etc.).
+    """
     params = {name: rv for (name, rv) in zip(rv_names, rvs)}
     soil_data = unpack_soil_params(params, list(model.soils.keys()))
     water_data = unpack_water_params(params, [lvl.name for lvl in model.water.water_lvls])
@@ -21,8 +46,22 @@ def run_model(rvs, model, rv_names):
     return model.results
 
 
-def sample_disp(rv_sample, rv_names, model):
+def sample_disp(
+    rv_sample: np.ndarray, rv_names: List[str], model: DSheetPiling
+) -> Tuple[List[float], List[float]]:
+    """
+    Evaluate the D-SheetPiling model for multiple random variable samples.
 
+    Args:
+        rv_sample (np.ndarray): 2D array of random variable samples (N x d).
+        rv_names (List[str]): Names of the random variables in order.
+        model (DSheetPiling): Initialized D-SheetPiling model instance.
+
+    Returns:
+        Tuple[List[float], List[float]]:
+            - Displacements at the first node for all runs.
+            - Moments at the first node for all runs.
+    """
     disp_sample = []
     moment_sample = []
 
@@ -34,8 +73,18 @@ def sample_disp(rv_sample, rv_names, model):
     return disp_sample, moment_sample
 
 
-def main(n_samples_to_use=1_000):
+def main(n_samples_to_use: int = 1_000) -> None:
+    """
+    Run D-SheetPiling simulations for surrogate samples and save results.
 
+    Args:
+        n_samples_to_use (int, optional): Number of surrogate samples to evaluate.
+            Defaults to 1,000.
+
+    Saves:
+        - `surrogate_data.json`: Simulation results in JSON format.
+        - `surrogate_data.csv`: Tabular results with random variables, displacements, and moments.
+    """
     path = Path(__file__).parent
 
     load_dotenv(path.parents[2] / ".env")

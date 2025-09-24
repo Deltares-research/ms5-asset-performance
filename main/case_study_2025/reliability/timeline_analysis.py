@@ -7,8 +7,50 @@ from tqdm import tqdm
 from argparse import ArgumentParser
 
 
-def main(n_mcs_samples=10_000_000, n_corrosion_grid=100, n_corrosion_ratio_grid=1_000, n_mcs=1_000_000):
+"""
+Reliability timeline analysis for D-SheetPiling with corrosion effects.
 
+This script:
+- Loads a case study configuration (`case_study.json`).
+- Uses surrogate models (MLP) for moment prediction.
+- Simulates corrosion progression over time.
+- Calculates failure probabilities (Pf) with Monte Carlo Simulation (MCS).
+- Logs results per time step for reliability assessment.
+
+Outputs are stored under `results/reliability_timeline/`.
+"""
+
+
+def main(
+    n_mcs_samples: int = 10_000_000,
+    n_corrosion_grid: int = 100,
+    n_corrosion_ratio_grid: int = 1_000,
+    n_mcs: int = 1_000_000,
+) -> None:
+    """
+    Run reliability timeline analysis for the case study.
+
+    Steps:
+        1. Load case study settings and surrogate moment model.
+        2. Initialize corrosion and probability of failure (Pf) calculators.
+        3. For each time step:
+            - Update system state.
+            - Compute failure probability.
+            - Log results to output directory.
+
+    Args:
+        n_mcs_samples (int, optional): Number of Monte Carlo samples for parameter sampling.
+            Defaults to 10,000,000.
+        n_corrosion_grid (int, optional): Grid size for corrosion progression.
+            Defaults to 100.
+        n_corrosion_ratio_grid (int, optional): Grid size for corrosion ratio discretization.
+            Defaults to 1,000.
+        n_mcs (int, optional): Number of Monte Carlo simulations for reliability estimation.
+            Defaults to 1,000,000.
+
+    Saves:
+        - Reliability results per time step into `results/reliability_timeline/`.
+    """
     SCRIPT_DIR = Path(__file__).resolve().parent.parent
     setting_path = SCRIPT_DIR / "data/case_study.json"
     mcs_samples_path = SCRIPT_DIR / f"data/mc_samples_normal_{n_mcs_samples}.npy"

@@ -11,9 +11,41 @@ import collections
 from tqdm import tqdm
 from dotenv import load_dotenv
 from argparse import ArgumentParser
+from typing import Dict, Tuple, List
 
 
-def run_model(params, model):
+"""
+Case study runner for D-SheetPiling reliability analysis with corrosion effects.
+
+This script integrates:
+- A geotechnical model (D-SheetPiling).
+- A corrosion progression model.
+- Reliability modeling with time-dependent degradation of sheet pile wall stiffness.
+
+It generates time-dependent model results and exports them to a JSON file for further
+analysis of displacement, bending moments, and structural capacity.
+"""
+
+
+def run_model(
+        params: Dict[str, float], model: DSheetPilingModel
+) -> Tuple[List[List, float], List[List, float], List[List, float]]:
+    """
+    Run a single D-SheetPiling model simulation with updated parameters.
+
+    Updates the soil, water, and wall properties of the given geotechnical model,
+    executes the simulation, and extracts displacement, bending moments, and depth.
+
+    Args:
+        params (dict): Dictionary of model parameters (soil, water, wall properties).
+        model (DSheetPiling): Initialized D-SheetPiling model instance.
+
+    Returns:
+        tuple:
+            - displacement (float): Displacement at the wall head (first node).
+            - moment (float): Bending moment at the wall head (first node).
+            - z (list[float]): Depth coordinates of the model nodes.
+    """
     soil_data = unpack_soil_params(params, list(model.soils.keys()))
     water_data = unpack_water_params(params, [lvl.name for lvl in model.water.water_lvls])
     wall_data = unpack_wall_data(params, model.wall._asdict())
@@ -24,8 +56,20 @@ def run_model(params, model):
     return model.results.displacement[0], model.results.moment[0], model.results.z
 
 
-def main(interval=1):
+def main(interval: int = 1):
+    """
+    Run corrosion-affected D-SheetPiling simulations over a time horizon.
 
+    The function:
+      - Loads surrogate input samples and extracts "true" soil, water, and wall parameters.
+      - Simulates corrosion progression over time and reduces wall stiffness accordingly.
+      - Executes D-SheetPiling simulations for each time step.
+      - Records displacements, bending moments, and structural survival capacity.
+      - Saves all results as JSON in the `data/case_study.json` file.
+
+    Args:
+        interval (int, optional): Time step interval in years (default=1).
+    """
     rv_names = [
         'Klei_soilcohesion', 'Klei_soilphi', 'Klei_soilcurkb1','Zand_soilphi', 'Zand_soilcurkb1','Zandvast_soilphi',
         'Zandvast_soilcurkb1','Zandlos_soilphi', 'Zandlos_soilcurkb1','Wall_SheetPilingElementEI', 'water_lvl'

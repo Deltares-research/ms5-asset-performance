@@ -2,10 +2,22 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from argparse import ArgumentParser
+from typing import List, Tuple, Dict, Any
 
 
-def main(n_mc_samples, n_srg_samples):
+def main(n_mc_samples: int, n_srg_samples: int) -> None:
+    """
+    Generate Monte Carlo and surrogate samples for model input parameters
+    and save them as NumPy `.npy` files.
 
+    Args:
+        n_mc_samples (int): Number of Monte Carlo samples to generate.
+        n_srg_samples (int): Number of surrogate (uniform) samples to generate.
+
+    Saves:
+        - `mc_samples_normal_<n_mc_samples>.npy` with normally distributed samples.
+        - `surrogate_samples_uniform_<n_srg_samples>.npy` with uniform samples.
+    """
     path = Path(__file__).parent
 
     data_path = path.parent / "data/parameter_distributions.csv"
@@ -33,7 +45,19 @@ def main(n_mc_samples, n_srg_samples):
 
 
 
-def run_model(rvs, model, rv_names):
+def run_model(rvs: List[float], model: DSheetPiling, rv_names: List[str]) -> Any:
+    """
+    Run the D-SheetPiling geotechnical model with a single set of random variables.
+
+    Args:
+        rvs (np.ndarray): Array of sampled parameter values (1D).
+        model (DSheetPiling): Initialized D-SheetPiling model instance.
+        rv_names (List[str]): Names of the random variables in order.
+
+    Returns:
+        DSheetPilingResults: Simulation results object containing displacements,
+        bending moments, etc.
+    """
     params = {name: rv for (name, rv) in zip(rv_names, rvs)}
     soil_data = unpack_soil_params(params, list(model.soils.keys()))
     water_data = unpack_water_params(params, [lvl.name for lvl in model.water.water_lvls])
@@ -45,8 +69,22 @@ def run_model(rvs, model, rv_names):
     return model.results
 
 
-def sample_disp(rv_sample, rv_names, model):
+def sample_disp(
+    rv_sample: np.ndarray, rv_names: List[str], model: DSheetPiling
+) -> Tuple[List[float], List[float]]:
+    """
+    Run multiple model simulations to generate displacement and moment samples.
 
+    Args:
+        rv_sample (np.ndarray): 2D array of random variable samples (N x d).
+        rv_names (List[str]): Names of the random variables in order.
+        model (DSheetPiling): Initialized D-SheetPiling model instance.
+
+    Returns:
+        Tuple[List[float], List[float]]:
+            - Displacement samples (first node per run).
+            - Moment samples (first node per run).
+    """
     disp_sample = []
     moment_sample = []
 
@@ -58,7 +96,19 @@ def sample_disp(rv_sample, rv_names, model):
     return disp_sample, moment_sample
 
 
-def calculate(n_samples_to_use=1_000):
+def calculate(n_samples_to_use: int = 1_000) -> None:
+    """
+    Generate surrogate model data by evaluating the D-SheetPiling model
+    on a subset of surrogate samples.
+
+    Args:
+        n_samples_to_use (int, optional): Number of surrogate samples to evaluate.
+            Defaults to 1,000.
+
+    Saves:
+        - `surrogate_data.json`: Raw simulation results (samples, displacements, moments).
+        - `surrogate_data.csv`: Tabular format with random variables + outputs.
+    """
 
     path = Path(__file__).parent
 
