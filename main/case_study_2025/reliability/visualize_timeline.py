@@ -112,6 +112,75 @@ def plot_pf(log: Dict[str, Any], current_time: float) -> plt.Figure:
     return fig
 
 
+def plot_beta(log: Dict[str, Any], current_time: float) -> plt.Figure:
+    """
+    Plot reliability index forecasts for theoretical and empirical capacity.
+
+    Args:
+        log (dict): Log dictionary returned by `read_log`.
+        current_time (float): Current time step.
+
+    Returns:
+        matplotlib.figure.Figure: The generated Pf plot.
+    """
+    fig, axs = plt.subplots(2, 1, figsize=(8, 8), sharex=True, sharey=False)
+
+    ax = axs[0]
+
+    data = log["theoretical"]["posterior"]
+    times_forecast = [float(key) for key in data["pf_forecast"].keys()]
+    pf_forecast_posterior = [float(val) for val in data["pf_forecast"].values()]
+    beta_forecast_posterior = [norm.ppf(1-pf) for pf in pf_forecast_posterior]
+    beta_forecast_posterior = [10 if np.isinf(beta) else beta for beta in beta_forecast_posterior]
+    ax.plot(times_forecast, beta_forecast_posterior, c="r", label="Posterior forecast")
+
+    data = log["theoretical"]["prior"]
+    times_prior = [float(key) for key in data["pf_forecast"].keys()]
+    pf_forecast_prior = [float(val) for val in data["pf_forecast"].values()]
+    beta_forecast_prior = [norm.ppf(1-pf) for pf in pf_forecast_prior]
+    beta_forecast_prior = [10 if np.isinf(beta) else beta for beta in beta_forecast_prior]
+    ax.plot(times_forecast, beta_forecast_prior, c="b", label="Prior forecast")
+
+    ax.annotate("", xy=(current_time, 0), xytext=(current_time, 0.1),
+                arrowprops=dict(arrowstyle='->', color="k", linewidth=3))
+    ax.set_xlabel("Time [yr]", fontsize=12)
+    ax.set_ylabel("${β}$ [-]", fontsize=12)
+    ax.set_yscale('log')
+    ax.xaxis.grid(False)
+    ax.yaxis.grid(True)
+    ax.legend(fontsize=10)
+    ax.set_title("Theoretical moment capacity", fontsize=12)
+
+    ax = axs[1]
+
+    data = log["survived"]["posterior"]
+    times_forecast = [float(key) for key in data["pf_forecast"].keys()]
+    pf_forecast_posterior = [float(val) for val in data["pf_forecast"].values()]
+    beta_forecast_posterior = [norm.ppf(1-pf) for pf in pf_forecast_posterior]
+    beta_forecast_posterior = [10 if np.isinf(beta) else beta for beta in beta_forecast_posterior]
+    ax.plot(times_forecast, beta_forecast_posterior, c="r", label="Posterior forecast")
+
+    data = log["survived"]["prior"]
+    times_prior = [float(key) for key in data["pf_forecast"].keys()]
+    pf_forecast_prior = [float(val) for val in data["pf_forecast"].values()]
+    beta_forecast_prior = [norm.ppf(1-pf) for pf in pf_forecast_prior]
+    beta_forecast_prior = [10 if np.isinf(beta) else beta for beta in beta_forecast_prior]
+    ax.plot(times_forecast, beta_forecast_prior, c="b", label="Prior forecast")
+
+    ax.axvline(current_time, c="k", linestyle="--", linewidth=0.5)
+    ax.annotate("", xy=(current_time, 0), xytext=(current_time, 0.1),
+                arrowprops=dict(arrowstyle='->', color="k", linewidth=3))
+    ax.set_xlabel("Time [yr]", fontsize=12)
+    ax.set_ylabel("${β}$ [-]", fontsize=12)
+    ax.set_yscale('log')
+    ax.xaxis.grid(False)
+    ax.yaxis.grid(True)
+    ax.legend(fontsize=10)
+    ax.set_title("Empirical moment capacity", fontsize=12)
+
+    return fig
+
+
 def plot_corrosion(log: Dict[str, Any], params: TimelineParameters, alpha: float = 0.05) -> plt.Figure:
     """
     Plot corrosion depth progression (prior vs posterior forecast).
@@ -338,7 +407,7 @@ def plot_moment(log: Dict[str, Any], params: TimelineParameters, alpha: float = 
     ax.set_xlabel("Time [yr]", fontsize=12)
     ax.set_ylabel("Moment capacity [kNm]", fontsize=12)
     ax.set_xlim(min(all_times), max(all_times))
-    ax.set_ylim(300, 1_200)
+    ax.set_ylim(100, 1_000)
     ax.xaxis.grid(False)
     ax.yaxis.grid(True)
     ax.legend(fontsize=10, loc="lower right")
@@ -422,17 +491,23 @@ def main() -> None:
     params = TimelineParameters(setting=setting_data)
 
     pf_figs = []
+    beta_figs = []
     corrosion_figs = []
     corrosion_ratio_figs = []
     moment_figs = []
     scatter_figs = []
     all_times = params.times
     for i, time in enumerate(tqdm(params.setting.keys(), desc="Running time step")):
+
         log = read_log(log_path / f"{time}", int(time))
 
         fig = plot_pf(log, float(time))
         fig.suptitle(f"Time={time}")
         pf_figs.append(fig)
+
+        fig = plot_beta(log, float(time))
+        fig.suptitle(f"Time={time}")
+        beta_figs.append(fig)
 
         fig = plot_corrosion(log, params)
         fig.suptitle(f"Time={time}")
@@ -446,12 +521,13 @@ def main() -> None:
         fig.suptitle(f"Time={time}")
         moment_figs.append(fig)
 
-        # fig = plot_scatter(log, mcs_data)
-        # fig.suptitle(f"Time={time}")
-        # scatter_figs.append(fig)
 
     pp = PdfPages(plots_path / "pf_plots.pdf")
     [pp.savefig(fig) for fig in pf_figs]
+    pp.close()
+
+    pp = PdfPages(plots_path / "beta_plots.pdf")
+    [pp.savefig(fig) for fig in beta_figs]
     pp.close()
 
     pp = PdfPages(plots_path / "corrosion_plots.pdf")
@@ -465,10 +541,6 @@ def main() -> None:
     pp = PdfPages(plots_path / "moment_plots.pdf")
     [pp.savefig(fig) for fig in moment_figs]
     pp.close()
-
-    # pp = PdfPages(plots_path / "scatter_plots.pdf")
-    # [pp.savefig(fig) for fig in scatter_figs]
-    # pp.close()
 
 
 if __name__ == "__main__":
