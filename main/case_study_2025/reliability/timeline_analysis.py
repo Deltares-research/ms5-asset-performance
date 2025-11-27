@@ -22,10 +22,10 @@ Outputs are stored under `results/reliability_timeline/`.
 
 
 def main(
-    n_mcs_samples: int = 10_000_000,
+    n_mcs_samples: int = 10_000,
     n_corrosion_grid: int = 100,
-    n_corrosion_ratio_grid: int = 1_000,
-    n_mcs: int = 1_000_000,
+    n_corrosion_ratio_grid: int = 100,
+    n_mcs: int = 10_000,
 ) -> None:
     """
     Run reliability timeline analysis for the case study.
@@ -53,8 +53,8 @@ def main(
     """
     SCRIPT_DIR = Path(__file__).resolve().parent.parent
     setting_path = SCRIPT_DIR / "data/case_study.json"
-    mcs_samples_path = SCRIPT_DIR / f"data/mc_samples_normal_{n_mcs_samples}.npy"
-    moment_model_path = SCRIPT_DIR / f"results/surrogate/mlp_moment/lr_1.0e-04_epochs_10000"
+    mcs_samples_path = SCRIPT_DIR / f"data/mc_samples_normal.npy"
+    moment_model_path = SCRIPT_DIR / f"results/surrogate/mlp_moment/lr_1.0e-04_epochs_5000"
     results_path = SCRIPT_DIR / "results/reliability_timeline"
     results_path.mkdir(parents=True, exist_ok=True)
 
@@ -98,8 +98,7 @@ def main(
 
         time = float(time)
 
-        if not time % 10 != 0:
-        # if time > 50:
+        if time > 51:
             continue
 
         runner.step(time, params)

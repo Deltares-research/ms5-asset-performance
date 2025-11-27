@@ -233,6 +233,10 @@ def main() -> None:
 
     for i, time in enumerate(tqdm(params.setting.keys(), desc="Running time step")):
 
+        if time > 51:
+            continue
+
+
         with open(log_path/"prior/data.json", "r") as f:
             log_prior = json.load(f)
 

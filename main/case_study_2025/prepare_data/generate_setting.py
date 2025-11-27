@@ -5,9 +5,9 @@ from pathlib import Path
 import json
 import os
 from math import fabs
-from ....src.geotechnical_models.dsheetpiling.model import DSheetPiling, DSheetPilingResults
-from ....src.reliability_models.dsheetpiling.lsf import *
-from ....src.corrosion.corrosion_model import CorrosionModel
+from src.geotechnical_models.dsheetpiling.model import DSheetPiling, DSheetPilingResults
+from src.reliability_models.dsheetpiling.lsf import *
+from src.corrosion.corrosion_model import CorrosionModel
 import collections
 from tqdm import tqdm
 from dotenv import load_dotenv
@@ -79,7 +79,7 @@ def main(interval: int = 1):
 
     srg_samples_path = Path(__file__).parents[1] / "data/surrogate_data.csv"
     env_path = Path(__file__).parents[3] / ".env"
-
+    print(env_path)
     load_dotenv(env_path)
 
     df = pd.read_csv(srg_samples_path)
@@ -94,6 +94,7 @@ def main(interval: int = 1):
     corrosions = corossion_model.generate_observations(np.array(times), seed=42)
 
     geomodel_path = os.environ["DSHEET_MODEL_PATH"]  # model_path defined as environment variable
+    print(f"Using D-SheetPiling model at: {geomodel_path}")
     geomodel = DSheetPiling(geomodel_path)
 
     data = {}
