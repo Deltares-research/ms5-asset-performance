@@ -8,6 +8,7 @@ from pathlib import Path
 import json
 from tqdm import tqdm
 from typing import List, Dict
+from argparse import ArgumentParser
 
 
 """
@@ -90,7 +91,7 @@ def main(n_samples_to_use: int = 1_000) -> None:
     load_dotenv(path.parents[2] / ".env")
 
     geomodel_path = os.environ["DSHEET_MODEL_PATH"]
-    data_path = path.parent / "data/srg_samples_uniform_100000.npy"
+    data_path = path.parent / "data/surrogate_samples_uniform_100000.npy"
     result_path = path.parent / "data"
     result_path.mkdir(exist_ok=True, parents=True)
 

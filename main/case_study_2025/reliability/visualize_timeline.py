@@ -112,71 +112,57 @@ def plot_pf(log: Dict[str, Any], current_time: float) -> plt.Figure:
     return fig
 
 
-def plot_beta(log: Dict[str, Any], current_time: float) -> plt.Figure:
+def plot_beta(log: Dict[str, Any], current_time: float, beta_req: int = 2.) -> plt.Figure:
     """
     Plot reliability index forecasts for theoretical and empirical capacity.
 
     Args:
         log (dict): Log dictionary returned by `read_log`.
         current_time (float): Current time step.
+        beta_req (int): Reliability index requirement.
 
     Returns:
         matplotlib.figure.Figure: The generated Pf plot.
     """
-    fig, axs = plt.subplots(2, 1, figsize=(8, 8), sharex=True, sharey=False)
 
-    ax = axs[0]
+    labels = {
+        "theoretical_prior": "A",
+        "theoretical_posterior": "B",
+        "survived_prior": "C",
+        "survived_posterior": "D"
+    }
 
-    data = log["theoretical"]["posterior"]
-    times_forecast = [float(key) for key in data["pf_forecast"].keys()]
-    pf_forecast_posterior = [float(val) for val in data["pf_forecast"].values()]
-    beta_forecast_posterior = [norm.ppf(1-pf) for pf in pf_forecast_posterior]
-    beta_forecast_posterior = [10 if np.isinf(beta) else beta for beta in beta_forecast_posterior]
-    ax.plot(times_forecast, beta_forecast_posterior, c="r", label="Posterior forecast")
+    colors = {
+        "A": "b",
+        "B": "r",
+        "C": "m",
+        "D": "g",
+    }
 
-    data = log["theoretical"]["prior"]
-    times_prior = [float(key) for key in data["pf_forecast"].keys()]
-    pf_forecast_prior = [float(val) for val in data["pf_forecast"].values()]
-    beta_forecast_prior = [norm.ppf(1-pf) for pf in pf_forecast_prior]
-    beta_forecast_prior = [10 if np.isinf(beta) else beta for beta in beta_forecast_prior]
-    ax.plot(times_forecast, beta_forecast_prior, c="b", label="Prior forecast")
+    max_beta = 3.
 
-    ax.annotate("", xy=(current_time, 0), xytext=(current_time, 0.1),
-                arrowprops=dict(arrowstyle='->', color="k", linewidth=3))
-    ax.set_xlabel("Time [yr]", fontsize=12)
-    ax.set_ylabel("${β}$ [-]", fontsize=12)
-    ax.set_yscale('log')
-    ax.xaxis.grid(False)
-    ax.yaxis.grid(True)
-    ax.legend(fontsize=10)
-    ax.set_title("Theoretical moment capacity", fontsize=12)
+    fig = plt.figure(figsize=(8, 4))
 
-    ax = axs[1]
+    for (key, label) in labels.items():
 
-    data = log["survived"]["posterior"]
-    times_forecast = [float(key) for key in data["pf_forecast"].keys()]
-    pf_forecast_posterior = [float(val) for val in data["pf_forecast"].values()]
-    beta_forecast_posterior = [norm.ppf(1-pf) for pf in pf_forecast_posterior]
-    beta_forecast_posterior = [10 if np.isinf(beta) else beta for beta in beta_forecast_posterior]
-    ax.plot(times_forecast, beta_forecast_posterior, c="r", label="Posterior forecast")
+        proven_str_update, corrosion_update = key.split("_")
+        data = log[proven_str_update][corrosion_update]
 
-    data = log["survived"]["prior"]
-    times_prior = [float(key) for key in data["pf_forecast"].keys()]
-    pf_forecast_prior = [float(val) for val in data["pf_forecast"].values()]
-    beta_forecast_prior = [norm.ppf(1-pf) for pf in pf_forecast_prior]
-    beta_forecast_prior = [10 if np.isinf(beta) else beta for beta in beta_forecast_prior]
-    ax.plot(times_forecast, beta_forecast_prior, c="b", label="Prior forecast")
+        times_forecast = [float(key) for key in data["pf_forecast"].keys()]
+        pf_forecast_posterior = [float(val) for val in data["pf_forecast"].values()]
+        beta_forecast_posterior = [norm.ppf(1 - pf) for pf in pf_forecast_posterior]
+        beta_forecast_posterior = [max_beta if np.isinf(beta) else beta for beta in beta_forecast_posterior]
+        plt.plot(times_forecast, beta_forecast_posterior, c=colors[label], label=label)
 
-    ax.axvline(current_time, c="k", linestyle="--", linewidth=0.5)
-    ax.annotate("", xy=(current_time, 0), xytext=(current_time, 0.1),
-                arrowprops=dict(arrowstyle='->', color="k", linewidth=3))
-    ax.set_xlabel("Time [yr]", fontsize=12)
-    ax.set_ylabel("${β}$ [-]", fontsize=12)
-    ax.set_yscale('log')
-    ax.xaxis.grid(False)
-    ax.yaxis.grid(True)
-    ax.legend(fontsize=10)
-    ax.set_title("Empirical moment capacity", fontsize=12)
+    plt.axvline(beta_req, c="k", linestyle="--", label="Requirement")
+
+    plt.xlabel("Forecast time [yr]", fontsize=12)
+    plt.ylabel("${β}$ [-]", fontsize=12)
+    plt.xlim(50, 80)
+    plt.ylim(1., max_beta)
+    plt.legend(fontsize=12)
+    plt.grid()
+    fig.suptitle(f"Current time: {current_time:.0f}", fontsize=14)
 
     return fig
 
@@ -197,7 +183,7 @@ def plot_corrosion(log: Dict[str, Any], params: TimelineParameters, alpha: float
 
     all_times = list(setting.keys())
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(8, 4))
 
     data = log["theoretical"]["prior"]
     times_forecast = [float(key) for key in data["pf_forecast"].keys()]
@@ -266,7 +252,7 @@ def plot_corrosion_ratio(log: Dict[str, Any], params: TimelineParameters, alpha:
 
     all_times = list(setting.keys())
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(8, 4))
 
     data = log["theoretical"]["prior"]
     times_forecast = [float(key) for key in data["pf_forecast"].keys()]
@@ -320,7 +306,7 @@ def plot_corrosion_ratio(log: Dict[str, Any], params: TimelineParameters, alpha:
     return fig
 
 
-def plot_moment(log: Dict[str, Any], params: TimelineParameters, alpha: float = 0.05) -> plt.Figure:
+def plot_moment(log: Dict[str, Any], params: TimelineParameters, alpha: float = 0.005) -> plt.Figure:
     """
     Plot bending moment capacity degradation (prior vs posterior).
 
@@ -336,7 +322,7 @@ def plot_moment(log: Dict[str, Any], params: TimelineParameters, alpha: float = 
 
     all_times = list(setting.keys())
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(8, 4))
 
     data = log["survived"]["posterior"]
     times_forecast = [float(key) for key in data["pf_forecast"].keys()]
@@ -407,7 +393,7 @@ def plot_moment(log: Dict[str, Any], params: TimelineParameters, alpha: float = 
     ax.set_xlabel("Time [yr]", fontsize=12)
     ax.set_ylabel("Moment capacity [kNm]", fontsize=12)
     ax.set_xlim(min(all_times), max(all_times))
-    ax.set_ylim(100, 1_000)
+    ax.set_ylim(400, 700)
     ax.xaxis.grid(False)
     ax.yaxis.grid(True)
     ax.legend(fontsize=10, loc="lower right")
@@ -497,13 +483,18 @@ def main() -> None:
     moment_figs = []
     scatter_figs = []
     all_times = params.times
+
     for i, time in enumerate(tqdm(params.setting.keys(), desc="Running time step")):
+
+        # # if not time % 10 == 0:
+        # if time > 50:
+        #     continue
 
         log = read_log(log_path / f"{time}", int(time))
 
-        fig = plot_pf(log, float(time))
-        fig.suptitle(f"Time={time}")
-        pf_figs.append(fig)
+        # fig = plot_pf(log, float(time))
+        # fig.suptitle(f"Time={time}")
+        # pf_figs.append(fig)
 
         fig = plot_beta(log, float(time))
         fig.suptitle(f"Time={time}")
@@ -522,9 +513,9 @@ def main() -> None:
         moment_figs.append(fig)
 
 
-    pp = PdfPages(plots_path / "pf_plots.pdf")
-    [pp.savefig(fig) for fig in pf_figs]
-    pp.close()
+    # pp = PdfPages(plots_path / "pf_plots.pdf")
+    # [pp.savefig(fig) for fig in pf_figs]
+    # pp.close()
 
     pp = PdfPages(plots_path / "beta_plots.pdf")
     [pp.savefig(fig) for fig in beta_figs]

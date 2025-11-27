@@ -29,7 +29,7 @@ analysis of displacement, bending moments, and structural capacity.
 
 def run_model(
         params: Dict[str, float], model: DSheetPilingModel
-) -> Tuple[List[List, float], List[List, float], List[List, float]]:
+) -> Tuple[List[List[float]], List[List[float]], List[List[float]]]:
     """
     Run a single D-SheetPiling model simulation with updated parameters.
 
@@ -104,7 +104,7 @@ def main(interval: int = 1):
         time_params["Wall_SheetPilingElementEI"] = EI_corroded
         deformations, moments, z = run_model(time_params, geomodel)
         # Maximum survived moment is 80% of the one met in D-SheetPiling, bound to 600 to fix D-SheetPiling non-convergence.
-        moment_survived = min(600, np.abs(moments).max().item() * 0.8)
+        moment_survived = min(120, np.abs(moments).max().item() * 0.8)
         moments_survived.append(moment_survived)
         data[float(time)] = {
             "time": float(time),

@@ -90,10 +90,17 @@ def main(
         C50_prior_fixed=corrosion_model.C50_prior.tolist(),
     )
 
+    prior_results = pf_calculator.calculate_prior(params, runner)
+    runner.log_prior(prior_results, results_path)
+
     results = {}
     for time, data in tqdm(params.setting.items(), desc="Running time step"):
 
         time = float(time)
+
+        if not time % 10 != 0:
+        # if time > 50:
+            continue
 
         runner.step(time, params)
 
