@@ -108,7 +108,7 @@ def inference(
     return y_hat
 
 
-def main(epochs: int = 10_000, lr: float = 1e-5) -> None:
+def main(epochs: int = 10_000, lr: float = 1e-5, quiet: bool = False) -> None:
     """
     Train and evaluate an MLP surrogate model for bending moment prediction.
 
@@ -136,12 +136,12 @@ def main(epochs: int = 10_000, lr: float = 1e-5) -> None:
     output_path = base_dir.parent.parent / f"results/surrogate/mlp_moment/lr_{lr:.1e}_epochs_{epochs:d}"
     output_path.mkdir(parents=True, exist_ok=True)
 
-    X, y = load_data(data_path, full_profile=full_profile, target="moment")
+    X, y = load_data(data_path, full_profile=False, target="moment")
 
-    y = y[:, 60: 110]  # Keep only locations with important information
+    # y = y[:, 60: 110]  # Keep only locations with important information
     moment_cutoff = 600
 
-    y = np.abs(y).max(1)
+    y = np.abs(y).max(axis=1)
     # Bound maximum moment, reject samples with too high moment (indicates D-SheetPiling non-convergence)
     X = X[y<=moment_cutoff]
     y = y[y<=moment_cutoff]

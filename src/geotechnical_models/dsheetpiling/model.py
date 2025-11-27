@@ -37,7 +37,8 @@ class DSheetPiling(GeoModelBase):
         self.exe_path = Path(exe_path.as_posix())
 
     def parse_model(self, path: str | Path) -> None:
-        if not isinstance(path, Path): path = Path(Path(path).as_posix())
+        if not isinstance(path, Path):
+            path = Path(Path(path).as_posix())
         geomodel = DSheetPilingModel()
         geomodel.parse(path)
         self.geomodel = geomodel

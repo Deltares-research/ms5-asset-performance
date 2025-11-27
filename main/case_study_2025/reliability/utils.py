@@ -69,7 +69,7 @@ class TimelineParameters:
     n_mcs: int = 100_000
     start_thickness: float = 9.5
     EI_start: float = 30_000.
-    moment_cap_start: float = 1_000.
+    moment_cap_start: float = 650.
     moment_survived: float = 0.
     water_lvl: float = -1.
     water_lvl: float = -1.
@@ -169,12 +169,53 @@ class TimelineRunner:
 
         self.C50_posterior = post.tolist()
 
-    def update_corrosion_ratio_pdf(
-            self, C50_pdf_type: str = "posterior", params: Optional[TimelineParameters] = None,
+    def get_corrosion_ratio_prior_pdf(
+            self,
+            params: Optional[TimelineParameters] = None,
             times: Optional[list] = None
     ) -> Tuple[NDArray, NDArray]:
         """
-        Update the PDF of corrosion ratio conditional on observations and C50 distribution.
+        Get the prior PDF of corrosion ratio and corrosion (unconditioned on observations).
+
+        Args:
+            params (TimelineParameters): Timeline parameters.
+            times (list | float, optional): Time points for evaluation.
+
+        Returns:
+            Tuple[NDArray, NDArray]: (corrosion_ratio_pdf, corrosion_pdf)
+        """
+        if times is None: times = self.time
+        if isinstance(times, float): times = np.array([times])
+        if isinstance(times, list): times = np.array(times)
+
+        C50_pdf = np.array([1/2.5]*100) # <--- set wide prior to check effect TODO
+
+        C50_grid = np.array(self.C50_grid)[..., np.newaxis, np.newaxis]
+        times = times[np.newaxis, ..., np.newaxis]
+
+        mu = C50_grid * (1 + self.corrosion_rate / 1.5 * (times - 50))
+        scale = mu * 0.5
+        lower_trunc = (0 - mu) / scale
+        upper_trunc = (self.start_thickness - mu) / scale
+
+        corrosion_grid = np.array(self.corrosion_ratio_grid) * self.start_thickness
+        corrosion_pdf = stats.truncnorm(loc=mu, scale=scale, a=lower_trunc, b=upper_trunc).pdf(corrosion_grid)
+        corrosion_pdf *= C50_pdf[:, np.newaxis, np.newaxis]
+        corrosion_pdf = np.trapezoid(corrosion_pdf, self.C50_grid, axis=0)
+        corrosion_pdf /= np.trapezoid(corrosion_pdf, corrosion_grid, axis=-1)[:, np.newaxis]
+
+        corrosion_ratio_pdf = corrosion_pdf * 1 / (1 / self.start_thickness)
+
+        return corrosion_ratio_pdf, corrosion_pdf
+
+    def update_corrosion_ratio_pdf(
+            self,
+            C50_pdf_type: str = "posterior",
+            params: Optional[TimelineParameters] = None,
+            times: Optional[list] = None
+    ) -> Tuple[NDArray, NDArray]:
+        """
+        Get the prior or posterior PDF of corrosion ratio and corrosion (conditioned on observations).
 
         Args:
             C50_pdf_type (str): Use 'prior' or 'posterior' for C50.
@@ -239,13 +280,20 @@ class TimelineRunner:
         """Finalize the timestep and set prior to posterior for next step."""
         self.C50_prior = deepcopy(self.C50_posterior)
 
+    def log_prior(self, pfs: dict, path: Path) -> None:
+        """Log probability of failure results for prior predictions."""
+        if not isinstance(path, Path): path = Path(path)
+        path = path / "runner_log"
+        path = path / "prior"
+        path.mkdir(parents=True, exist_ok=True)
+        with open(path/"data.json", "w") as f:
+            json.dump(pfs, f, indent=4)
+
     def log(self, time: float, pfs: dict, path: Path) -> None:
         """Log probability of failure results for current time step."""
         if not isinstance(path, Path): path = Path(path)
         path = path / "runner_log"
         path.mkdir(parents=True, exist_ok=True)
-        # runner_dict = asdict(self)
-        # json_bytes = orjson.dumps(pfs)
         path = path / f"{time}"
         for cap_type in ["theoretical", "survived"]:
             for pdf_type in ["prior", "posterior"]:
@@ -256,8 +304,6 @@ class TimelineRunner:
                 survival = pf.pop("survival")
                 with open(path/f"{cap_type}/{pdf_type}/data.json", "w") as f:
                     json.dump(pf, f, indent=4)
-                np.save(new_path/"fos.npy", fos)
-                np.save(new_path/"survival.npy", survival)
 
     def read_pfs(self, pfs: dict) -> None:
         """Load previously stored failure probabilities."""
@@ -446,18 +492,66 @@ class PfCalculator:
         corrosion_ratio_grid = np.array(corrosion_ratio_grid)
         corrosion_ratio_pdf = np.array(corrosion_ratio_pdf)
 
-        moment_cap_grid = moment_cap * (1 - corrosion_ratio_grid)
+        moment_cap_grid = moment_cap * (1 - corrosion_ratio_grid)  # Linear model for capacity reduction (SIMPLIFICATION)
         moment_cap_grid = np.flip(moment_cap_grid)
         moment_cap_pdf = corrosion_ratio_pdf * (1/moment_cap)  # Variable change
         moment_cap_pdf = np.flip(moment_cap_pdf, axis=-1)
 
+        #TODO: Cancel samples that dont meet the survived moment --> easy eay to apply survived moment degradation
         moment_cap_pdf_truncated = np.where(moment_cap_grid <= moment_survived, 0., moment_cap_pdf)
         moment_cap_pdf_truncated /= np.trapezoid(moment_cap_pdf_truncated, moment_cap_grid, axis=-1)[:, None]
 
         fos = moment_cap_grid[:, np.newaxis] / (self.max_moments + 1e-5)
         survival = moment_survived >= self.max_moments
         pf_mcs = np.mean(fos < 1, axis=-1)
+
+        if moment_survived > 0:
+            pass
+
         return np.trapz(pf_mcs * moment_cap_pdf_truncated, moment_cap_grid, axis=-1), moment_cap_pdf_truncated, fos, survival
+
+    def calculate_prior(self, params, runner) -> Dict[str, Dict[str, Any]]:
+        """
+        Run full reliability analysis (prior only - unconditioned to last measurement).
+
+        Args:
+            params (TimelineParameters): Timeline simulation parameters.
+            runner (TimelineRunner): Runner with current time, corrosion, and capacity state.
+
+        Returns:
+            Dict[str, Dict[str, Any]]: Nested results for each (cap_type, pdf_type).
+                Contains Pf, β, PDFs, survival indicators, and forecasts.
+        """
+        time = runner.time
+
+        times = [iter_time for iter_time in params.times if iter_time >= time]
+
+        corrosion_ratio_prior_pdf, corrosion_prior_pdf = runner.get_corrosion_ratio_prior_pdf(params, times)
+
+        output = self.get_pf(runner.moment_cap_start, corrosion_ratio_prior_pdf, runner.corrosion_ratio_grid, moment_survived=0.)
+        pf, moment_cap_pdf_truncated, fos, survival = output
+        beta = np.minimum(stats.norm.ppf(1 - pf), 10)
+        beta = np.maximum(beta, -10)
+
+        results = {
+            "current_time": time,
+            "C50_pdf": runner.C50_prior_fixed,
+            "moment_cap_start": runner.moment_cap_start,
+            "time_survived": runner.time_survived,
+            "moment_survived": 0.,
+            "moment_cap_effective": max(runner.moment_cap_start, 0.),
+            "corrosion_ratio_grid": self.corrosion_ratio_grid.astype(np.float16).tolist(),
+            "corrosion_ratio_pdf": corrosion_ratio_prior_pdf.astype(np.float32).tolist(),
+            "corrosion_grid": (np.array(self.corrosion_ratio_grid)*params.start_thickness).tolist(),
+            "corrosion_pdf": corrosion_prior_pdf.tolist(),
+            "moment_cap_pdf_truncated": moment_cap_pdf_truncated.tolist(),
+            "pf_current": pf[0],
+            "beta_current": beta[0],
+            "pf_forecast": {str(time): p for (time, p) in zip(times, pf)},
+            "beta_forecast": {str(time): b for (time, b) in zip(times, beta)},
+        }
+
+        return results
 
     def calculate(self, params, runner) -> Dict[str, Dict[str, Any]]:
         """
@@ -484,7 +578,8 @@ class PfCalculator:
             if cap_type == "theoretical":
                 moment_survived = 0.
             elif cap_type == "survived":
-                moment_survived = runner.moment_survived
+                # moment_survived = runner.moment_survived
+                moment_survived = 350.
 
             results[cap_type] = {}
             for pdf_type in ["prior", "posterior"]:
