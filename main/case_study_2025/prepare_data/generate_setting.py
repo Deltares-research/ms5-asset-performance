@@ -1,17 +1,19 @@
 import numpy as np
 import pandas as pd
+import copy
 from pathlib import Path
 import json
 import os
 from math import fabs
-from src.geotechnical_models.dsheetpiling.model import DSheetPiling, DSheetPilingResults
-from src.reliability_models.dsheetpiling.lsf import *
-from src.corrosion.corrosion_model import CorrosionModel
+from ....src.geotechnical_models.dsheetpiling.model import DSheetPiling, DSheetPilingResults
+from ....src.reliability_models.dsheetpiling.lsf import *
+from ....src.corrosion.corrosion_model import CorrosionModel
 import collections
 from tqdm import tqdm
 from dotenv import load_dotenv
 from argparse import ArgumentParser
 from typing import Dict, Tuple, List
+from geolib.models.dsheetpiling import DSheetPilingModel
 
 
 """
@@ -100,7 +102,7 @@ def main(interval: int = 1):
         corrosion = corrosions[i]
         corrosion_ratio = corrosion / corossion_model.start_thickness
         EI_corroded = true_params["Wall_SheetPilingElementEI"] * (1 - corrosion_ratio)
-        time_params = deepcopy(true_params)
+        time_params = copy.deepcopy(true_params)
         time_params["Wall_SheetPilingElementEI"] = EI_corroded
         deformations, moments, z = run_model(time_params, geomodel)
         # Maximum survived moment is 80% of the one met in D-SheetPiling, bound to 600 to fix D-SheetPiling non-convergence.

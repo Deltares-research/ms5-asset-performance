@@ -55,8 +55,8 @@ sphinxcontrib-qthelp==2.0.0
 sphinxcontrib-serializinghtml==2.0.0
 sympy==1.13.3
 threadpoolctl==3.6.0
-torch==2.8.0+cu128
-torchvision==0.23.0+cu128
+torch==2.8.0
+torchvision==0.23.0
 tqdm==4.67.1
 typing_extensions==4.15.0
 tzdata==2025.2

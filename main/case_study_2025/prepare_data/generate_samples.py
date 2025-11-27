@@ -3,6 +3,19 @@ import pandas as pd
 from pathlib import Path
 from argparse import ArgumentParser
 from typing import List, Tuple, Dict, Any
+from dotenv import load_dotenv
+import os
+from tqdm import tqdm
+import json
+
+os.getenv('geolib.env')
+
+import sys
+sys.path.append(r'C:\Users\eijnden\OneDrive - Stichting Deltares\Desktop\MS5_2\ms5-asset-performance')
+
+from src.geotechnical_models.dsheetpiling.model import DSheetPiling, DSheetPilingResults
+from src.reliability_models.dsheetpiling.lsf import unpack_soil_params, unpack_water_params, unpack_wall_data
+
 
 
 def main(n_mc_samples: int, n_srg_samples: int) -> None:
@@ -22,6 +35,9 @@ def main(n_mc_samples: int, n_srg_samples: int) -> None:
 
     data_path = path.parent / "data/parameter_distributions.csv"
     df = pd.read_csv(data_path)
+
+    print(df)
+
 
     means = df["mean"].values[np.newaxis, :]
     stds = df["std"].values[np.newaxis, :]
@@ -115,7 +131,7 @@ def calculate(n_samples_to_use: int = 1_000) -> None:
     load_dotenv(path.parents[2] / ".env")
 
     geomodel_path = os.environ["DSHEET_MODEL_PATH"]
-    data_path = path.parent / "data/srg_samples_uniform_100000.npy"
+    data_path = path.parent / "data/surrogate_samples_uniform_1000.npy"
     result_path = path.parent / "data"
     result_path.mkdir(exist_ok=True, parents=True)
 
@@ -152,9 +168,21 @@ def calculate(n_samples_to_use: int = 1_000) -> None:
 if __name__ == "__main__":
 
     parser = ArgumentParser()
-    parser.add_argument("--n_mc_samples", type=int, default=10_000_000)
-    parser.add_argument("--n_srg_samples", type=int, default=1_000)
-    args = parser.parse_args()
+    try: 
+        parser.add_argument("--n_mc_samples", type=int, default=10_000_000)
+        parser.add_argument("--n_srg_samples", type=int, default=1_000)
+        args = parser.parse_args()
+    except:
+        print('argument parser error')
+        args = parser.parse_args()
+        args.n_mc_samples = 10_000_000   
+        args.n_srg_samples = 1000
 
     draw(args.n_mc_samples, args.n_srg_samples)
     calculate(n_samples_to_use=args.n_srg_samples)
+
+    #except:     
+    #    pass
+
+
+
