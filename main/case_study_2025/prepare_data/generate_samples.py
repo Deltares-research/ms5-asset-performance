@@ -41,7 +41,7 @@ def main(n_mc_samples: int, n_srg_samples: int) -> None:
     mc_samples = np.clip(mc_samples, lower, upper)
     water_lvls = -1. * np.ones((n_mc_samples, 1))
     mc_samples = np.hstack((mc_samples, water_lvls))
-    np.save(path.parent / f"data/mc_samples_normal_{n_mc_samples}.npy", mc_samples)
+    np.save(path.parent / f"data/mc_samples_normal.npy", mc_samples)
 
     np.random.seed(43)
     uniform_samples = np.random.uniform(size=(n_srg_samples, len(df)))
@@ -49,7 +49,7 @@ def main(n_mc_samples: int, n_srg_samples: int) -> None:
     srg_samples = np.clip(srg_samples, lower, upper)
     water_lvls = -1. * np.ones((n_srg_samples, 1))
     srg_samples = np.hstack((srg_samples, water_lvls))
-    np.save(path.parent / f"data/surrogate_samples_uniform_{n_srg_samples}.npy", srg_samples)
+    np.save(path.parent / f"data/surrogate_samples_uniform.npy", srg_samples)
 
 
 # def run_model(rvs: List[float], model: DSheetPiling, rv_names: List[str]) -> Any:

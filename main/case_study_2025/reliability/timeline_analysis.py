@@ -41,7 +41,7 @@ def main(
     Args:
         n_mcs_samples (int, optional): Number of Monte Carlo samples for parameter sampling.
             Defaults to 10,000,000.
-        n_corrosion_grid (int, optional): Grid size for corrosion progression.
+        n_corrosion_grid (int, optional): Grid size for corrosion discretization.
             Defaults to 100.
         n_corrosion_ratio_grid (int, optional): Grid size for corrosion ratio discretization.
             Defaults to 1,000.
@@ -53,8 +53,8 @@ def main(
     """
     SCRIPT_DIR = Path(__file__).resolve().parent.parent
     setting_path = SCRIPT_DIR / "data/case_study.json"
-    mcs_samples_path = SCRIPT_DIR / f"data/mc_samples_normal_{n_mcs_samples}.npy"
-    moment_model_path = SCRIPT_DIR / f"results/surrogate/mlp_moment/lr_1.0e-04_epochs_10000"
+    mcs_samples_path = SCRIPT_DIR / f"data/mc_samples_normal.npy"
+    moment_model_path = SCRIPT_DIR / f"results/surrogate/mlp_moment"
     results_path = SCRIPT_DIR / "results/reliability_timeline"
     results_path.mkdir(parents=True, exist_ok=True)
 
@@ -98,10 +98,6 @@ def main(
 
         time = float(time)
 
-        if not time % 10 != 0:
-        # if time > 50:
-            continue
-
         runner.step(time, params)
 
         results = pf_calculator.calculate(params, runner)
@@ -112,6 +108,10 @@ def main(
 
 
 if __name__ == "__main__":
+    
+    parser = ArgumentParser()
+    parser.add_argument("--n-grid", type=int, default=1_000)
+    args = parser.parse_args()
 
-    main()
+    main(n_corrosion_ratio_grid=args.n_grid)
 

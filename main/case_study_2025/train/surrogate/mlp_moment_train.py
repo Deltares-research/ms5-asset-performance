@@ -133,7 +133,7 @@ def main(epochs: int = 10_000, lr: float = 1e-5, quiet: bool = False) -> None:
     data_dir = base_dir.parent / "data"
     data_path = Path(__file__).parents[2] / "data/surrogate_data.csv"
 
-    output_path = base_dir.parent.parent / f"results/surrogate/mlp_moment/lr_{lr:.1e}_epochs_{epochs:d}"
+    output_path = base_dir.parent.parent / f"results/surrogate/mlp_moment"
     output_path.mkdir(parents=True, exist_ok=True)
 
     X, y = load_data(data_path, full_profile=False, target="moment")

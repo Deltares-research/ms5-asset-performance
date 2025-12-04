@@ -83,6 +83,7 @@ def plot_beta(log: Dict[str, Any], beta_req: int = 2.) -> plt.Figure:
     plt.ylim(.5, max_beta)
     plt.legend(fontsize=12)
     plt.grid()
+    plt.close()
 
     return fig
 
@@ -134,6 +135,7 @@ def plot_corrosion(log: Dict[str, Any], params: TimelineParameters, alpha: float
     plt.ylim(0, 9.5)
     plt.legend(fontsize=12)
     plt.grid()
+    plt.close()
 
     return fig
 
@@ -196,6 +198,7 @@ def plot_moment(log: Dict[str, Any], params: TimelineParameters, alpha: float = 
     plt.ylim(100, 800)
     plt.legend(fontsize=12)
     plt.grid()
+    plt.close()
 
     return fig
 
