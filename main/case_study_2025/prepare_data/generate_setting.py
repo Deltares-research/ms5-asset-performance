@@ -1,8 +1,6 @@
 import numpy as np
 import pandas as pd
-from pathlib import Path
-import json
-import os
+from scipy.stats import norm
 from math import fabs
 from src.geotechnical_models.dsheetpiling.model import DSheetPiling, DSheetPilingResults
 from src.reliability_models.dsheetpiling.lsf import *
@@ -71,7 +69,7 @@ def main(interval: int = 1):
         interval (int, optional): Time step interval in years (default=1).
     """
     rv_names = [
-        'Klei_soilcohesion', 'Klei_soilphi', 'Klei_soilcurkb1','Zand_soilphi', 'Zand_soilcurkb1','Zandvast_soilphi',
+        'Klei_soilcohesion', 'Klei_soilphi', 'Klei_soilcurkb1','Zand_soilphi', 'Zand_soilcurkb1', 'Zandvast_soilphi',
         'Zandvast_soilcurkb1','Zandlos_soilphi', 'Zandlos_soilcurkb1','Wall_SheetPilingElementEI', 'water_lvl'
     ]
 
@@ -80,18 +78,31 @@ def main(interval: int = 1):
 
     load_dotenv(env_path)
 
-    df = pd.read_csv(srg_samples_path)
-    true_values = df[rv_names].iloc[0]
-    true_params = true_values.to_dict()
+    # df = pd.read_csv(srg_samples_path)
+    # true_values = df[rv_names].iloc[0]
+    # true_params = true_values.to_dict()
+
+    df = pd.read_csv(Path(__file__).parents[1]/"data/parameter_distributions.csv")
+    df = df.loc[df["parameter"].isin(rv_names)]
+    df = df.set_index("parameter")
+    df = df.reindex(rv_names)
+    np.random.seed(42)
+    df["true_param"] = df["mean"] + df["std"] * norm.rvs(size=len(df))
+    df.loc["water_lvl", "true_param"] = -1.  # deterministic water level at -1.00 mNAP
+    true_params = df["true_param"].to_dict()
 
     monitoring_cols = [col for col in df.columns if col.split("_")[0] == "disp"]
     monitoring_locs = [int(monitoring_col.split("_")[-1]) for monitoring_col in monitoring_cols]
 
     times = [50 + time for time in range(0, 31, interval)]
-    corossion_model = CorrosionModel()
-    corrosions = corossion_model.generate_observations(np.array(times), seed=42)
 
-    geomodel_path = os.environ["DSHEET_MODEL_PATH"]  # model_path defined as environment variable
+    C50_mu = 1.  #Manual adjustment for more optimistic corrosion measurements.
+    C50_std = 0.5 * C50_mu
+    C50 = .5  #Manual adjustment for more optimistic corrosion measurements.
+    corossion_model = CorrosionModel(C50_mu=C50_mu, C50_std=C50_std)
+    corrosions = corossion_model.generate_observations(np.array(times), C50=C50, seed=42)
+
+    geomodel_path = Path(os.environ["DSHEET_MODEL_PATH"])  # model_path defined as environment variable
     geomodel = DSheetPiling(geomodel_path)
 
     data = {}
@@ -104,7 +115,7 @@ def main(interval: int = 1):
         time_params["Wall_SheetPilingElementEI"] = EI_corroded
         deformations, moments, z = run_model(time_params, geomodel)
         # Maximum survived moment is 80% of the one met in D-SheetPiling, bound to 600 to fix D-SheetPiling non-convergence.
-        moment_survived = min(120, np.abs(moments).max().item() * 0.8)
+        moment_survived = min(np.abs(moments).max().item() * 0.8, 600)
         moments_survived.append(moment_survived)
         data[float(time)] = {
             "time": float(time),
@@ -128,7 +139,7 @@ def main(interval: int = 1):
 if __name__ == "__main__":
 
     parser = ArgumentParser()
-    parser.add_argument("--interval", type=int, default=1)
+    parser.add_argument("--interval", type=int, default=5)
     args = parser.parse_args()
 
     main(interval=args.interval)

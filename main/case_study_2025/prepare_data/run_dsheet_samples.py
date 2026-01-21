@@ -129,7 +129,7 @@ def main(n_samples_to_use: int = 1_000) -> None:
 if __name__ == "__main__":
 
     parser = ArgumentParser()
-    parser.add_argument("--n_samples_to_use", type=int, default=1_000)
+    parser.add_argument("--n_samples_to_use", type=int, default=3_000)
     args = parser.parse_args()
 
     main(n_samples_to_use=args.n_samples_to_use)

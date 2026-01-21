@@ -23,6 +23,7 @@ class CorrosionModel:
             self,
             n_grid: int = 100,
             corrosion_rate: float = 0.022,
+            # corrosion_rate: float = 0.022 * 0.5, # Reduced for generating measurements fitting our story.
             start_thickness: float = 9.5,
             C50_mu: float = 1.5,
             C50_std: float = 1.5 * 0.5,
