@@ -77,10 +77,10 @@ def plot_beta(log: Dict[str, Any], beta_req: int = 2.) -> plt.Figure:
         plt.plot(times_forecast, beta_forecast, c=colors[i], label=key.title())
 
     plt.axhline(beta_req, c="k", linestyle="--", label="Requirement")
-    plt.xlabel("Forecast time [yr]", fontsize=12)
+    plt.xlabel("Forecast time [yr]\n", fontsize=12)
     plt.ylabel("${β}$ [-]", fontsize=12)
     plt.xlim(50, 75)
-    plt.ylim(.5, max_beta)
+    plt.ylim(.5, 6)
     plt.legend(fontsize=12)
     plt.grid()
     plt.close()
@@ -129,7 +129,7 @@ def plot_corrosion(log: Dict[str, Any], params: TimelineParameters, alpha: float
             plt.errorbar(x=past_times, y=corrosion_obs, yerr=corrosion_obs_error * norm.ppf(1 - alpha), fmt='o', c="k",
                         capsize=3, label="Observations")
 
-    plt.xlabel("Forecast time [yr]", fontsize=12)
+    plt.xlabel("Forecast time [yr]\n", fontsize=12)
     plt.ylabel("Corrosion [mm]", fontsize=12)
     plt.xlim(50, 75)
     plt.ylim(0, 9.5)
@@ -192,7 +192,7 @@ def plot_moment(log: Dict[str, Any], params: TimelineParameters, alpha: float = 
                        label="Observations")
 
     plt.axhline(log["posterior"]["moment_survived"], c="g", label="Survived moment")
-    plt.xlabel("Forecast time [yr]", fontsize=12)
+    plt.xlabel("Forecast time [yr]\n", fontsize=12)
     plt.ylabel("Moment capacity [kNm]", fontsize=12)
     plt.xlim(50, 75)
     plt.ylim(100, 800)

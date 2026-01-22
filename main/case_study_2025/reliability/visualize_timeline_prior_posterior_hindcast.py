@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import seaborn as sns
 import random
+from itertools import chain
 
 
 """
@@ -54,10 +55,6 @@ def read_log(log_path: Path, time: float) -> Dict[str, Dict[str, Any]]:
     return log
 
 
-def random_colors(n):
-    return ["#{:06x}".format(random.randint(0, 0xFFFFFF)) for _ in range(n)]
-
-
 def plot_beta(log: Dict[str, Any], beta_req: int = 2.) -> plt.Figure:
     """
     Plot reliability index forecasts for theoretical and empirical capacity.
@@ -70,59 +67,111 @@ def plot_beta(log: Dict[str, Any], beta_req: int = 2.) -> plt.Figure:
         matplotlib.figure.Figure: The generated Pf plot.
     """
 
-    min_beta = .5
+    min_beta = 1.
     max_beta = 3.5
 
     max_time = log["posterior"][-1]["current_time"]
-    colors = random_colors(len(log["posterior"]))
 
     fig = plt.figure(figsize=(8, 4))
 
-    key = "prior"
     data = log["prior"]
     times_forecast = [float(key) for key in data["pf_forecast"].keys()]
     pf_forecast = [float(val) for val in data["pf_forecast"].values()]
     beta_forecast = [norm.ppf(1 - pf) for pf in pf_forecast]
     beta_forecast = [max_beta if np.isinf(beta) else beta for beta in beta_forecast]
-    plt.plot(times_forecast, beta_forecast, c="b", label=key.title())
+    plt.plot(times_forecast, beta_forecast, c="b", label="Prior")
 
-    hindcast_times = [data["current_time"] for data in log["posterior"]]
     hindcast_betas = []
-    for i, time in enumerate(hindcast_times):
-        if i == 0:
-            hindcast_betas.append([
-                log["posterior"][i]["beta_current"],
-                log["posterior"][i]["beta_current"],
-            ])
-        elif i == len(hindcast_times) - 1:
-            hindcast_betas.append([
-                log["posterior"][len(hindcast_times)-1]["beta_current"],
-                log["posterior"][len(hindcast_times)-1]["beta_current"],
-            ])
-        else:
-            hindcast_betas.append([
-                log["posterior"][i]["beta_current"],
-                [beta for (t, beta) in log["posterior"][i+1]["beta_forecast"].items() if float(t) == hindcast_times[i+1]][0],
-            ])
+    for (prev_posterior, current_posterior) in zip(log["posterior"][:-1], log["posterior"][1:]):
+
+        current_time = current_posterior["current_time"]
+        current_beta = current_posterior["beta_current"]
+
+        prev_time = prev_posterior["current_time"]
+        prev_beta = prev_posterior["beta_current"]
+        prev_beta_forecast = prev_posterior["beta_forecast"][str(current_time)]
+
+        hindcast_betas.append([
+            (prev_time, prev_beta),
+            (current_time, prev_beta_forecast),
+            (current_time, current_beta)
+        ])
+
+    hindcast_betas = list(chain.from_iterable(hindcast_betas))
 
     for i, data in enumerate(log["posterior"]):
-        plt.scatter(data["current_time"], data["beta_current"], color=colors[i])
+        label = "Posterior" if i == 0 else None
+        plt.scatter(data["current_time"], data["beta_current"], color="r", label=label)
         times = [int(float(time)) for time in list(data["beta_forecast"].keys())]
         betas = [beta for beta in list(data["beta_forecast"].values())]
-        plt.plot(times, betas, c=colors[i], linestyle="--", label=str(int(data["current_time"])))
-        pass
+        if i < len(log["posterior"]) -1:
+            plt.plot(times, betas, c="r", linestyle="dotted", alpha=0.4)
+        else:
+            plt.plot(times, betas, c="r", linestyle="--")
 
-    plt.plot(np.repeat(hindcast_times, 2), np.array(hindcast_betas).flatten())
+    if hindcast_betas:
+        times = [x[0] for x in hindcast_betas]
+        betas = [x[1] for x in hindcast_betas]
+        plt.plot(times, betas, c="r")
 
     plt.axhline(beta_req, c="k", linestyle="--", label="Requirement")
     plt.xlabel("Forecast time [yr]", fontsize=12)
+    plt.subplots_adjust(bottom=0.15)
     plt.ylabel("${β}$ [-]", fontsize=12)
     plt.xlim(50, 75)
     plt.ylim(min_beta, max_beta)
     plt.legend(fontsize=12)
     plt.grid()
-    plt.show()
 
+    plt.close()
+
+    return fig
+
+
+def plot_end_of_life(log: Dict[str, Any], beta_req: int = 2.) -> plt.Figure:
+
+    def eol_fn(x, data):
+        b = data["beta_forecast"][x]
+        abs_diff = abs(b-beta_req)
+        if b > beta_req and abs_diff >= 0.05:
+            return 9999.
+        else:
+            return abs_diff
+
+    times = []
+    ends_of_life = []
+    for posterior in log["posterior"]:
+        forecast_times = list(posterior["beta_forecast"].keys())
+        end_of_life = int(float(min(forecast_times, key=lambda t: eol_fn(t, posterior))))
+        times.append(posterior["current_time"])
+        ends_of_life.append(end_of_life)
+
+    delta_ends_of_life = [eol_curr-eol_prev for (eol_prev, eol_curr) in zip(ends_of_life[:-1], ends_of_life[1:])]
+
+    prior_forecast_times = list(log["prior"]["beta_forecast"].keys())
+    prior_end_of_life = int(float(min(prior_forecast_times, key=lambda t: eol_fn(t, log["prior"]))))
+
+    fig, ax1 = plt.subplots(figsize=(8, 4))
+
+    ax1.bar(times, ends_of_life, color="r", edgecolor='black', linewidth=0.5, label="Posterior")
+    ax1.axhline(prior_end_of_life, color="k", linestyle="--", label="Prior")
+    ax1.set_xlabel("Forecast time [yr]", fontsize=12)
+    ax1.set_ylabel("Forecasted end of life [yr]", fontsize=12)
+    ax1.set_xlim(50, 75)
+    ax1.set_ylim(50, 80)
+    ax1.grid()
+
+    ax2 = ax1.twinx()
+    ax2.plot(times[1:], delta_ends_of_life, color="blue", marker="o", label="Diffrence from\nprevious timestep")
+    ax2.set_ylabel("Delta [yr]", fontsize=12)
+
+    # Combined legend
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    fig.legend(lines1 + lines2, labels1 + labels2, fontsize=12, loc='upper center', bbox_to_anchor=(0.5, 1.01), ncol=3)
+    plt.subplots_adjust(bottom=0.15, top=0.85)
+
+    plt.show()
 
     plt.close()
 
@@ -171,6 +220,7 @@ def plot_corrosion(log: Dict[str, Any], params: TimelineParameters, alpha: float
                         capsize=3, label="Observations")
 
     plt.xlabel("Forecast time [yr]", fontsize=12)
+    plt.subplots_adjust(bottom=0.15)
     plt.ylabel("Corrosion [mm]", fontsize=12)
     plt.xlim(50, 75)
     plt.ylim(0, 9.5)
@@ -234,6 +284,7 @@ def plot_moment(log: Dict[str, Any], params: TimelineParameters, alpha: float = 
 
     plt.axhline(log["posterior"]["moment_survived"], c="g", label="Survived moment")
     plt.xlabel("Forecast time [yr]", fontsize=12)
+    plt.subplots_adjust(bottom=0.15)
     plt.ylabel("Moment capacity [kNm]", fontsize=12)
     plt.xlim(50, 75)
     plt.ylim(100, 800)
@@ -294,19 +345,25 @@ def main() -> None:
         }
 
         fig = plot_beta(log_all)
-        fig.suptitle(f"Time={time}")
+        fig.suptitle(f"Time = {time:.0f} years")
         beta_figs.append(fig)
 
         fig = plot_corrosion(log, params)
-        fig.suptitle(f"Time={time}")
+        fig.suptitle(f"Time = {time:.0f} years")
         corrosion_figs.append(fig)
 
         fig = plot_moment(log, params)
-        fig.suptitle(f"Time={time}")
+        fig.suptitle(f"Time = {time:.0f} years")
         moment_figs.append(fig)
 
     pp = PdfPages(plots_path / "beta_plots.pdf")
     [pp.savefig(fig) for fig in beta_figs]
+    pp.close()
+
+    pp = PdfPages(plots_path / "end_of_life_plots.pdf")
+    fig = plot_end_of_life(log_all)
+    fig.suptitle(f"Time = {time:.0f} years")
+    pp.savefig(fig)
     pp.close()
 
     pp = PdfPages(plots_path / "corrosion_plot.pdf")

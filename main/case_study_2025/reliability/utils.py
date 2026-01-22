@@ -193,7 +193,7 @@ class TimelineRunner:
         C50_grid = np.array(self.C50_grid)[..., np.newaxis, np.newaxis]
         times = times[np.newaxis, ..., np.newaxis]
 
-        mu = C50_grid * (1 + self.corrosion_rate / 1.5 * (times - 50))
+        mu = C50_grid * (params.C50_mu + self.corrosion_rate / 1.5 * (times - 50))
         scale = mu * 0.5
         lower_trunc = (0 - mu) / scale
         upper_trunc = (self.start_thickness - mu) / scale

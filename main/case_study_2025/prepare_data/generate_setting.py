@@ -96,9 +96,9 @@ def main(interval: int = 1):
 
     times = [50 + time for time in range(0, 31, interval)]
 
-    C50_mu = 1.  #Manual adjustment for more optimistic corrosion measurements.
+    C50_mu = 1.5
     C50_std = 0.5 * C50_mu
-    C50 = .5  #Manual adjustment for more optimistic corrosion measurements.
+    C50 = 1.8  #Manual adjustment for more optimistic corrosion measurements.
     corossion_model = CorrosionModel(C50_mu=C50_mu, C50_std=C50_std)
     corrosions = corossion_model.generate_observations(np.array(times), C50=C50, seed=42)
 

@@ -64,7 +64,10 @@ def main(
 
     moment_calculator = load_moment_calculator(moment_model_path)
 
-    params = TimelineParameters(setting=setting_data, n_mcs=n_mcs)
+    params = TimelineParameters(setting=setting_data, n_mcs=n_mcs, moment_cap_start=750., obs_error_std=.4)
+
+    C50_mu = 1.  # Manual adjustment for more optimistic corrosion measurements.
+    params.C50_mu = C50_mu
 
     corrosion_model = CorrosionModel(
         n_grid=n_corrosion_grid,
@@ -93,18 +96,18 @@ def main(
     prior_results = pf_calculator.calculate_prior(params, runner)
     runner.log_prior(prior_results, results_path)
 
-    # results = {}
-    # for time, data in tqdm(params.setting.items(), desc="Running time step"):
-    #
-    #     time = float(time)
-    #
-    #     runner.step(time, params)
-    #
-    #     results = pf_calculator.calculate(params, runner)
-    #
-    #     runner.log(time, results, results_path)
-    #
-    #     runner.finish_step()
+    results = {}
+    for time, data in tqdm(params.setting.items(), desc="Running time step"):
+
+        time = float(time)
+
+        runner.step(time, params)
+
+        results = pf_calculator.calculate(params, runner)
+
+        runner.log(time, results, results_path)
+
+        runner.finish_step()
 
 
 if __name__ == "__main__":
