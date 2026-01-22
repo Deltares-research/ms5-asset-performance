@@ -162,16 +162,13 @@ def plot_end_of_life(log: Dict[str, Any], beta_req: int = 2.) -> plt.Figure:
     ax1.grid()
 
     ax2 = ax1.twinx()
-    ax2.plot(times[1:], delta_ends_of_life, color="blue", marker="o", label="Diffrence from\nprevious timestep")
-    ax2.set_ylabel("Delta [yr]", fontsize=12)
+    ax2.plot(times[1:], delta_ends_of_life, color="blue", marker="o", label="Difference from\nprevious timestep")
+    ax2.set_ylabel("Difference [yr]", fontsize=12)
 
-    # Combined legend
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     fig.legend(lines1 + lines2, labels1 + labels2, fontsize=12, loc='upper center', bbox_to_anchor=(0.5, 1.01), ncol=3)
     plt.subplots_adjust(bottom=0.15, top=0.85)
-
-    plt.show()
 
     plt.close()
 
@@ -362,7 +359,6 @@ def main() -> None:
 
     pp = PdfPages(plots_path / "end_of_life_plots.pdf")
     fig = plot_end_of_life(log_all)
-    fig.suptitle(f"Time = {time:.0f} years")
     pp.savefig(fig)
     pp.close()
 
