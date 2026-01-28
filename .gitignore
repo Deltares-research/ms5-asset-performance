@@ -173,3 +173,18 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# File types
+*.pdf
+*.json
+*.jsonl
+*.png
+*.xml
+.idea
+*.joblib
+*.pth
+*.txt
+*.npy
+*.csv
+*.shi
+*.shd
