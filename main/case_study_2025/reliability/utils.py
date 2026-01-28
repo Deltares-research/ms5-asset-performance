@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import torch
+from fontTools.merge.util import current_time
 from torch.utils.data import DataLoader, TensorDataset
 from scipy import stats
 from pathlib import Path
@@ -492,21 +493,25 @@ class PfCalculator:
         corrosion_ratio_grid = np.array(corrosion_ratio_grid)
         corrosion_ratio_pdf = np.array(corrosion_ratio_pdf)
 
+        if isinstance(moment_survived, list):
+            moment_survived = np.asarray(moment_survived)
+
+        if isinstance(moment_survived, float):
+            moment_survived = np.asarray([moment_survived]*corrosion_ratio_pdf.shape[0])
+
         moment_cap_grid = moment_cap * (1 - corrosion_ratio_grid)  # Linear model for capacity reduction (SIMPLIFICATION)
         moment_cap_grid = np.flip(moment_cap_grid)
         moment_cap_pdf = corrosion_ratio_pdf * (1/moment_cap)  # Variable change
         moment_cap_pdf = np.flip(moment_cap_pdf, axis=-1)
 
         #TODO: Cancel samples that dont meet the survived moment --> easy eay to apply survived moment degradation
-        moment_cap_pdf_truncated = np.where(moment_cap_grid <= moment_survived, 0., moment_cap_pdf)
+        moment_cap_pdf_truncated = np.where(moment_cap_grid[None, :] <= moment_survived[:, None], 0., moment_cap_pdf)
         moment_cap_pdf_truncated /= np.trapezoid(moment_cap_pdf_truncated, moment_cap_grid, axis=-1)[:, None]
 
         fos = moment_cap_grid[:, np.newaxis] / (self.max_moments + 1e-5)
-        survival = moment_survived >= self.max_moments
+        # survival = moment_survived >= self.max_moments
+        survival = [None]
         pf_mcs = np.mean(fos < 1, axis=-1)
-
-        if moment_survived > 0:
-            pass
 
         return np.trapz(pf_mcs * moment_cap_pdf_truncated, moment_cap_grid, axis=-1), moment_cap_pdf_truncated, fos, survival
 
@@ -579,7 +584,8 @@ class PfCalculator:
                 moment_survived = 0.
             elif cap_type == "survived":
                 # moment_survived = runner.moment_survived
-                moment_survived = 350.
+                # moment_survived = 350.
+                moment_survived = [560. + (530. - 650) / (75. - 50.) * (time - 50.) for time in times]
 
             results[cap_type] = {}
             for pdf_type in ["prior", "posterior"]:
@@ -602,7 +608,8 @@ class PfCalculator:
                     "moment_cap_start": runner.moment_cap_start,
                     "time_survived": runner.time_survived,
                     "moment_survived": moment_survived,
-                    "moment_cap_effective": max(runner.moment_cap_start, moment_survived),
+                    # "moment_cap_effective": max(runner.moment_cap_start, moment_survived),
+                    "moment_cap_effective": runner.moment_cap_start,
                     "corrosion_ratio_grid": self.corrosion_ratio_grid.astype(np.float16).tolist(),
                     "corrosion_ratio_pdf": corrosion_ratio_pdf.astype(np.float32).tolist(),
                     "corrosion_grid": (np.array(self.corrosion_ratio_grid)*params.start_thickness).tolist(),

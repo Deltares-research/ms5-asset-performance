@@ -55,7 +55,7 @@ def read_log(log_path: Path, time: float) -> Dict[str, Dict[str, Any]]:
     return log
 
 
-def plot_beta(log: Dict[str, Any], beta_req: int = 2.) -> plt.Figure:
+def plot_beta(log: Dict[str, Any], beta_req: int = 2.2) -> plt.Figure:
     """
     Plot reliability index forecasts for theoretical and empirical capacity.
 
@@ -133,7 +133,7 @@ def plot_end_of_life(log: Dict[str, Any], beta_req: int = 2.) -> plt.Figure:
     def eol_fn(x, data):
         b = data["beta_forecast"][x]
         abs_diff = abs(b-beta_req)
-        if b > beta_req and abs_diff >= 0.05:
+        if b > beta_req:
             return 9999.
         else:
             return abs_diff
@@ -247,16 +247,25 @@ def plot_moment(log: Dict[str, Any], params: TimelineParameters, alpha: float = 
     fig = plt.figure(figsize=(8, 4))
     colors = ["b", "r"]
     for i, (key, data) in enumerate(log.items()):
+
         times_forecast = [float(key) for key in data["pf_forecast"].keys()]
         moment_cap = data["moment_cap_start"]
         corrosion_ratio_grid = np.asarray(data["corrosion_ratio_grid"])
         corrosion_ratio_pdf = np.asarray(data["corrosion_ratio_pdf"])
         moment_survived = data["moment_survived"]
+
+        if isinstance(moment_survived, list):
+            moment_survived = np.asarray(moment_survived)
+
+        if isinstance(moment_survived, float):
+            moment_survived = np.asarray([moment_survived]*corrosion_ratio_pdf.shape[0])
+
         moment_cap_grid = moment_cap * (1 - corrosion_ratio_grid) + 1e-3
         moment_cap_pdf = corrosion_ratio_pdf * (1 / moment_cap)  # Variable change
-        moment_cap_grid = np.flip(moment_cap_grid)
+        # moment_cap_grid = np.flip(moment_cap_grid)
         moment_cap_pdf_truncated = np.flip(moment_cap_pdf, axis=-1).copy()
-        moment_cap_pdf_truncated = np.where(moment_cap_grid <= moment_survived, 0., moment_cap_pdf_truncated)
+        # moment_cap_pdf_truncated = np.where(moment_cap_grid <= moment_survived, 0., moment_cap_pdf_truncated)
+        moment_cap_pdf_truncated = np.where(moment_cap_grid[None, :] <= moment_survived[:, None], 0., moment_cap_pdf)
         moment_cap_pdf_truncated /= np.trapezoid(moment_cap_pdf_truncated, moment_cap_grid, axis=-1)[:, None]
 
         moment_cap_mean = np.trapezoid(moment_cap_pdf_truncated * moment_cap_grid, moment_cap_grid, axis=-1)
@@ -268,7 +277,10 @@ def plot_moment(log: Dict[str, Any], params: TimelineParameters, alpha: float = 
         plt.fill_between(times_forecast, moment_cap_quantiles[0], moment_cap_quantiles[1], color=colors[i], alpha=0.3)
         plt.plot(times_forecast, moment_cap_quantiles[0], color=colors[i], linewidth=0.2)
         plt.plot(times_forecast, moment_cap_quantiles[1], color=colors[i], linewidth=0.2)
-        plt.plot(times_forecast, moment_cap_mean, color=colors[i], label=key.title())
+        if key.lower() == "posterior":
+            plt.plot(times_forecast, moment_cap_mean, color=colors[i], label="Posterior moment capacity\n(using corrosion measurements)")
+        else:
+            plt.plot(times_forecast, moment_cap_mean, color=colors[i], label="Prior moment capacity")
 
         if key == "posterior":
             current_time = times_forecast[0]
@@ -276,16 +288,20 @@ def plot_moment(log: Dict[str, Any], params: TimelineParameters, alpha: float = 
             corrosion_ratio_obs = [val["corrosion_ratio"] for (key, val) in setting.items() if key <= current_time]
             corrosion_ratio_obs_error = params.obs_error_std
             moment_cap_effective = data["moment_cap_effective"]
-            plt.scatter(x=past_times, y=moment_cap_effective * (1 - np.array(corrosion_ratio_obs)), color="k",
-                       label="Observations")
+            moment_cap_effective = params.moment_cap_start
+            # plt.scatter(x=past_times, y=moment_cap_effective * (1 - np.array(corrosion_ratio_obs)), color="k",
+            #            label="Moment capacity\n(using corrosion measurements)")
 
-    plt.axhline(log["posterior"]["moment_survived"], c="g", label="Survived moment")
+    # plt.axhline(log["posterior"]["moment_survived"], c="g", label="Survived moment")
+    forecast_times = list(log["posterior"]["beta_forecast"].keys())
+    forecast_times = [float(time) for time in forecast_times]
+    plt.plot(forecast_times, log["posterior"]["moment_survived"], c="g", label="Survived moment\n(using deformation measurements)")
     plt.xlabel("Forecast time [yr]", fontsize=12)
     plt.subplots_adjust(bottom=0.15)
     plt.ylabel("Moment capacity [kNm]", fontsize=12)
     plt.xlim(50, 75)
     plt.ylim(100, 800)
-    plt.legend(fontsize=12)
+    plt.legend(fontsize=8)
     plt.grid()
     plt.close()
 
@@ -313,7 +329,7 @@ def main() -> None:
         setting_data = json.load(f)
     setting_data = {float(key): val for (key, val) in setting_data.items()}
 
-    params = TimelineParameters(setting=setting_data)
+    params = TimelineParameters(setting=setting_data, obs_error_std=.4)
 
     pf_figs = []
     beta_figs = []
