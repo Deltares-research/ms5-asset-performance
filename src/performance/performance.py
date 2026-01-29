@@ -13,10 +13,12 @@ class BasePerformance(ABC):
     def __init__(
             self,
             name: str = "test",
+            parameters: dict = {},
             threshold: float = 0.0,  # g(x) < threshold --> failure
             has_gradient: bool = False,  # Closed-form gradients?
     ):
         self.name = name
+        self.parameters = parameters
         self.threshold = threshold
         self.has_gradient = has_gradient
 
@@ -24,25 +26,25 @@ class BasePerformance(ABC):
         # TODO: To be extended
         return f"{self.__class__.__name__}(name={self.name!r})"
 
-    def lsf(self, x: float | int | ArrayLike) -> float | FloatArray:
+    def lsf(self, x: float | int | ArrayLike, t: float | int = 0.) -> float | FloatArray:
         if isinstance(x, int) or isinstance(x, float):
             x = [x]
-        return self._lsf(x)
+        return self._lsf(x,t)
 
-    def is_safe(self, x: ArrayLike) -> bool | BoolArray:
+    def is_safe(self, x: ArrayLike, t) -> bool | BoolArray:
         return self.lsf(x) >= self.threshold
 
-    def grad(self, x: float | int | ArrayLike) -> float | FloatArray:
+    def grad(self, x: float | int | ArrayLike, t: int | float = 0.) -> float | FloatArray:
         if isinstance(x, int) or isinstance(x, float):
             x = [x]
-        return self._grad(x)
+        return self._grad(x, t)
 
     @abstractmethod
-    def _lsf(self, x: ArrayLike) -> float | FloatArray:
+    def _lsf(self, x: ArrayLike, t: int | float) -> float | FloatArray:
         pass
 
     @abstractmethod
-    def _grad(self, x: float | int | ArrayLike) -> float | FloatArray:
+    def _grad(self, x: ArrayLike, t: int | float) -> float | FloatArray:
         pass
 
 
@@ -51,12 +53,12 @@ if __name__ == "__main__":
     # Simple example
     class DummyPerformance(BasePerformance):
 
-        def __init__(self, name):
-            super().__init__(name)
+        def __init__(self, name, parameters: dict = {}):
+            super().__init__(name,parameters)
             pass
 
-        def _lsf(self, x):
-            return sum(x) / len(x) / 3.
+        def _lsf(self, x, t = 0):
+            return sum(x) / len(x) / (t+1) - 1
 
         def _grad(self):
             pass
@@ -64,5 +66,9 @@ if __name__ == "__main__":
 
     performance = DummyPerformance(name="example")
     x = [1., 3., .5]
-    print(f"LSF = {performance.lsf(x): .2f}")
+    print(f"LSF = {performance.lsf(x,t = 1):.2f}")
+
+
+
+
 
