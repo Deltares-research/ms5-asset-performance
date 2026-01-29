@@ -55,7 +55,7 @@ def read_log(log_path: Path, time: float) -> Dict[str, Dict[str, Any]]:
     return log
 
 
-def plot_beta(log: Dict[str, Any], beta_req: int = 2.2) -> plt.Figure:
+def plot_beta(log: Dict[str, Any], beta_req: int = 2.3) -> plt.Figure:
     """
     Plot reliability index forecasts for theoretical and empirical capacity.
 
@@ -295,7 +295,10 @@ def plot_moment(log: Dict[str, Any], params: TimelineParameters, alpha: float = 
     # plt.axhline(log["posterior"]["moment_survived"], c="g", label="Survived moment")
     forecast_times = list(log["posterior"]["beta_forecast"].keys())
     forecast_times = [float(time) for time in forecast_times]
-    plt.plot(forecast_times, log["posterior"]["moment_survived"], c="g", label="Survived moment\n(using deformation measurements)")
+    try:
+        plt.plot(forecast_times, log["posterior"]["moment_survived"], c="g", label="Survived moment\n(using deformation measurements)")
+    except:
+        pass
     plt.xlabel("Forecast time [yr]", fontsize=12)
     plt.subplots_adjust(bottom=0.15)
     plt.ylabel("Moment capacity [kNm]", fontsize=12)
@@ -308,7 +311,7 @@ def plot_moment(log: Dict[str, Any], params: TimelineParameters, alpha: float = 
     return fig
 
 
-def main() -> None:
+def main(proven_str: bool = True) -> None:
     """
     Main execution:
     - Reads case study settings.
@@ -322,7 +325,7 @@ def main() -> None:
     moment_path = SCRIPT_DIR / "train/results/surrogate/mlp_moment/lr_1.0e-04_epochs_100000"
     results_path = SCRIPT_DIR / "results/reliability_timeline"
     log_path = results_path / "runner_log"
-    plots_path = results_path / "plots_prior_posterior"
+    plots_path = results_path / f"plots_prior_posterior_{''if proven_str else 'no_'}proven_str"
     plots_path.mkdir(parents=True, exist_ok=True)
 
     with open(setting_path, "r") as f:
@@ -347,15 +350,25 @@ def main() -> None:
         log_posterior = read_log(log_path / f"{time}", int(time))
         log_posteriors = [read_log(log_path / f"{t}", int(t)) for t in all_times if t <= time]
 
-        log = {
-            "prior": log_prior,
-            "posterior": log_posterior["survived"]["posterior"],
-        }
+        if proven_str:
+            log = {
+                "prior": log_prior,
+                "posterior": log_posterior["survived"]["posterior"],
+            }
+            log_all = {
+                "prior": log_prior,
+                "posterior": [log["survived"]["posterior"] for log in log_posteriors],
+            }
+        else:
+            log = {
+                "prior": log_prior,
+                "posterior": log_posterior["theoretical"]["posterior"],
+            }
+            log_all = {
+                "prior": log_prior,
+                "posterior": [log["theoretical"]["posterior"] for log in log_posteriors],
+            }
 
-        log_all = {
-            "prior": log_prior,
-            "posterior": [log["survived"]["posterior"] for log in log_posteriors],
-        }
 
         fig = plot_beta(log_all)
         fig.suptitle(f"Time = {time:.0f} years")
@@ -389,5 +402,5 @@ def main() -> None:
 
 if __name__ == "__main__":
 
-    main()
+    main(proven_str=False)
 
