@@ -188,3 +188,5 @@ cython_debug/
 *.csv
 *.shi
 *.shd
+
+/mock

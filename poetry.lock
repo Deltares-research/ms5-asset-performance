@@ -1290,21 +1290,6 @@ tests = ["check-manifest", "coverage (>=7.4.2)", "defusedxml", "markdown2", "ole
 xmp = ["defusedxml"]
 
 [[package]]
-name = "probabilistic-library"
-version = "25.1.1"
-description = "Package which provides probabilistic methods"
-optional = false
-python-versions = ">=3.7"
-groups = ["main"]
-files = [
-    {file = "probabilistic_library-25.1.1-py3-none-any.whl", hash = "sha256:27ce4fbe6f67b74e8eee1c5067e602090b5cf9d7a61179bff1a7cc8fad10b632"},
-]
-
-[package.source]
-type = "file"
-url = "../../Stichting Deltares/SITO-IS 2025 Moonshot 5 - MS5.2 Smart & resilient infra/02_Asset performance/02 Case studies results/_software/PTK/probabilistic_library-25.1.1-py3-none-any.whl"
-
-[[package]]
 name = "pydantic"
 version = "1.10.26"
 description = "Data validation and settings management using python type hints"
@@ -2083,4 +2068,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.13"
-content-hash = "dd0b01ab4ad0f8a549a162ad880aa9cd2a4d0ced0559d559fd17fb16289d251b"
+content-hash = "6ffd46d56c7e131ec49838a1a9d4a3fdd7e24e7e051954f38f78adc9bf91c3b8"
