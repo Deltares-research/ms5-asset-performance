@@ -21,6 +21,11 @@ from numpy.typing import NDArray
 # Remote path configuration
 # -----------------------------------------------------------------------------
 
+
+env_path = Path(__file__).parent / "dsheet_example.env"
+load_dotenv(env_path)
+
+
 def get_remote_path() -> Path:
     """
     Load remote data folder path from environment file.
@@ -31,9 +36,6 @@ def get_remote_path() -> Path:
     Raises:
         ValueError: If REMOTE_DATA_PATH not set in environment.
     """
-    env_path = Path(__file__).parent / "dsheet_example.env"
-    load_dotenv(env_path)
-
     remote_path = os.environ.get("REMOTE_DATA_PATH")
     if remote_path is None:
         raise ValueError("REMOTE_DATA_PATH not set in dsheet_example.env")

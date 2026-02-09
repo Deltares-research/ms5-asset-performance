@@ -125,15 +125,7 @@ class ReliabilityPipeline:
             "output_dim": output_dim,
         }
 
-        if model_path is not None:
-            model, scaler_x, scaler_y = io.load_surrogate_model(
-                MLP, model_kwargs
-            )
-        else:
-            # Load from remote path
-            model, scaler_x, scaler_y = io.load_surrogate_model(
-                MLP, model_kwargs
-            )
+        model, scaler_x, scaler_y = io.load_surrogate_model(MLP, model_kwargs)
 
         self.performance.set_surrogate(model, scaler_x, scaler_y)
 

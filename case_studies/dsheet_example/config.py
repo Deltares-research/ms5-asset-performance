@@ -37,7 +37,7 @@ class CaseStudyConfig:
     t_start: float = 50.0
     t_end: float = 80.0
     n_mcs: int = 100_000
-    n_grid: int = 100
+    n_grid: int = 1_000
     n_C50_grid: int = 100
     forecast_interval: float = 2.0
 

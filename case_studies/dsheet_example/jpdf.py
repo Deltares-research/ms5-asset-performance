@@ -13,6 +13,7 @@ from typing import Dict, Any, Optional, List
 
 import numpy as np
 import scipy.stats as st
+from PIL.ImageOps import scale
 from numpy.typing import NDArray
 
 from case_studies.dsheet_example.config import CaseStudyConfig
@@ -79,7 +80,15 @@ class JPDF:
             if dist_type in ["normal", "norm", "n", "gaussian"]:
                 mean = v.get("mean", 0.0)
                 std = v.get("standard_deviation", 1.0)
-                var = st.norm(loc=mean, scale=std)
+                lower = v.get("lower_bound", None)
+                upper = v.get("upper_bound", None)
+                if not lower and not upper:
+                    var = st.norm(loc=mean, scale=std)
+                else:
+                    # Convert to truncnorm boundaries
+                    a = (lower - mean) / std
+                    b = (upper - mean) / std
+                    var = st.truncnorm(loc=mean, scale=std, a=a, b=b)
             elif dist_type in ["lognormal", "lognorm"]:
                 mean = v.get("mean", 1.0)
                 std = v.get("standard_deviation", 0.5)
@@ -121,15 +130,14 @@ class JPDF:
 
         # Grid from ~0 to reasonable upper bound
         lower = max(0.01, C50_mu - 4 * C50_std)
-        upper = C50_mu + 4 * C50_std
+        upper = self.config.start_thickness
         self.C50_grid = np.linspace(lower, upper, n_grid)
 
         # Truncated normal prior (positive values)
         a = (0 - C50_mu) / C50_std
+        b = (upper - C50_mu) / C50_std
         b = np.inf
-        self.C50_prior = st.truncnorm.pdf(
-            self.C50_grid, a, b, loc=C50_mu, scale=C50_std
-        )
+        self.C50_prior = st.truncnorm.pdf(self.C50_grid, a, b, loc=C50_mu, scale=C50_std)
         self.C50_prior /= np.trapezoid(self.C50_prior, self.C50_grid)
 
         # Initialize current PDF to prior
@@ -240,6 +248,9 @@ class JPDF:
             mean=np.zeros(self.nvar),
             cov=self.correlation_matrix,
         ).rvs(n_samples)
+
+        # Always use mean (starting) EI in samples. This will be adjusted accoridng to the degradation later.
+        self.U_samples[:, -1] = 0
 
         # Transform to X-space
         self.X_samples = np.zeros_like(self.U_samples)
