@@ -1,7 +1,7 @@
 """
 I/O utilities for the D-Sheet piling case study.
 
-Reads/writes data from a remote folder specified in dsheet_example.env.
+Reads/writes data from a remote folder specified in ark_example.env.
 """
 
 import json
@@ -31,12 +31,12 @@ def get_remote_path() -> Path:
     Raises:
         ValueError: If REMOTE_DATA_PATH not set in environment.
     """
-    env_path = Path(__file__).parent / "dsheet_example.env"
+    env_path = Path(__file__).parent / "ark_example.env"
     load_dotenv(env_path)
 
     remote_path = os.environ.get("REMOTE_DATA_PATH")
     if remote_path is None:
-        raise ValueError("REMOTE_DATA_PATH not set in dsheet_example.env")
+        raise ValueError("REMOTE_DATA_PATH not set in ark_example.env")
 
     return Path(remote_path)
 
