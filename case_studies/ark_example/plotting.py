@@ -681,6 +681,14 @@ def plot_moment_forecast_at_time(
     moment_posterior_q95 = moment_cap * (1 - cr_posterior_q05)
     moment_posterior_q05 = moment_cap * (1 - cr_posterior_q95)
 
+    # Truncate posterior at survived moments
+    times_posterior = np.asarray(list(cr_forecast_posterior.keys()))
+    if survived_times is not None and survived_moments is not None:
+        survived_interp = np.interp(times_posterior, survived_times, survived_moments)
+        moment_posterior_mean = np.maximum(moment_posterior_mean, survived_interp)
+        moment_posterior_q05 = np.maximum(moment_posterior_q05, survived_interp)
+        moment_posterior_q95 = np.maximum(moment_posterior_q95, survived_interp)
+
     # Prior band
     times_prior = np.asarray(list(cr_forecast_prior.keys()))
     ax.fill_between(times_prior, moment_prior_q05, moment_prior_q95, color="b", alpha=0.15)
@@ -689,7 +697,6 @@ def plot_moment_forecast_at_time(
     ax.plot(times_prior, moment_prior_mean, color="b", linewidth=1.5, label="Prior")
 
     # Posterior band
-    times_posterior = np.asarray(list(cr_forecast_posterior.keys()))
     ax.fill_between(times_posterior, moment_posterior_q05, moment_posterior_q95, color="r", alpha=0.15)
     ax.plot(times_posterior, moment_posterior_q05, color="r", linewidth=0.5)
     ax.plot(times_posterior, moment_posterior_q95, color="r", linewidth=0.5)
