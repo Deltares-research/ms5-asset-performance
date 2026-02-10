@@ -516,8 +516,6 @@ class ReliabilityPipeline:
                 beta_forecast_posterior_proven_strength[ft] = result_posterior_proven_strength["beta"]
 
                 # Store corrosion ratio PDFs for forecast times
-                # cr_grid, cr_pdf_prior = self.get_corrosion_ratio_pdf(ft, self.jpdf.C50_prior)
-                # _, cr_pdf_post = self.get_corrosion_ratio_pdf(ft, self.jpdf.C50_pdf, last_obs_time=t, last_obs=corrosion_obs)
                 cr_forecast_prior[ft] = result_prior["cr_pdf"]
                 cr_forecast_posterior[ft] = result_posterior["cr_pdf"]
 
@@ -891,7 +889,7 @@ def main():
     print("=" * 60)
     print("STEP 1: Setup")
     print("=" * 60)
-    pipeline.setup(n_samples=10_000, seed=42)
+    pipeline.setup(n_samples=1_000_000, seed=42)
 
     # =========================================================================
     # STEP 2: Load surrogate model

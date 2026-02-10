@@ -981,33 +981,33 @@ class Performance(BasePerformance):
             corrosion_ratios = np.linspace(0, 1, n_cr)
         n_cr = len(corrosion_ratios)
 
-        # Compute max_moments at each corrosion ratio (this is the expensive part)
-        if verbose:
-            print(f"Computing max_moments at {n_cr} corrosion ratios...")
-
-        max_moments_grid = np.zeros((n_cr, n_samples))
-        for i, cr in enumerate(corrosion_ratios):
-            if verbose and i % 10 == 0:
-                print(f"  CR {i+1}/{n_cr}: {cr:.3f}")
-            _, max_moment = self.lsf_at_corrosion_ratio(x, cr)
-            max_moments_grid[i] = max_moment
+        # Auto-compute moment range if needed (lightweight pass, no storage)
+        if n_moments > 0 and moment_survived_values is None and moment_range is None:
+            if verbose:
+                print(f"Auto-computing moment range across {n_cr} corrosion ratios...")
+            global_min = np.inf
+            global_max = -np.inf
+            for i, cr in enumerate(corrosion_ratios):
+                if verbose and i % 100 == 0:
+                    print(f"  CR {i+1}/{n_cr}")
+                _, max_moment = self.lsf_at_corrosion_ratio(x, cr)
+                global_min = min(global_min, max_moment.min())
+                global_max = max(global_max, max_moment.max())
+            moment_range = (global_min * 0.9, global_max * 1.1)
+            if verbose:
+                print(f"  Moment range: [{moment_range[0]:.1f}, {moment_range[1]:.1f}]")
 
         # Set up moment_survived grid
         if n_moments > 0:
             if moment_survived_values is None:
-                if moment_range is None:
-                    # Auto-compute from sample range with padding
-                    moment_min = max_moments_grid.min() * 0.9
-                    moment_max = max_moments_grid.max() * 1.1
-                    moment_range = (moment_min, moment_max)
-                    moment_survived_values = np.linspace(moment_range[0], moment_range[1], n_moments)
+                moment_survived_values = np.linspace(moment_range[0], moment_range[1], n_moments)
             moment_survived_values = np.append(0., moment_survived_values)
         else:
-            moment_survived_values=np.zeros(1).astype(float)
+            moment_survived_values = np.zeros(1).astype(float)
         n_moments = len(moment_survived_values)
 
         if verbose:
-            print(f"Building {n_moments} fragility curves...")
+            print(f"Building fragility surface: {n_cr} CRs x {n_moments} moments (serial)...")
 
         # Create index
         index = FragilitySurfaceIndex(
@@ -1023,33 +1023,29 @@ class Performance(BasePerformance):
             },
         )
 
-        # Build a FragilityCurve for each moment_survived
-        for j, moment_survived in enumerate(moment_survived_values):
-            if verbose and j % 10 == 0:
-                print(f"  Moment {j+1}/{n_moments}: {moment_survived:.1f} kNm")
+        # Process each CR serially (memory: only 1 x n_samples at a time)
+        pf_grid = np.zeros((n_moments, n_cr))
+        for i, cr in enumerate(corrosion_ratios):
+            if verbose and i % 10 == 0:
+                print(f"  CR {i+1}/{n_cr}: {cr:.3f}")
+            _, max_moments = self.lsf_at_corrosion_ratio(x, cr)
+            moment_cap_degraded = moment_cap * (1 - cr)
+            failed = max_moments > moment_cap_degraded
 
-            # Compute Pf at each CR conditioned on survival
-            pf = np.zeros(n_cr)
-            for i, cr in enumerate(corrosion_ratios):
-                max_moments = max_moments_grid[i]
-                moment_cap_degraded = moment_cap * (1 - cr)
-
-                # Samples that would have survived: max_moment <= moment_survived
+            for j, moment_survived in enumerate(moment_survived_values):
                 survived = max_moments <= moment_survived
                 n_survived = np.sum(survived)
-                failed = max_moments > moment_cap_degraded
 
                 if n_survived == 0:
-                    # No samples survived -> Pf undefined, set to 1.0
-                    pf[i] = failed.mean()
+                    pf_grid[j, i] = failed.mean()
                 else:
-                    # Pf = P(failure | survived)
-                    pf[i] = failed.dot(survived) / n_survived
+                    pf_grid[j, i] = failed.dot(survived) / n_survived
 
-            # Create curve and add to index
+        # Build FragilityCurves from computed Pf grid
+        for j, moment_survived in enumerate(moment_survived_values):
             curve = FragilityCurve(
                 corrosion_ratios=corrosion_ratios.copy(),
-                pf=pf,
+                pf=pf_grid[j],
                 metadata={
                     "moment_survived": moment_survived,
                     "n_samples": n_samples,
