@@ -15,7 +15,7 @@ import numpy as np
 import scipy.stats as st
 from numpy.typing import NDArray
 
-from case_studies.dsheet_example.config import CaseStudyConfig
+from case_studies.ark_example.config import CaseStudyConfig
 
 
 class JPDF:
@@ -124,13 +124,10 @@ class JPDF:
         upper = C50_mu + 4 * C50_std
         self.C50_grid = np.linspace(lower, upper, n_grid)
 
-        # Truncated normal prior (positive values)
-        a = (0 - C50_mu) / C50_std
-        b = np.inf
-        self.C50_prior = st.truncnorm.pdf(
-            self.C50_grid, a, b, loc=C50_mu, scale=C50_std
-        )
-        self.C50_prior /= np.trapezoid(self.C50_prior, self.C50_grid)
+        # Use uniform prior for C50
+        a = self.C50_grid.min()
+        b = self.C50_grid.max() - a
+        self.C50_prior = st.uniform(loc=a, scale=b).pdf(self.C50_grid)
 
         # Initialize current PDF to prior
         self.C50_pdf = self.C50_prior.copy()
@@ -144,7 +141,6 @@ class JPDF:
         self,
         obs_times: NDArray,
         obs_values: NDArray,
-        C50_mu: Optional[float] = None,
     ) -> None:
         """
         Update C50 PDF via Bayesian inference given corrosion observations.
@@ -152,45 +148,35 @@ class JPDF:
         Args:
             obs_times: Times of observations [years].
             obs_values: Observed corrosion values [mm].
-            C50_mu: Reference C50 mean (for corrosion model). Uses prior mean if None.
         """
         if self.C50_pdf is None or self.C50_grid is None:
             raise ValueError("C50 not initialized. Call set_prior_from_specs first.")
 
-        if C50_mu is None:
-            C50_mu = np.trapezoid(self.C50_grid * self.C50_prior, self.C50_grid)
-
+        C50_mu = self.config.C50_mu
         corrosion_rate = self.config.corrosion_rate
         obs_error_std = self.config.obs_error_std
         t_ref = self.config.t_ref
 
-        log_prior = np.log(self.C50_pdf + 1e-10)
+        log_prior = np.log(self.C50_prior + 1e-10)
 
         # Compute likelihood
         C50_grid = self.C50_grid[:, np.newaxis]  # (n_grid, 1)
         obs_times = np.asarray(obs_times)[np.newaxis, :]  # (1, n_obs)
         obs_values = np.asarray(obs_values)  # (n_obs,)
 
-        # Expected corrosion: C(t) = C50 * (1 + rate/C50_mu * (t - t_ref))
-        mu = C50_grid * (1 + corrosion_rate / C50_mu * (obs_times - t_ref))
+        corr_mu = C50_grid * (1 + corrosion_rate / C50_mu * (obs_times - self.config.t_ref))
+        corr_deviations = (obs_values - corr_mu) / obs_error_std
+        corr_deviations = np.concatenate((corr_deviations[:, 0][:, np.newaxis], np.diff(corr_deviations, axis=1)), axis=1)
 
-        # Deviations
-        deviations = (obs_values - mu) / obs_error_std
+        loglikes = st.norm(loc=0, scale=1).logpdf(corr_deviations)
 
-        # Use differences for sequential observations
-        deviations_diff = np.concatenate(
-            [deviations[:, 0:1], np.diff(deviations, axis=1)], axis=1
-        )
+        loglike = loglikes.sum(axis=1)
 
-        # Log-likelihood
-        log_likelihood = st.norm.logpdf(deviations_diff).sum(axis=1)
+        log_post = log_prior + loglike
+        post = np.exp(log_post)
+        post /= np.trapezoid(post, C50_grid.squeeze())
 
-        # Posterior
-        log_posterior = log_prior + log_likelihood
-        posterior = np.exp(log_posterior - log_posterior.max())
-        posterior /= np.trapezoid(posterior, self.C50_grid)
-
-        self.C50_pdf = posterior
+        self.C50_pdf = post
 
     def get_C50_stats(self) -> Dict[str, float]:
         """

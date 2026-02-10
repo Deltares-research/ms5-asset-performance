@@ -3,7 +3,7 @@ Plotting utilities for the D-Sheet piling case study.
 """
 
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, Dict
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -121,47 +121,6 @@ def plot_reliability_index(
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
-    ax.grid(True, alpha=0.3)
-    ax.legend()
-
-    return fig
-
-
-def plot_failure_probability(
-    times: Sequence[float],
-    pf: Sequence[float],
-    pf_target: float | None = None,
-    title: str = "Failure probability over time",
-    xlabel: str = "Time [years]",
-    ylabel: str = r"$P_f$ [-]",
-    log_scale: bool = True,
-) -> plt.Figure:
-    """
-    Plot failure probability over time.
-
-    Args:
-        times: Time points.
-        pf: Failure probability values.
-        pf_target: Target failure probability (horizontal line).
-        title: Plot title.
-        xlabel: X-axis label.
-        ylabel: Y-axis label.
-        log_scale: Use log scale for y-axis.
-
-    Returns:
-        Matplotlib figure.
-    """
-    fig, ax = plt.subplots()
-    ax.plot(times, pf, "b-o", markersize=4, label=r"$P_f$")
-
-    if pf_target is not None:
-        ax.axhline(pf_target, color="r", linestyle="--", label=f"Target = {pf_target:.1e}")
-
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
-    if log_scale:
-        ax.set_yscale("log")
     ax.grid(True, alpha=0.3)
     ax.legend()
 
@@ -324,6 +283,38 @@ def save_figures_to_pdf(figs: Sequence[plt.Figure], filepath: Path | str) -> Non
             plt.close(fig)
 
 
+def collect_pngs_to_pdf(png_dir: Path | str, pdf_path: Path | str, dpi: int = 150) -> None:
+    """
+    Collect all PNGs in a directory into a single PDF.
+
+    Reads existing PNG files (sorted alphabetically), renders each as a
+    full-page image in a PDF.  This avoids regenerating figures just to
+    create a PDF companion.
+
+    Args:
+        png_dir: Directory containing PNG files.
+        pdf_path: Output PDF path.
+        dpi: Resolution for the PDF pages.
+    """
+    png_dir = Path(png_dir)
+    pdf_path = Path(pdf_path)
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+
+    png_files = sorted(png_dir.glob("*.png"))
+    if not png_files:
+        return
+
+    with PdfPages(pdf_path) as pdf:
+        for png_file in png_files:
+            img = plt.imread(str(png_file))
+            fig, ax = plt.subplots()
+            ax.imshow(img)
+            ax.axis("off")
+            fig.tight_layout(pad=0)
+            pdf.savefig(fig, dpi=dpi)
+            plt.close(fig)
+
+
 # -----------------------------------------------------------------------------
 # Prior vs Posterior comparison plots (replicating timos branch style)
 # -----------------------------------------------------------------------------
@@ -456,6 +447,97 @@ def plot_corrosion_prior_posterior(
     return fig
 
 
+def plot_corrosion_forecast_at_time(
+    cr_grid: Sequence[float],
+    cr_forecast_prior: Dict[float, Sequence[float]],
+    cr_forecast_posterior: Dict[float, Sequence[float]],
+    obs_times: Sequence[float] = None,
+    obs_values: Sequence[float] = None,
+    obs_error_std: float = 0.4,
+    alpha: float = 0.05,
+    start_thickness: float = 9.5,
+    xlim: tuple = (50, 80),
+    ylim: tuple = (0, 9.5),
+) -> plt.Figure:
+    """
+    Plot corrosion forecast at a specific observation time.
+
+    Shows:
+    - Prior corrosion band (full time range)
+    - Observations up to current_time
+    - Posterior forecast from current_time onwards
+
+    Args:
+        current_time: Current observation time.
+        obs_times: All observation times.
+        obs_values: All observed corrosion values.
+        obs_error_std: Observation error standard deviation.
+        alpha: Confidence level for error bars.
+        xlim: X-axis limits.
+        ylim: Y-axis limits.
+
+    Returns:
+        Matplotlib figure.
+    """
+    from scipy.stats import norm
+    from scipy.integrate import cumulative_trapezoid
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    cr_forecasts_prior = np.vstack(list(cr_forecast_prior.values()))
+    cr_prior_mean = np.trapezoid(cr_forecasts_prior*cr_grid[None, :], cr_grid, axis=1)
+    cr_prior_cdf = cumulative_trapezoid(cr_forecasts_prior, cr_grid)
+    cr_prior_q05 = cr_grid[np.argmin(np.abs(cr_prior_cdf-alpha), axis=1)]
+    cr_prior_q95 = cr_grid[np.argmin(np.abs(cr_prior_cdf-(1-alpha)), axis=1)]
+    
+    corrosion_prior_mean = cr_prior_mean * start_thickness
+    corrosion_prior_q05 = cr_prior_q05 * start_thickness
+    corrosion_prior_q95 = cr_prior_q95 * start_thickness
+    
+    cr_forecasts_posterior = np.vstack(list(cr_forecast_posterior.values()))
+    cr_posterior_mean = np.trapezoid(cr_forecasts_posterior * cr_grid[None, :], cr_grid, axis=1)
+    cr_posterior_cdf = cumulative_trapezoid(cr_forecasts_posterior, cr_grid)
+    cr_posterior_q05 = cr_grid[np.argmin(np.abs(cr_posterior_cdf - alpha), axis=1)]
+    cr_posterior_q95 = cr_grid[np.argmin(np.abs(cr_posterior_cdf - (1 - alpha)), axis=1)]
+
+    corrosion_posterior_mean = cr_posterior_mean * start_thickness
+    corrosion_posterior_q05 = cr_posterior_q05 * start_thickness
+    corrosion_posterior_q95 = cr_posterior_q95 * start_thickness
+    
+    # Prior band
+    times_forecast = list(list(cr_forecast_prior.keys()))
+    times_forecast = np.asarray(times_forecast)
+    ax.fill_between(times_forecast, corrosion_prior_q05, corrosion_prior_q95,color="b", alpha=0.15)
+    ax.plot(times_forecast, corrosion_prior_q05, color="b", linewidth=0.5)
+    ax.plot(times_forecast, corrosion_prior_q95, color="b", linewidth=0.5)
+    ax.plot(times_forecast, corrosion_prior_mean, color="b", linewidth=1.5, label="Prior")
+
+    # Posterior band
+    times_forecast = list(list(cr_forecast_posterior.keys()))
+    times_forecast = np.asarray(times_forecast)
+    ax.fill_between(times_forecast, corrosion_posterior_q05, corrosion_posterior_q95,color="r", alpha=0.15)
+    ax.plot(times_forecast, corrosion_posterior_q05, color="r", linewidth=0.5)
+    ax.plot(times_forecast, corrosion_posterior_q95, color="r", linewidth=0.5)
+    ax.plot(times_forecast, corrosion_posterior_mean, color="r", linewidth=1.5, label="Posterior")
+
+    # Observations up to current_time
+    if obs_times is not None and obs_values is not None:
+        yerr = obs_error_std * norm.ppf(1 - alpha)
+        ax.errorbar(x=obs_times, y=obs_values, yerr=yerr, fmt="o", c="k", capsize=3, zorder=5, label="Observations")
+
+    ax.set_xlabel("Forecast time [yr]", fontsize=12)
+    ax.set_ylabel("Corrosion [mm]", fontsize=12)
+    ax.set_title(f"Corrosion Forecast at t_obs = {times_forecast.min():.0f}", fontsize=13, fontweight="bold")
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.close()
+
+    return fig
+
+
 def plot_moment_capacity_prior_posterior(
     times_forecast: Sequence[float],
     moment_mean_prior: Sequence[float],
@@ -531,6 +613,99 @@ def plot_moment_capacity_prior_posterior(
     return fig
 
 
+def plot_moment_forecast_at_time(
+    current_time: float,
+    times_forecast: Sequence[float],
+    moment_mean_prior: Sequence[float],
+    moment_q05_prior: Sequence[float],
+    moment_q95_prior: Sequence[float],
+    moment_mean_posterior: Sequence[float],
+    moment_q05_posterior: Sequence[float],
+    moment_q95_posterior: Sequence[float],
+    moment_survived: float = None,
+    obs_times: Sequence[float] = None,
+    obs_moment_cap: Sequence[float] = None,
+    xlim: tuple = (50, 80),
+    ylim: tuple = (100, 800),
+) -> plt.Figure:
+    """
+    Plot moment capacity forecast at a specific observation time.
+
+    Shows:
+    - Prior moment capacity band (full time range)
+    - Observed moment capacity up to current_time
+    - Posterior forecast from current_time onwards
+    - Survived moment line (if provided)
+
+    Args:
+        current_time: Current observation time.
+        times_forecast: Forecast time grid.
+        moment_mean_prior: Prior mean moment capacity.
+        moment_q05_prior: Prior 5th percentile.
+        moment_q95_prior: Prior 95th percentile.
+        moment_mean_posterior: Posterior mean moment capacity.
+        moment_q05_posterior: Posterior 5th percentile.
+        moment_q95_posterior: Posterior 95th percentile.
+        moment_survived: Survived moment threshold (horizontal line).
+        obs_times: All observation times.
+        obs_moment_cap: All observed moment capacity values.
+        xlim: X-axis limits.
+        ylim: Y-axis limits.
+
+    Returns:
+        Matplotlib figure.
+    """
+    times_forecast = np.asarray(times_forecast)
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    # Prior band (full range)
+    ax.fill_between(times_forecast, moment_q05_prior, moment_q95_prior,
+                    color="b", alpha=0.15)
+    ax.plot(times_forecast, moment_q05_prior, color="b", linewidth=0.5)
+    ax.plot(times_forecast, moment_q95_prior, color="b", linewidth=0.5)
+    ax.plot(times_forecast, moment_mean_prior, color="b", linewidth=1.5, label="Prior")
+
+    # Posterior forecast (from current_time onwards)
+    mask = times_forecast >= current_time
+    ax.fill_between(times_forecast[mask],
+                    np.asarray(moment_q05_posterior)[mask],
+                    np.asarray(moment_q95_posterior)[mask],
+                    color="r", alpha=0.2)
+    ax.plot(times_forecast[mask], np.asarray(moment_q05_posterior)[mask],
+            color="r", linewidth=0.5)
+    ax.plot(times_forecast[mask], np.asarray(moment_q95_posterior)[mask],
+            color="r", linewidth=0.5)
+    ax.plot(times_forecast[mask], np.asarray(moment_mean_posterior)[mask],
+            color="r", linewidth=2, label="Posterior forecast")
+
+    # Observations up to current_time
+    if obs_times is not None and obs_moment_cap is not None:
+        obs_up_to = [(t, v) for t, v in zip(obs_times, obs_moment_cap) if t <= current_time]
+        if obs_up_to:
+            t_obs, v_obs = zip(*obs_up_to)
+            ax.scatter(t_obs, v_obs, color="k", s=50, zorder=5, label="Observations")
+
+    # Survived moment
+    if moment_survived is not None:
+        ax.axhline(moment_survived, c="g", linestyle="-", label="Survived moment")
+
+    # Vertical line at current time
+    ax.axvline(current_time, color="k", linestyle=":", linewidth=1, alpha=0.5)
+
+    ax.set_xlabel("Forecast time [yr]", fontsize=12)
+    ax.set_ylabel("Moment capacity [kNm]", fontsize=12)
+    ax.set_title(f"Moment Capacity Forecast at t_obs = {current_time:.0f}",
+                 fontsize=13, fontweight="bold")
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.close()
+
+    return fig
+
+
 def plot_jpdf_snapshot(
     time: float,
     C50_grid: NDArray,
@@ -541,12 +716,10 @@ def plot_jpdf_snapshot(
     cr_pdf_posterior: NDArray,
     fragility_cr: NDArray,
     fragility_pf: NDArray,
-    pf_prior: float,
-    pf_posterior: float,
     beta_prior: float,
     beta_posterior: float,
-    pf_forecast_prior: dict = None,
-    pf_forecast_posterior: dict = None,
+    beta_forecast_prior: dict = None,
+    beta_forecast_posterior: dict = None,
     obs_times: Sequence[float] = None,
     obs_corrosion: Sequence[float] = None,
     current_cr: float = None,
@@ -559,7 +732,7 @@ def plot_jpdf_snapshot(
 
     Creates a 2x2 dashboard showing:
     - Top-left: C50 prior vs posterior PDF
-    - Top-right: Pf FORECAST from current time (prior vs posterior)
+    - Top-right: Beta forecast from current time (prior vs posterior)
     - Bottom-left: Corrosion ratio distribution at current time
     - Bottom-right: Fragility curve with current CR marked
 
@@ -573,12 +746,10 @@ def plot_jpdf_snapshot(
         cr_pdf_posterior: Posterior PDF of corrosion ratio.
         fragility_cr: Corrosion ratios from fragility curve.
         fragility_pf: Pf values from fragility curve.
-        pf_prior: Prior failure probability at current time.
-        pf_posterior: Posterior failure probability at current time.
         beta_prior: Prior reliability index at current time.
         beta_posterior: Posterior reliability index at current time.
-        pf_forecast_prior: Dict of {future_time: pf} for prior forecast.
-        pf_forecast_posterior: Dict of {future_time: pf} for posterior forecast.
+        beta_forecast_prior: Dict of {future_time: beta} for prior forecast.
+        beta_forecast_posterior: Dict of {future_time: beta} for posterior forecast.
         obs_times: Times of corrosion observations.
         obs_corrosion: Observed corrosion values.
         current_cr: Current corrosion ratio (to mark on plots).
@@ -589,10 +760,10 @@ def plot_jpdf_snapshot(
     Returns:
         Matplotlib figure with JPDF snapshot.
     """
-    from scipy.stats import norm as sp_norm
-
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
     fig.suptitle(f"JPDF Snapshot at t = {time:.0f} years", fontsize=14, fontweight="bold")
+
+    max_beta = 6.0
 
     # Top-left: C50 distribution
     ax = axes[0, 0]
@@ -606,25 +777,12 @@ def plot_jpdf_snapshot(
     ax.legend(fontsize=9)
     ax.grid(True, alpha=0.3)
 
-    # Top-right: Pf FORECAST (the key plot!)
+    # Top-right: Beta forecast
     ax = axes[0, 1]
-    if pf_forecast_prior is not None and pf_forecast_posterior is not None:
-        times_forecast = sorted(pf_forecast_prior.keys())
-        pf_prior_vals = [pf_forecast_prior[t] for t in times_forecast]
-        pf_post_vals = [pf_forecast_posterior[t] for t in times_forecast]
-
-        # Convert to beta
-        max_beta = 6.0
-        beta_prior_vals = []
-        beta_post_vals = []
-        for pf in pf_prior_vals:
-            pf_clipped = max(pf, 1e-10)
-            b = -sp_norm.ppf(pf_clipped)
-            beta_prior_vals.append(min(b, max_beta))
-        for pf in pf_post_vals:
-            pf_clipped = max(pf, 1e-10)
-            b = -sp_norm.ppf(pf_clipped)
-            beta_post_vals.append(min(b, max_beta))
+    if beta_forecast_prior is not None and beta_forecast_posterior is not None:
+        times_forecast = sorted(beta_forecast_prior.keys())
+        beta_prior_vals = [min(beta_forecast_prior[t], max_beta) for t in times_forecast]
+        beta_post_vals = [min(beta_forecast_posterior[t], max_beta) for t in times_forecast]
 
         ax.plot(times_forecast, beta_prior_vals, "b-", linewidth=2, label="Prior forecast")
         ax.plot(times_forecast, beta_post_vals, "r-", linewidth=2, label="Posterior forecast")
@@ -676,8 +834,8 @@ def plot_jpdf_snapshot(
     # Add text annotation with key stats
     stats_text = (
         f"Current (t={time:.0f}):\n"
-        f"  Prior:     Pf={pf_prior:.2e}, β={beta_prior:.2f}\n"
-        f"  Posterior: Pf={pf_posterior:.2e}, β={beta_posterior:.2f}\n"
+        f"  Prior:     β={beta_prior:.2f}\n"
+        f"  Posterior: β={beta_posterior:.2f}\n"
         f"  C50 prior mean:  {np.trapezoid(C50_grid * C50_prior, C50_grid):.2f} mm\n"
         f"  C50 post mean:   {np.trapezoid(C50_grid * C50_posterior, C50_grid):.2f} mm"
     )
@@ -690,48 +848,6 @@ def plot_jpdf_snapshot(
 
     plt.tight_layout()
     plt.subplots_adjust(bottom=0.15)
-    plt.close()
-
-    return fig
-
-
-def plot_pf_prior_posterior(
-    times: Sequence[float],
-    pf_prior: Sequence[float],
-    pf_posterior: Sequence[float],
-    title: str = "",
-    xlim: tuple = (50, 80),
-    log_scale: bool = True,
-) -> plt.Figure:
-    """
-    Plot failure probability (Pf) prior vs posterior over time.
-
-    Args:
-        times: Time points [years].
-        pf_prior: Prior failure probability values.
-        pf_posterior: Posterior failure probability values.
-        title: Plot title.
-        xlim: X-axis limits.
-        log_scale: Use log scale for y-axis.
-
-    Returns:
-        Matplotlib figure.
-    """
-    fig = plt.figure(figsize=(8, 4))
-
-    plt.plot(times, pf_prior, c="b", marker="o", markersize=4, label="Prior")
-    plt.plot(times, pf_posterior, c="r", marker="o", markersize=4, label="Posterior")
-
-    plt.xlabel("Forecast time [yr]", fontsize=12)
-    plt.ylabel(r"$P_f$ [-]", fontsize=12)
-    plt.xlim(xlim)
-    if log_scale:
-        plt.yscale("log")
-    plt.legend(fontsize=12)
-    plt.grid(True, alpha=0.3)
-    if title:
-        plt.title(title, fontsize=12)
-    plt.tight_layout()
     plt.close()
 
     return fig
@@ -761,8 +877,6 @@ def plot_beta_forecast_at_time(
     Returns:
         Matplotlib figure.
     """
-    from scipy.stats import norm as sp_norm
-
     fig, ax = plt.subplots(figsize=(10, 6))
 
     obs_times = sorted(results.keys())
@@ -774,20 +888,16 @@ def plot_beta_forecast_at_time(
 
     # Get the full time range from the first observation's forecast
     first_result = results[obs_times[0]]
-    all_forecast_times = sorted(first_result["prior"]["pf_forecast"].keys())
+    all_forecast_times = sorted(first_result["prior"]["beta_forecast"].keys())
     t_min, t_max = min(all_forecast_times), max(all_forecast_times)
 
     # Plot prior forecast (reference, dashed gray)
-    if "pf_forecast" in first_result["prior"]:
-        pf_forecast = first_result["prior"]["pf_forecast"]
-        times_forecast = sorted(pf_forecast.keys())
-        beta_forecast = []
-        for t in times_forecast:
-            pf = max(pf_forecast[t], 1e-10)
-            b = -sp_norm.ppf(pf)
-            beta_forecast.append(min(b, max_beta))
+    if "beta_forecast" in first_result["prior"]:
+        bf = first_result["prior"]["beta_forecast"]
+        times_forecast = sorted(bf.keys())
+        beta_vals = [min(bf[t], max_beta) for t in times_forecast]
 
-        ax.plot(times_forecast, beta_forecast, color="gray", linestyle="--",
+        ax.plot(times_forecast, beta_vals, color="gray", linestyle="--",
                 linewidth=2, alpha=0.7, label="Prior (no updating)")
 
     # Build cumulative lines for each observation time
@@ -804,14 +914,12 @@ def plot_beta_forecast_at_time(
 
         # Forecast segment: forecasted betas for times > obs_t
         result = results[obs_t]
-        if "pf_forecast" in result["posterior"]:
-            pf_forecast = result["posterior"]["pf_forecast"]
-            for t in sorted(pf_forecast.keys()):
+        if "beta_forecast" in result["posterior"]:
+            bf = result["posterior"]["beta_forecast"]
+            for t in sorted(bf.keys()):
                 if t > obs_t:
-                    pf = max(pf_forecast[t], 1e-10)
-                    b = -sp_norm.ppf(pf)
                     cumulative_times.append(t)
-                    cumulative_betas.append(min(b, max_beta))
+                    cumulative_betas.append(min(bf[t], max_beta))
 
         # Current observation time gets emphasized
         is_current = (obs_t == current_time)
@@ -862,15 +970,13 @@ def plot_beta_forecasts(
     Shows prior forecast (single line) and posterior forecasts (one per obs time).
 
     Args:
-        results: Pipeline results dict with pf_forecast per timestep.
+        results: Pipeline results dict with beta_forecast per timestep.
         beta_req: Required reliability index.
         title: Plot title.
 
     Returns:
         Matplotlib figure.
     """
-    from scipy.stats import norm as sp_norm
-
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
     obs_times = sorted(results.keys())
@@ -881,16 +987,12 @@ def plot_beta_forecasts(
 
     # Left plot: Prior forecast (same for all obs times - just show once)
     first_result = results[obs_times[0]]
-    if "pf_forecast" in first_result["prior"]:
-        pf_forecast = first_result["prior"]["pf_forecast"]
-        times_forecast = sorted(pf_forecast.keys())
-        beta_forecast = []
-        for t in times_forecast:
-            pf = max(pf_forecast[t], 1e-10)
-            b = -sp_norm.ppf(pf)
-            beta_forecast.append(min(b, max_beta))
+    if "beta_forecast" in first_result["prior"]:
+        bf = first_result["prior"]["beta_forecast"]
+        times_forecast = sorted(bf.keys())
+        beta_vals = [min(bf[t], max_beta) for t in times_forecast]
 
-        ax1.plot(times_forecast, beta_forecast, "b-", linewidth=2, label="Prior")
+        ax1.plot(times_forecast, beta_vals, "b-", linewidth=2, label="Prior")
         ax1.axhline(beta_req, color="k", linestyle="--", linewidth=1.5, label=f"Requirement (β={beta_req})")
         ax1.set_xlabel("Forecast time [yr]", fontsize=11)
         ax1.set_ylabel("β [-]", fontsize=11)
@@ -902,16 +1004,12 @@ def plot_beta_forecasts(
     # Right plot: Posterior forecasts from each observation time
     for i, obs_t in enumerate(obs_times):
         result = results[obs_t]
-        if "pf_forecast" in result["posterior"]:
-            pf_forecast = result["posterior"]["pf_forecast"]
-            times_forecast = sorted(pf_forecast.keys())
-            beta_forecast = []
-            for t in times_forecast:
-                pf = max(pf_forecast[t], 1e-10)
-                b = -sp_norm.ppf(pf)
-                beta_forecast.append(min(b, max_beta))
+        if "beta_forecast" in result["posterior"]:
+            bf = result["posterior"]["beta_forecast"]
+            times_forecast = sorted(bf.keys())
+            beta_vals = [min(bf[t], max_beta) for t in times_forecast]
 
-            ax2.plot(times_forecast, beta_forecast, color=colors[i], linewidth=1.5,
+            ax2.plot(times_forecast, beta_vals, color=colors[i], linewidth=1.5,
                      label=f"t={obs_t:.0f}", marker="o", markersize=3)
 
     ax2.axhline(beta_req, color="k", linestyle="--", linewidth=1.5, label=f"Requirement")
@@ -921,65 +1019,6 @@ def plot_beta_forecasts(
     ax2.legend(fontsize=9, loc="upper right", ncol=2)
     ax2.grid(True, alpha=0.3)
     ax2.set_ylim(0, max_beta)
-
-    fig.suptitle(title, fontsize=13, fontweight="bold")
-    plt.tight_layout()
-    plt.close()
-
-    return fig
-
-
-def plot_pf_forecasts(
-    results: dict,
-    title: str = "Failure Probability Forecasts",
-) -> plt.Figure:
-    """
-    Plot Pf forecasts from each observation time.
-
-    Args:
-        results: Pipeline results dict with pf_forecast per timestep.
-        title: Plot title.
-
-    Returns:
-        Matplotlib figure.
-    """
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
-
-    obs_times = sorted(results.keys())
-    colors = plt.cm.viridis(np.linspace(0, 0.8, len(obs_times)))
-
-    # Left plot: Prior forecast
-    first_result = results[obs_times[0]]
-    if "pf_forecast" in first_result["prior"]:
-        pf_forecast = first_result["prior"]["pf_forecast"]
-        times_forecast = sorted(pf_forecast.keys())
-        pf_vals = [pf_forecast[t] for t in times_forecast]
-
-        ax1.plot(times_forecast, pf_vals, "b-", linewidth=2, marker="o", markersize=4, label="Prior")
-        ax1.set_xlabel("Forecast time [yr]", fontsize=11)
-        ax1.set_ylabel("Pf [-]", fontsize=11)
-        ax1.set_title("Prior Forecast (no updating)", fontsize=12)
-        ax1.legend(fontsize=10)
-        ax1.grid(True, alpha=0.3)
-        ax1.set_yscale("log")
-
-    # Right plot: Posterior forecasts
-    for i, obs_t in enumerate(obs_times):
-        result = results[obs_t]
-        if "pf_forecast" in result["posterior"]:
-            pf_forecast = result["posterior"]["pf_forecast"]
-            times_forecast = sorted(pf_forecast.keys())
-            pf_vals = [pf_forecast[t] for t in times_forecast]
-
-            ax2.plot(times_forecast, pf_vals, color=colors[i], linewidth=1.5,
-                     label=f"t={obs_t:.0f}", marker="o", markersize=3)
-
-    ax2.set_xlabel("Forecast time [yr]", fontsize=11)
-    ax2.set_ylabel("Pf [-]", fontsize=11)
-    ax2.set_title("Posterior Forecasts (with Bayesian updating)", fontsize=12)
-    ax2.legend(fontsize=9, loc="lower right", ncol=2)
-    ax2.grid(True, alpha=0.3)
-    ax2.set_yscale("log")
 
     fig.suptitle(title, fontsize=13, fontweight="bold")
     plt.tight_layout()
@@ -1008,8 +1047,6 @@ def plot_posterior_forecast_evolution(
     Returns:
         Matplotlib figure.
     """
-    from scipy.stats import norm as sp_norm
-
     fig, ax = plt.subplots(figsize=(10, 6))
 
     obs_times = sorted(results.keys())
@@ -1018,20 +1055,16 @@ def plot_posterior_forecast_evolution(
 
     # Get the full time range
     first_result = results[obs_times[0]]
-    all_forecast_times = sorted(first_result["prior"]["pf_forecast"].keys())
+    all_forecast_times = sorted(first_result["prior"]["beta_forecast"].keys())
     t_min, t_max = min(all_forecast_times), max(all_forecast_times)
 
     # Plot prior as reference
-    if "pf_forecast" in first_result["prior"]:
-        pf_forecast = first_result["prior"]["pf_forecast"]
-        times_forecast = sorted(pf_forecast.keys())
-        beta_forecast = []
-        for t in times_forecast:
-            pf = max(pf_forecast[t], 1e-10)
-            b = -sp_norm.ppf(pf)
-            beta_forecast.append(min(b, max_beta))
+    if "beta_forecast" in first_result["prior"]:
+        bf = first_result["prior"]["beta_forecast"]
+        times_forecast = sorted(bf.keys())
+        beta_vals = [min(bf[t], max_beta) for t in times_forecast]
 
-        ax.plot(times_forecast, beta_forecast, color="gray", linestyle="--",
+        ax.plot(times_forecast, beta_vals, color="gray", linestyle="--",
                 linewidth=2, alpha=0.6, label="Prior (no updating)")
 
     # Build cumulative lines for each observation time
@@ -1048,14 +1081,12 @@ def plot_posterior_forecast_evolution(
 
         # Forecast segment: forecasted betas for times > obs_t
         result = results[obs_t]
-        if "pf_forecast" in result["posterior"]:
-            pf_forecast = result["posterior"]["pf_forecast"]
-            for t in sorted(pf_forecast.keys()):
+        if "beta_forecast" in result["posterior"]:
+            bf = result["posterior"]["beta_forecast"]
+            for t in sorted(bf.keys()):
                 if t > obs_t:
-                    pf = max(pf_forecast[t], 1e-10)
-                    b = -sp_norm.ppf(pf)
                     cumulative_times.append(t)
-                    cumulative_betas.append(min(b, max_beta))
+                    cumulative_betas.append(min(bf[t], max_beta))
 
         ax.plot(cumulative_times, cumulative_betas, color=colors[i], linewidth=2,
                 label=f"t_obs={obs_t:.0f}")
@@ -1095,7 +1126,7 @@ def plot_beta_forecast_grid(
     - Forecast segment: forecasted betas for times > t_obs
 
     Args:
-        results: Pipeline results dict with pf_forecast per timestep.
+        results: Pipeline results dict with beta_forecast per timestep.
         beta_req: Required reliability index.
         ncols: Number of columns in the grid.
         title: Overall figure title.
@@ -1103,8 +1134,6 @@ def plot_beta_forecast_grid(
     Returns:
         Matplotlib figure with grid of subplots.
     """
-    from scipy.stats import norm as sp_norm
-
     obs_times = sorted(results.keys())
     n_obs = len(obs_times)
     nrows = int(np.ceil(n_obs / ncols))
@@ -1116,17 +1145,13 @@ def plot_beta_forecast_grid(
 
     # Get the full time range
     first_result = results[obs_times[0]]
-    all_forecast_times = sorted(first_result["prior"]["pf_forecast"].keys())
+    all_forecast_times = sorted(first_result["prior"]["beta_forecast"].keys())
     t_min, t_max = min(all_forecast_times), max(all_forecast_times)
 
     # Precompute prior forecast
-    pf_forecast_prior = first_result["prior"]["pf_forecast"]
-    times_prior = sorted(pf_forecast_prior.keys())
-    beta_prior = []
-    for t in times_prior:
-        pf = max(pf_forecast_prior[t], 1e-10)
-        b = -sp_norm.ppf(pf)
-        beta_prior.append(min(b, max_beta))
+    bf_prior = first_result["prior"]["beta_forecast"]
+    times_prior = sorted(bf_prior.keys())
+    beta_prior = [min(bf_prior[t], max_beta) for t in times_prior]
 
     for idx, current_time in enumerate(obs_times):
         row, col = divmod(idx, ncols)
@@ -1158,14 +1183,12 @@ def plot_beta_forecast_grid(
 
             # Forecast segment: forecasted betas for times > obs_t
             result = results_up_to_t[obs_t]
-            if "pf_forecast" in result["posterior"]:
-                pf_forecast = result["posterior"]["pf_forecast"]
-                for t in sorted(pf_forecast.keys()):
+            if "beta_forecast" in result["posterior"]:
+                bf = result["posterior"]["beta_forecast"]
+                for t in sorted(bf.keys()):
                     if t > obs_t:
-                        pf = max(pf_forecast[t], 1e-10)
-                        b = -sp_norm.ppf(pf)
                         cumulative_times.append(t)
-                        cumulative_betas.append(min(b, max_beta))
+                        cumulative_betas.append(min(bf[t], max_beta))
 
             is_current = (obs_t == current_time)
             linewidth = 2 if is_current else 1

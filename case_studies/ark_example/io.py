@@ -16,6 +16,8 @@ import torch
 from dotenv import load_dotenv
 from numpy.typing import NDArray
 
+from case_studies.ark_example.performance_function import FragilitySurfaceIndex
+
 
 # -----------------------------------------------------------------------------
 # Remote path configuration
@@ -330,7 +332,7 @@ def load_fragility_curve(name: str = "fragility"):
         raise FileNotFoundError(f"No fragility curve found: {npz_path} or {json_path}")
 
 
-def save_fragility_curve(fragility, name: str = "fragility", fmt: str = "npz") -> None:
+def save_fragility_curve(fragility, name: str = "fragility") -> None:
     """
     Save fragility curve to remote folder.
 
@@ -339,8 +341,7 @@ def save_fragility_curve(fragility, name: str = "fragility", fmt: str = "npz") -
         name: Base name of fragility file (without extension).
         fmt: Format - "npz" (with cached moments) or "json" (portable summary).
     """
-    ext = ".npz" if fmt == "npz" else ".json"
-    filepath = get_remote_path() / f"results/{name}{ext}"
+    filepath = get_remote_path() / f"results/{name}.json"
     filepath.parent.mkdir(parents=True, exist_ok=True)
     fragility.save(filepath, fmt=fmt)
 
@@ -368,7 +369,6 @@ def load_fragility_surface(name: str = "fragility_surface"):
     Returns:
         FragilitySurfaceIndex instance.
     """
-    from case_studies.dsheet_example.performance_function import FragilitySurfaceIndex
 
     surface_dir = get_remote_path() / f"results/{name}"
     if not surface_dir.exists():

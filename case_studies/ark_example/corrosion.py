@@ -11,7 +11,7 @@ Models corrosion progression over time using:
 import numpy as np
 from scipy import stats
 from numpy.typing import NDArray
-from typing import Tuple
+from typing import Tuple, Optional
 
 
 class CorrosionModel:
@@ -223,6 +223,8 @@ class CorrosionModel:
         self,
         t: float,
         C50_pdf: NDArray | None = None,
+        last_obs_time: Optional[float] = None,
+        last_obs: Optional[float] = None,
     ) -> Tuple[NDArray, NDArray]:
         """
         Compute PDF of corrosion ratio at time t.
@@ -245,12 +247,19 @@ class CorrosionModel:
 
         # For each C50, compute PDF of corrosion
         C50_grid = self.C50_grid[:, np.newaxis]
-        mu, scale, a, b = self.corrosion_params(t, C50_grid)
+
+        if last_obs:
+            d_time = t - last_obs_time
+            d_mu = C50_grid * self.corrosion_rate / self.C50_mu * d_time
+            mu = last_obs + d_mu
+            scale = self.obs_error_std + d_mu * 0.5
+            a = (0 - mu) / scale
+            b = (self.start_thickness - mu) / scale
+        else:
+            mu, scale, a, b = self.corrosion_params(t, C50_grid)
 
         # PDF at each corrosion value for each C50
-        corrosion_pdf = stats.truncnorm.pdf(
-            corrosion_grid, a, b, loc=mu, scale=scale
-        )
+        corrosion_pdf = stats.truncnorm.pdf(corrosion_grid, a, b, loc=mu, scale=scale)
 
         # Weight by C50 PDF and integrate
         corrosion_pdf *= C50_pdf[:, np.newaxis]
@@ -260,6 +269,6 @@ class CorrosionModel:
         pdf /= np.trapezoid(pdf, corrosion_grid)
 
         # Transform to ratio PDF
-        ratio_pdf = pdf * self.start_thickness
+        ratio_pdf = pdf * 1 / (1 / self.start_thickness)  # Scaling of PDF between corrosion and corrosion rate
 
         return ratio_grid, ratio_pdf

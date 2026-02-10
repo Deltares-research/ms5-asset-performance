@@ -31,6 +31,7 @@ class CaseStudyConfig:
     moment_cap: float = 750.0
     EI_start: float = 30000.0
     start_thickness: float = 9.5
+    C50_mu: float = 1.0
     corrosion_rate: float = 0.022
     obs_error_std: float = 0.4
     t_ref: float = 50.0
@@ -38,8 +39,8 @@ class CaseStudyConfig:
     t_end: float = 80.0
     n_mcs: int = 100_000
     n_grid: int = 100
-    n_C50_grid: int = 100
-    forecast_interval: float = 2.0
+    n_C50_grid: int = 1_000
+    forecast_interval: int = 1
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CaseStudyConfig":

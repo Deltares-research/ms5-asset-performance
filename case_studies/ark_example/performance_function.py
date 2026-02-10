@@ -207,7 +207,7 @@ class FragilitySurfaceIndex:
         pf_clipped = np.clip(pf, 1e-10, 1 - 1e-10)
         return float(-stats.norm.ppf(pf_clipped))
 
-    def get_curve_at(self, moment_survived: float) -> "FragilityCurve":
+    def get_curve_at(self, moment_survived: float = 0.) -> "FragilityCurve":
         """
         Get interpolated fragility curve at given moment_survived.
 
@@ -997,15 +997,17 @@ class Performance(BasePerformance):
             max_moments_grid[i] = max_moment
 
         # Set up moment_survived grid
-        if moment_survived_values is None:
-            if moment_range is None:
-                # Auto-compute from sample range with padding
-                moment_min = max_moments_grid.min() * 0.9
-                moment_max = max_moments_grid.max() * 1.1
-                moment_range = (moment_min, moment_max)
-            moment_survived_values = np.linspace(
-                moment_range[0], moment_range[1], n_moments
-            )
+        if n_moments > 0:
+            if moment_survived_values is None:
+                if moment_range is None:
+                    # Auto-compute from sample range with padding
+                    moment_min = max_moments_grid.min() * 0.9
+                    moment_max = max_moments_grid.max() * 1.1
+                    moment_range = (moment_min, moment_max)
+                    moment_survived_values = np.linspace(moment_range[0], moment_range[1], n_moments)
+            moment_survived_values = np.append(0., moment_survived_values)
+        else:
+            moment_survived_values=np.zeros(1).astype(float)
         n_moments = len(moment_survived_values)
 
         if verbose:
@@ -1039,15 +1041,14 @@ class Performance(BasePerformance):
                 # Samples that would have survived: max_moment <= moment_survived
                 survived = max_moments <= moment_survived
                 n_survived = np.sum(survived)
+                failed = max_moments > moment_cap_degraded
 
                 if n_survived == 0:
                     # No samples survived -> Pf undefined, set to 1.0
-                    pf[i] = 1.0
+                    pf[i] = failed.mean()
                 else:
-                    # Failure among survivors: max_moment > degraded capacity
-                    failed = max_moments > moment_cap_degraded
                     # Pf = P(failure | survived)
-                    pf[i] = np.sum(failed & survived) / n_survived
+                    pf[i] = failed.dot(survived) / n_survived
 
             # Create curve and add to index
             curve = FragilityCurve(

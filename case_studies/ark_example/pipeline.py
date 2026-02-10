@@ -16,17 +16,18 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
 from numpy.typing import NDArray
-from case_studies.dsheet_example.config import CaseStudyConfig
-from case_studies.dsheet_example.jpdf import JPDF
-from case_studies.dsheet_example.corrosion import CorrosionModel
-from case_studies.dsheet_example.performance_function import (
+import json
+from case_studies.ark_example.config import CaseStudyConfig
+from case_studies.ark_example.jpdf import JPDF
+from case_studies.ark_example.corrosion import CorrosionModel
+from case_studies.ark_example.performance_function import (
     Performance,
     FragilityCurve,
     FragilitySurfaceIndex,
     MLP,
 )
-from case_studies.dsheet_example import io
-from case_studies.dsheet_example import plotting
+from case_studies.ark_example import io
+from case_studies.ark_example import plotting
 
 
 class ReliabilityPipeline:
@@ -82,9 +83,14 @@ class ReliabilityPipeline:
         self.jpdf.add_water_level(water_lvl=-1.0)
 
         # Initialize corrosion model
+        with open(self.specs_path, "r") as f:
+            specs = json.load(f)
+        params = specs.get("parameters", {})
+        C50_mu = params.get("C50_mu", 1.5)
+        C50_std = params.get("C50_std", 0.75)
         self.corrosion_model = CorrosionModel(
-            C50_mu=1.5,
-            C50_std=0.75,
+            C50_mu=C50_mu,
+            C50_std=C50_std,
             corrosion_rate=self.config.corrosion_rate,
             start_thickness=self.config.start_thickness,
             obs_error_std=self.config.obs_error_std,
@@ -196,7 +202,7 @@ class ReliabilityPipeline:
         moment_range: Optional[Tuple[float, float]] = None,
         force_rebuild: bool = False,
         verbose: bool = True,
-    ) -> FragilitySurfaceIndex:
+    ) -> None:
         """
         Build or load 2D fragility surface.
 
@@ -224,28 +230,26 @@ class ReliabilityPipeline:
             self.fragility_surface = io.load_fragility_surface()
             if verbose:
                 print(self.fragility_surface.summary())
-            return self.fragility_surface
+        else:
 
-        if verbose:
-            print(f"Building fragility surface ({n_cr} CR x {n_moments} moments)...")
+            if verbose:
+                print(f"Building fragility surface ({n_cr} CR x {n_moments} moments)...")
 
-        self.fragility_surface = self.performance.build_fragility_surface(
-            x=self.jpdf.X_samples,
-            n_cr=n_cr,
-            n_moments=n_moments,
-            moment_range=moment_range,
-            verbose=verbose,
-        )
+            self.fragility_surface = self.performance.build_fragility_surface(
+                x=self.jpdf.X_samples,
+                n_cr=n_cr,
+                n_moments=n_moments,
+                moment_range=moment_range,
+                verbose=verbose,
+            )
 
-        # Save to cache
-        if verbose:
-            print("Saving fragility surface...")
-        io.save_fragility_surface(self.fragility_surface)
+            # Save to cache
+            if verbose:
+                print("Saving fragility surface...")
+            io.save_fragility_surface(self.fragility_surface)
 
-        if verbose:
-            print("Fragility surface saved.")
-
-        return self.fragility_surface
+            if verbose:
+                print("Fragility surface saved.")
 
     def load_fragility_surface(
         self,
@@ -301,17 +305,17 @@ class ReliabilityPipeline:
             FragilityCurve instance.
         """
         if self.fragility_surface is None:
-            raise ValueError(
-                "Call build_fragility_surface() or load_fragility_surface() first."
-            )
+            raise ValueError("Call build_fragility_surface() or load_fragility_surface() first.")
 
         return self.fragility_surface.get_curve_at(moment_survived)
 
-    def compute_pf_with_proven_strength(
+    def compute_pf_at_time(
         self,
         t: float,
-        moment_survived: float,
+        moment_survived: float = 0.,
         use_posterior: bool = True,
+        last_obs_time: Optional[float] = None,
+        last_obs: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Compute Pf at time t conditioned on proven strength.
@@ -327,24 +331,19 @@ class ReliabilityPipeline:
             Dict with pf, beta, and intermediate values.
         """
         if self.fragility_surface is None:
-            raise ValueError(
-                "Call build_fragility_surface() or load_fragility_surface() first."
-            )
+            raise ValueError("Call build_fragility_surface() or load_fragility_surface() first.")
 
         # Get C50 PDF
         C50_pdf = self.jpdf.C50_pdf if use_posterior else self.jpdf.C50_prior
 
         # Get corrosion ratio PDF
-        cr_grid, cr_pdf = self.get_corrosion_ratio_pdf(t, C50_pdf)
+        cr_grid, cr_pdf = self.get_corrosion_ratio_pdf(t, C50_pdf, last_obs_time, last_obs)
 
         # Get fragility curve at moment_survived (loads on-demand)
         fragility = self.fragility_surface.get_curve_at(moment_survived)
 
         # Interpolate PDF to fragility grid
-        cr_pdf_interp = np.interp(
-            fragility.corrosion_ratios, cr_grid, cr_pdf, left=0, right=0
-        )
-        # Renormalize
+        cr_pdf_interp = np.interp(fragility.corrosion_ratios, cr_grid, cr_pdf, left=0, right=0)
         cr_pdf_interp /= np.trapezoid(cr_pdf_interp, fragility.corrosion_ratios) + 1e-10
 
         # Integrate fragility
@@ -363,6 +362,8 @@ class ReliabilityPipeline:
         self,
         t: float,
         C50_pdf: Optional[NDArray] = None,
+        last_obs_time: Optional[float] = None,
+        last_obs: Optional[float] = None,
     ) -> Tuple[NDArray, NDArray]:
         """
         Compute corrosion ratio PDF at time t given C50 distribution.
@@ -381,53 +382,9 @@ class ReliabilityPipeline:
             C50_pdf = self.jpdf.C50_pdf
 
         # Use corrosion model to get PDF
-        ratio_grid, ratio_pdf = self.corrosion_model.corrosion_ratio_pdf(
-            t=t, C50_pdf=C50_pdf
-        )
+        ratio_grid, ratio_pdf = self.corrosion_model.corrosion_ratio_pdf(t=t, C50_pdf=C50_pdf, last_obs_time=last_obs_time, last_obs=last_obs)
 
         return ratio_grid, ratio_pdf
-
-    def compute_pf_at_time(
-        self,
-        t: float,
-        use_posterior: bool = True,
-    ) -> Dict[str, Any]:
-        """
-        Compute failure probability at a single timestep.
-
-        Args:
-            t: Time [years].
-            use_posterior: Use posterior C50 (True) or prior (False).
-
-        Returns:
-            Dict with pf, beta, and intermediate values.
-        """
-        if self.fragility is None:
-            raise ValueError("Call build_fragility() first.")
-
-        # Get C50 PDF
-        C50_pdf = self.jpdf.C50_pdf if use_posterior else self.jpdf.C50_prior
-
-        # Get corrosion ratio PDF
-        cr_grid, cr_pdf = self.get_corrosion_ratio_pdf(t, C50_pdf)
-
-        # Interpolate PDF to fragility grid
-        cr_pdf_interp = np.interp(
-            self.fragility.corrosion_ratios, cr_grid, cr_pdf, left=0, right=0
-        )
-        # Renormalize
-        cr_pdf_interp /= np.trapezoid(cr_pdf_interp, self.fragility.corrosion_ratios) + 1e-10
-
-        # Integrate fragility
-        pf, beta = self.performance.pf_from_fragility(self.fragility, cr_pdf_interp)
-
-        return {
-            "time": t,
-            "pf": pf,
-            "beta": beta,
-            "C50_stats": self.jpdf.get_C50_stats(),
-            "cr_pdf": cr_pdf_interp.tolist(),
-        }
 
     def run_timeline(
         self,
@@ -444,21 +401,26 @@ class ReliabilityPipeline:
         Returns:
             Results dict keyed by time.
         """
-        if self.fragility is None:
-            raise ValueError("Call build_fragility() first.")
+        if self.fragility_surface is None:
+            raise ValueError("Call build_fragility_surface() first.")
 
         self.results = {}
 
         # Get times from setting
-        times = sorted([float(k) for k in setting.keys() if k != "metadata"])
+        times = sorted([float(k) for k in setting.keys()])
+        analysis_times = list(range(
+            int(min(times)),
+            int(max(times)+self.config.forecast_interval),
+            int(self.config.forecast_interval)
+        ))
+        analysis_times = [float(time) for time in analysis_times]
+        analysis_times = set(sorted(analysis_times+times))
 
         # Collect corrosion observations
         def get_observations_up_to(t: float):
             obs_times = []
             obs_values = []
             for time_key in sorted(setting.keys()):
-                if time_key == "metadata":
-                    continue
                 time = float(time_key)
                 if time <= t:
                     obs_times.append(time)
@@ -485,34 +447,57 @@ class ReliabilityPipeline:
             cr_obs = corrosion_obs / self.config.start_thickness if corrosion_obs else None
 
             # Compute Pf FORECAST for all future times (from t to t_end)
-            future_times = [ft for ft in times if ft >= t]
-            pf_forecast_prior = {}
+            future_times = [ft for ft in analysis_times if ft >= t]
             beta_forecast_prior = {}
-            pf_forecast_posterior = {}
             beta_forecast_posterior = {}
+            beta_forecast_posterior_proven_strength = {}
             cr_forecast_prior = {}
             cr_forecast_posterior = {}
 
             for ft in future_times:
+                # Survived moment
+                moment_survived = 560. + (530. - 650) / (75. - 50.) * (t - self.config.t_ref)
+
                 # Prior forecast (using fixed prior C50)
-                result_prior = self.compute_pf_at_time(ft, use_posterior=False)
-                pf_forecast_prior[ft] = result_prior["pf"]
+                result_prior = self.compute_pf_at_time(
+                    t=ft,
+                    moment_survived=0.,
+                    use_posterior=False,
+                    last_obs_time=None,
+                    last_obs=None,
+                )
                 beta_forecast_prior[ft] = result_prior["beta"]
 
                 # Posterior forecast (using current C50 posterior)
-                result_posterior = self.compute_pf_at_time(ft, use_posterior=True)
-                pf_forecast_posterior[ft] = result_posterior["pf"]
+                result_posterior = self.compute_pf_at_time(
+                    t=ft,
+                    moment_survived=0.,
+                    use_posterior=True,
+                    last_obs_time=t,
+                    last_obs=corrosion_obs,
+                )
                 beta_forecast_posterior[ft] = result_posterior["beta"]
+
+                # Posterior forecast (using current C50 posterior) with proven strength
+                result_posterior_proven_strength = self.compute_pf_at_time(
+                    t=ft,
+                    moment_survived=moment_survived,
+                    use_posterior=True,
+                    last_obs_time=t,
+                    last_obs=corrosion_obs,
+                )
+                beta_forecast_posterior_proven_strength[ft] = result_posterior_proven_strength["beta"]
 
                 # Store corrosion ratio PDFs for forecast times
                 cr_grid, cr_pdf_prior = self.get_corrosion_ratio_pdf(ft, self.jpdf.C50_prior)
-                _, cr_pdf_post = self.get_corrosion_ratio_pdf(ft, self.jpdf.C50_pdf)
+                _, cr_pdf_post = self.get_corrosion_ratio_pdf(ft, self.jpdf.C50_pdf, last_obs_time=t, last_obs=corrosion_obs)
                 cr_forecast_prior[ft] = cr_pdf_prior.tolist()
                 cr_forecast_posterior[ft] = cr_pdf_post.tolist()
 
             # Current time results
-            result_prior_current = self.compute_pf_at_time(t, use_posterior=False)
-            result_posterior_current = self.compute_pf_at_time(t, use_posterior=True)
+            beta_current_prior = beta_forecast_prior[min(beta_forecast_prior)]
+            beta_current_posterior = beta_forecast_posterior[min(beta_forecast_posterior)]
+            beta_current_posterior_proven_strength = beta_forecast_posterior_proven_strength[min(beta_forecast_posterior_proven_strength)]
 
             # Get corrosion ratio PDFs at current time
             cr_grid_prior, cr_pdf_prior = self.get_corrosion_ratio_pdf(t, self.jpdf.C50_prior)
@@ -522,21 +507,23 @@ class ReliabilityPipeline:
                 "time": t,
                 "corrosion": corrosion_obs,
                 "corrosion_ratio": cr_obs,
+                "moment_survived": moment_survived,
                 "prior": {
-                    "pf": result_prior_current["pf"],
-                    "beta": result_prior_current["beta"],
+                    "beta": beta_current_prior,
                     "cr_pdf": cr_pdf_prior.tolist(),
-                    "pf_forecast": pf_forecast_prior,
                     "beta_forecast": beta_forecast_prior,
                     "cr_forecast": cr_forecast_prior,
                 },
                 "posterior": {
-                    "pf": result_posterior_current["pf"],
-                    "beta": result_posterior_current["beta"],
-                    "C50_stats": result_posterior_current["C50_stats"],
+                    "beta": beta_current_posterior,
                     "cr_pdf": cr_pdf_post.tolist(),
-                    "pf_forecast": pf_forecast_posterior,
                     "beta_forecast": beta_forecast_posterior,
+                    "cr_forecast": cr_forecast_posterior,
+                },
+                "posterior_proven_strength": {
+                    "beta": beta_current_posterior_proven_strength,
+                    "cr_pdf": cr_pdf_post.tolist(),
+                    "beta_forecast": beta_forecast_posterior_proven_strength,
                     "cr_forecast": cr_forecast_posterior,
                 },
                 # Store JPDF state for snapshot generation
@@ -572,6 +559,9 @@ class ReliabilityPipeline:
         """
         Generate and save JPDF snapshot images for each timestep.
 
+        PNGs are saved into ``output_dir/jpdf_snapshots/`` and a companion
+        PDF is written to ``output_dir/jpdf_snapshots.pdf``.
+
         Args:
             setting: Case study setting with observations.
             output_dir: Directory for snapshot images.
@@ -581,14 +571,16 @@ class ReliabilityPipeline:
             print("No results to plot. Run run_timeline() first.")
             return
 
-        if self.fragility is None:
-            print("No fragility curve. Run build_fragility() first.")
+        if self.fragility_surface is None:
+            print("No fragility curve. Run build_fragility_surface() first.")
             return
 
         if output_dir is None:
-            output_dir = io.get_remote_path() / "results/jpdf_snapshots"
+            output_dir = io.get_remote_path() / "results/plots"
         output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+
+        png_dir = output_dir / "jpdf_snapshots"
+        png_dir.mkdir(parents=True, exist_ok=True)
 
         # Collect all observations
         times = sorted(self.results.keys())
@@ -599,8 +591,6 @@ class ReliabilityPipeline:
             if key in setting and "corrosion" in setting[key]:
                 obs_times.append(t)
                 obs_corrosion.append(setting[key]["corrosion"])
-
-        figs = []
 
         for t in times:
             result = self.results[t]
@@ -617,69 +607,36 @@ class ReliabilityPipeline:
             # Current observed corrosion ratio
             current_cr = result.get("corrosion_ratio")
 
+            #TODO: Fix
             # Generate snapshot
-            fig = plotting.plot_jpdf_snapshot(
-                time=t,
-                C50_grid=C50_grid,
-                C50_prior=C50_prior,
-                C50_posterior=C50_posterior,
-                corrosion_ratio_grid=cr_grid,
-                cr_pdf_prior=cr_pdf_prior,
-                cr_pdf_posterior=cr_pdf_posterior,
-                fragility_cr=self.fragility.corrosion_ratios,
-                fragility_pf=self.fragility.pf,
-                pf_prior=result["prior"]["pf"],
-                pf_posterior=result["posterior"]["pf"],
-                beta_prior=result["prior"]["beta"],
-                beta_posterior=result["posterior"]["beta"],
-                pf_forecast_prior=result["prior"].get("pf_forecast"),
-                pf_forecast_posterior=result["posterior"].get("pf_forecast"),
-                obs_times=obs_times,
-                obs_corrosion=obs_corrosion,
-                current_cr=current_cr,
-                moment_cap=self.config.moment_cap,
-                start_thickness=self.config.start_thickness,
-            )
-
+            # fig = plotting.plot_jpdf_snapshot(
+            #     time=t,
+            #     C50_grid=C50_grid,
+            #     C50_prior=C50_prior,
+            #     C50_posterior=C50_posterior,
+            #     corrosion_ratio_grid=cr_grid,
+            #     cr_pdf_prior=cr_pdf_prior,
+            #     cr_pdf_posterior=cr_pdf_posterior,
+            #     fragility_cr=self.fragility_surface.corrosion_ratios,
+            #     fragility_pf=self.fragility_surface.pf,
+            #     beta_prior=result["prior"]["beta"],
+            #     beta_posterior=result["posterior"]["beta"],
+            #     beta_forecast_prior=result["prior"].get("beta_forecast"),
+            #     beta_forecast_posterior=result["posterior"].get("beta_forecast"),
+            #     obs_times=obs_times,
+            #     obs_corrosion=obs_corrosion,
+            #     current_cr=current_cr,
+            #     moment_cap=self.config.moment_cap,
+            #     start_thickness=self.config.start_thickness,
+            # )
             # Save individual PNG
-            plotting.save_figure(fig, output_dir / f"jpdf_t{int(t):03d}.png")
-            figs.append(fig)
+            # plotting.save_figure(fig, png_dir / f"jpdf_t{int(t):03d}.png")
 
-        # Save all to PDF
+        # Collect all PNGs into a sibling PDF
         if save_pdf:
-            # Need to regenerate figures since save_figure closes them
-            figs_for_pdf = []
-            for t in times:
-                result = self.results[t]
-                jpdf_state = result["jpdf_state"]
+            plotting.collect_pngs_to_pdf(png_dir, output_dir / "jpdf_snapshots.pdf")
 
-                fig = plotting.plot_jpdf_snapshot(
-                    time=t,
-                    C50_grid=np.array(jpdf_state["C50_grid"]),
-                    C50_prior=np.array(jpdf_state["C50_prior"]),
-                    C50_posterior=np.array(jpdf_state["C50_posterior"]),
-                    corrosion_ratio_grid=np.array(jpdf_state["cr_grid"]),
-                    cr_pdf_prior=np.array(result["prior"]["cr_pdf"]),
-                    cr_pdf_posterior=np.array(result["posterior"]["cr_pdf"]),
-                    fragility_cr=self.fragility.corrosion_ratios,
-                    fragility_pf=self.fragility.pf,
-                    pf_prior=result["prior"]["pf"],
-                    pf_posterior=result["posterior"]["pf"],
-                    beta_prior=result["prior"]["beta"],
-                    beta_posterior=result["posterior"]["beta"],
-                    pf_forecast_prior=result["prior"].get("pf_forecast"),
-                    pf_forecast_posterior=result["posterior"].get("pf_forecast"),
-                    obs_times=obs_times,
-                    obs_corrosion=obs_corrosion,
-                    current_cr=result.get("corrosion_ratio"),
-                    moment_cap=self.config.moment_cap,
-                    start_thickness=self.config.start_thickness,
-                )
-                figs_for_pdf.append(fig)
-
-            plotting.save_figures_to_pdf(figs_for_pdf, output_dir / "jpdf_snapshots.pdf")
-
-        print(f"JPDF snapshots saved to {output_dir}")
+        print(f"JPDF snapshots saved to {png_dir}")
 
     def plot_results(self, output_dir: Optional[Path | str] = None) -> None:
         """
@@ -694,6 +651,9 @@ class ReliabilityPipeline:
         - Grid plot with all observation times in subplots
         - Evolution plot showing all forecasts on one figure
 
+        PNGs are saved into ``output_dir/beta_forecast/`` and a companion
+        PDF is written to ``output_dir/beta_forecast.pdf``.
+
         Args:
             output_dir: Directory for plot files. Uses remote path if None.
         """
@@ -704,33 +664,21 @@ class ReliabilityPipeline:
         if output_dir is None:
             output_dir = io.get_remote_path() / "results/plots"
         output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+
+        png_dir = output_dir / "beta_forecast"
+        png_dir.mkdir(parents=True, exist_ok=True)
 
         times = sorted(self.results.keys())
 
         # Generate one plot per timestep showing cumulative forecasts
         for t in times:
-            # Get all results up to and including time t
-            results_up_to_t = {k: v for k, v in self.results.items() if k <= t}
-
-            fig = plotting.plot_beta_forecast_at_time(
-                current_time=t,
-                results=results_up_to_t,
-                beta_req=3.8,
-            )
-            plotting.save_figure(fig, output_dir / f"beta_forecast_t{int(t):03d}.png")
-
-        # Save all individual plots to PDF
-        figs_for_pdf = []
-        for t in times:
             results_up_to_t = {k: v for k, v in self.results.items() if k <= t}
             fig = plotting.plot_beta_forecast_at_time(
                 current_time=t,
                 results=results_up_to_t,
                 beta_req=3.8,
             )
-            figs_for_pdf.append(fig)
-        plotting.save_figures_to_pdf(figs_for_pdf, output_dir / "beta_forecasts.pdf")
+            plotting.save_figure(fig, png_dir / f"beta_forecast_t{int(t):03d}.png")
 
         # Generate grid plot with all observation times
         fig_grid = plotting.plot_beta_forecast_grid(
@@ -739,7 +687,7 @@ class ReliabilityPipeline:
             ncols=3,
             title="Reliability Index Forecasts per Observation Time",
         )
-        plotting.save_figure(fig_grid, output_dir / "beta_forecast_grid.png")
+        plotting.save_figure(fig_grid, png_dir / "beta_forecast_grid.png")
 
         # Generate evolution plot (all forecasts on one figure)
         fig_evolution = plotting.plot_posterior_forecast_evolution(
@@ -747,9 +695,220 @@ class ReliabilityPipeline:
             beta_req=3.8,
             title="Posterior Forecast Evolution with Observations",
         )
-        plotting.save_figure(fig_evolution, output_dir / "beta_forecast_evolution.png")
+        plotting.save_figure(fig_evolution, png_dir / "beta_forecast_evolution.png")
 
-        print(f"Plots saved to {output_dir}")
+        # Collect all PNGs into a sibling PDF
+        plotting.collect_pngs_to_pdf(png_dir, output_dir / "beta_forecast.pdf")
+
+        print(f"Plots saved to {png_dir}")
+
+    def plot_corrosion_forecasts(
+        self,
+        setting: Dict[str, Any],
+        output_dir: Optional[Path | str] = None,
+    ) -> None:
+        """
+        Generate one corrosion forecast plot per observation time.
+
+        Each plot shows:
+        - Prior corrosion band (full time range)
+        - Observations up to the current observation time
+        - Posterior forecast from the current observation time onwards
+
+        PNGs are saved into ``output_dir/corrosion/`` and a companion
+        PDF is written to ``output_dir/corrosion.pdf``.
+
+        Args:
+            setting: Case study setting with time-series data.
+            output_dir: Directory for plot files.
+        """
+        if not self.results:
+            print("No results to plot.")
+            return
+
+        if output_dir is None:
+            output_dir = io.get_remote_path() / "results/plots"
+        output_dir = Path(output_dir)
+
+        png_dir = output_dir / "corrosion"
+        png_dir.mkdir(parents=True, exist_ok=True)
+
+        # Read specs for C50 prior parameters
+        with open(self.specs_path, "r") as f:
+            specs = json.load(f)
+        params = specs.get("parameters", {})
+        C50_mu = params.get("C50_mu", 1.5)
+        C50_std = params.get("C50_std", 0.75)
+
+        corrosion_rate = self.config.corrosion_rate
+        t_ref = self.config.t_ref
+        start_thickness = self.config.start_thickness
+        obs_error_std = self.config.obs_error_std
+
+        # Extract observations from setting
+        times = sorted([float(k) for k in setting.keys() if k != "metadata"])
+        obs_times = []
+        obs_corrosion = []
+        for t in times:
+            key = str(t) if str(t) in setting else f"{t:.1f}"
+            if key in setting and "corrosion" in setting[key]:
+                obs_times.append(t)
+                obs_corrosion.append(setting[key]["corrosion"])
+
+        # Forecast time grid
+        t_start = times[0]
+        t_end = times[-1]
+
+        # One plot per observation time
+        for current_t in obs_times:
+            # Posterior forecast conditioned on observations up to current_t
+
+            fig = plotting.plot_corrosion_forecast_at_time(
+                cr_grid=self.fragility_surface.corrosion_ratios,
+                cr_forecast_prior=self.results[t_start]["prior"]["cr_forecast"],
+                cr_forecast_posterior=self.results[current_t]["posterior"]["cr_forecast"],
+                obs_times=[obs_time for obs_time in obs_times if obs_time <= current_t],
+                obs_values=[obs_corr for (obs_time, obs_corr) in zip(obs_times, obs_corrosion) if obs_time <= current_t],
+                obs_error_std=obs_error_std,
+                start_thickness=self.config.start_thickness,
+                xlim=(t_start, t_end),
+                ylim=(0, self.config.start_thickness),
+            )
+            plotting.save_figure(fig, png_dir / f"corrosion_t{int(current_t):03d}.png")
+
+        # Collect all PNGs into a sibling PDF
+        plotting.collect_pngs_to_pdf(png_dir, output_dir / "corrosion.pdf")
+
+        print(f"Corrosion forecast plots saved to {png_dir}")
+
+    def plot_moment_forecasts(
+        self,
+        setting: Dict[str, Any],
+        output_dir: Optional[Path | str] = None,
+    ) -> None:
+        """
+        Generate one moment capacity forecast plot per observation time.
+
+        Each plot shows:
+        - Prior moment capacity band (full time range)
+        - Observed moment capacity up to the current observation time
+        - Posterior forecast from the current observation time onwards
+        - Survived moment line
+
+        PNGs are saved into ``output_dir/moment/`` and a companion
+        PDF is written to ``output_dir/moment.pdf``.
+
+        Args:
+            setting: Case study setting with time-series data.
+            output_dir: Directory for plot files.
+        """
+        if not self.results:
+            print("No results to plot.")
+            return
+
+        if output_dir is None:
+            output_dir = io.get_remote_path() / "results/plots"
+        output_dir = Path(output_dir)
+
+        png_dir = output_dir / "moment"
+        png_dir.mkdir(parents=True, exist_ok=True)
+
+        # Read specs for C50 prior parameters
+        with open(self.specs_path, "r") as f:
+            specs = json.load(f)
+        params = specs.get("parameters", {})
+        C50_mu = params.get("C50_mu", 1.5)
+        C50_std = params.get("C50_std", 0.75)
+
+        corrosion_rate = self.config.corrosion_rate
+        t_ref = self.config.t_ref
+        start_thickness = self.config.start_thickness
+        moment_cap_start = self.config.moment_cap
+
+        # Extract observations from setting
+        times = sorted([float(k) for k in setting.keys() if k != "metadata"])
+        obs_times = []
+        obs_corrosion = []
+        obs_moment_cap = []
+        for t in times:
+            key = str(t) if str(t) in setting else f"{t:.1f}"
+            if key in setting and "corrosion" in setting[key]:
+                obs_times.append(t)
+                obs_corrosion.append(setting[key]["corrosion"])
+                cr = setting[key].get("corrosion_ratio", setting[key]["corrosion"] / start_thickness)
+                obs_moment_cap.append(moment_cap_start * (1 - cr))
+
+        # Forecast time grid
+        t_start = times[0]
+        t_end = times[-1]
+        interval = self.config.forecast_interval
+        times_forecast = np.arange(t_start, t_end + interval, interval)
+
+        # Prior: corrosion → corrosion ratio → moment capacity
+        corrosion_mean_prior = C50_mu + corrosion_rate * (times_forecast - t_ref)
+        corrosion_std_prior = np.full_like(times_forecast, C50_std)
+        corrosion_q05_prior = np.maximum(corrosion_mean_prior - 1.645 * corrosion_std_prior, 0)
+        corrosion_q95_prior = corrosion_mean_prior + 1.645 * corrosion_std_prior
+
+        cr_mean_prior = corrosion_mean_prior / start_thickness
+        cr_q05_prior = corrosion_q05_prior / start_thickness
+        cr_q95_prior = corrosion_q95_prior / start_thickness
+
+        moment_mean_prior = moment_cap_start * (1 - cr_mean_prior)
+        moment_q95_prior = moment_cap_start * (1 - cr_q05_prior)   # flip quantiles
+        moment_q05_prior = moment_cap_start * (1 - cr_q95_prior)
+
+        # One plot per observation time
+        for current_t in obs_times:
+            latest_obs_idx = obs_times.index(current_t)
+            latest_obs_corrosion = obs_corrosion[latest_obs_idx]
+            C50_inferred = latest_obs_corrosion - corrosion_rate * (current_t - t_ref)
+
+            corrosion_mean_post = C50_inferred + corrosion_rate * (times_forecast - t_ref)
+
+            if current_t in self.results:
+                C50_stats_t = self.results[current_t]["posterior"].get("C50_stats", {})
+                post_std = C50_stats_t.get("std", C50_std)
+            else:
+                post_std = C50_std
+
+            corrosion_q05_post = np.maximum(corrosion_mean_post - 1.645 * post_std, 0)
+            corrosion_q95_post = corrosion_mean_post + 1.645 * post_std
+
+            cr_mean_post = corrosion_mean_post / start_thickness
+            cr_q05_post = corrosion_q05_post / start_thickness
+            cr_q95_post = corrosion_q95_post / start_thickness
+
+            moment_mean_post = moment_cap_start * (1 - cr_mean_post)
+            moment_q95_post = moment_cap_start * (1 - cr_q05_post)
+            moment_q05_post = moment_cap_start * (1 - cr_q95_post)
+
+            # Get moment_survived from results at current_t
+            moment_survived = None
+            if current_t in self.results:
+                moment_survived = self.results[current_t].get("moment_survived")
+
+            fig = plotting.plot_moment_forecast_at_time(
+                current_time=current_t,
+                times_forecast=times_forecast,
+                moment_mean_prior=moment_mean_prior,
+                moment_q05_prior=moment_q05_prior,
+                moment_q95_prior=moment_q95_prior,
+                moment_mean_posterior=moment_mean_post,
+                moment_q05_posterior=moment_q05_post,
+                moment_q95_posterior=moment_q95_post,
+                moment_survived=moment_survived,
+                obs_times=obs_times,
+                obs_moment_cap=obs_moment_cap,
+                xlim=(t_start, t_end),
+                ylim=(0, moment_cap_start * 1.1),
+            )
+            plotting.save_figure(fig, png_dir / f"moment_t{int(current_t):03d}.png")
+
+        # Collect all PNGs into a sibling PDF
+        plotting.collect_pngs_to_pdf(png_dir, output_dir / "moment.pdf")
+
+        print(f"Moment capacity forecast plots saved to {png_dir}")
 
     def plot_prior_posterior_pdfs(
         self,
@@ -759,14 +918,19 @@ class ReliabilityPipeline:
         """
         Generate prior vs posterior plots for corrosion and moment capacity.
 
+        PNGs are saved into ``output_dir/prior_posterior/`` and a companion
+        PDF is written to ``output_dir/prior_posterior.pdf``.
+
         Args:
             setting: Case study setting with time-series data.
             output_dir: Directory for plot files.
         """
         if output_dir is None:
-            output_dir = io.get_remote_path() / "results/plots_prior_posterior"
+            output_dir = io.get_remote_path() / "results/plots"
         output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+
+        png_dir = output_dir / "prior_posterior"
+        png_dir.mkdir(parents=True, exist_ok=True)
 
         times = sorted([float(k) for k in setting.keys() if k != "metadata"])
         metadata = setting.get("metadata", {})
@@ -863,7 +1027,7 @@ class ReliabilityPipeline:
             xlim=(times[0], times[-1]),
             ylim=(0, min(start_thickness, max(corrosion_q95_prior) * 1.2)),
         )
-        plotting.save_figure(fig, output_dir / "corrosion_prior_posterior.png")
+        plotting.save_figure(fig, png_dir / "corrosion_prior_posterior.png")
 
         # Moment capacity from corrosion ratio
         cr_mean_prior = corrosion_mean_prior / start_thickness
@@ -904,9 +1068,12 @@ class ReliabilityPipeline:
             xlim=(times[0], times[-1]),
             ylim=(0, moment_cap_start * 1.1),
         )
-        plotting.save_figure(fig, output_dir / "moment_prior_posterior.png")
+        plotting.save_figure(fig, png_dir / "moment_prior_posterior.png")
 
-        print(f"Prior/Posterior plots saved to {output_dir}")
+        # Collect all PNGs into a sibling PDF
+        plotting.collect_pngs_to_pdf(png_dir, output_dir / "prior_posterior.pdf")
+
+        print(f"Prior/Posterior plots saved to {png_dir}")
 
 
 def main():
@@ -930,9 +1097,6 @@ def main():
     print("=" * 60)
     pipeline.setup(n_samples=10_000, seed=42)
 
-    print(f"JPDF: {pipeline.jpdf.nvar} variables, {pipeline.jpdf.n_samples} samples")
-    print(f"C50 prior: {pipeline.jpdf.get_C50_stats()}")
-
     # =========================================================================
     # STEP 2: Load surrogate model
     # =========================================================================
@@ -943,74 +1107,18 @@ def main():
     print("Surrogate loaded.")
 
     # =========================================================================
-    # STEP 3: Build/load fragility surface (2D cached curves)
+    # STEP 3: Run timeline analysis
     # =========================================================================
     print("\n" + "=" * 60)
-    print("STEP 3: Build fragility surface (2D: CR x moment_survived)")
+    print("STEP 3: Run timeline analysis")
     print("=" * 60)
 
-    # Build the 2D surface (expensive, done once)
-    # Creates: results/fragility_surface/manifest.json
-    #          results/fragility_surface/moment_XXX.X.npz (one per moment value)
-    surface = pipeline.build_fragility_surface(
+    pipeline.build_fragility_surface(
         n_cr=1000,
         n_moments=50,
-        force_rebuild=True,  # Set False to use cached version
+        force_rebuild=False,
         verbose=True,
     )
-
-    # =========================================================================
-    # STEP 4: Query fragility surface (fast, loads curves on-demand)
-    # =========================================================================
-    print("\n" + "=" * 60)
-    print("STEP 4: Query fragility surface")
-    print("=" * 60)
-
-    # Get a specific fragility curve (loads from disk on first access)
-    moment_survived = 113.16  # From case study setting
-    curve = pipeline.get_fragility_curve_at(moment_survived)
-    print(f"Fragility curve at moment_survived={moment_survived:.1f} kNm:")
-    print(f"  Pf at CR=0.2: {curve.pf_at(0.2):.4e}")
-    print(f"  Pf at CR=0.3: {curve.pf_at(0.3):.4e}")
-
-    # Query at arbitrary moment (interpolates between curves)
-    moment_test = 125.0
-    print(f"\nInterpolated query at moment_survived={moment_test:.1f} kNm:")
-    print(f"  Pf at CR=0.2: {surface.pf_at(0.2, moment_test):.4e}")
-    print(f"  Beta at CR=0.2: {surface.beta_at(0.2, moment_test):.2f}")
-
-    # =========================================================================
-    # STEP 5: Compute Pf with proven strength
-    # =========================================================================
-    print("\n" + "=" * 60)
-    print("STEP 5: Compute Pf with proven strength")
-    print("=" * 60)
-
-    # Compute Pf at t=60 given structure survived with moment_survived=113.16
-    result = pipeline.compute_pf_with_proven_strength(
-        t=60.0,
-        moment_survived=moment_survived,
-        use_posterior=False,  # Using prior for now (no observations yet)
-    )
-    print(f"Pf at t=60 with proven strength ({moment_survived:.1f} kNm):")
-    print(f"  Pf: {result['pf']:.4e}")
-    print(f"  Beta: {result['beta']:.2f}")
-
-    # =========================================================================
-    # STEP 6: Build standard fragility curve (for backward compatibility)
-    # =========================================================================
-    print("\n" + "=" * 60)
-    print("STEP 6: Build standard fragility curve")
-    print("=" * 60)
-    fragility = pipeline.build_fragility(n_grid=1000, cache_moments=True, force_rebuild=True)
-    print(fragility.summary())
-
-    # =========================================================================
-    # STEP 7: Run timeline analysis
-    # =========================================================================
-    print("\n" + "=" * 60)
-    print("STEP 7: Run timeline analysis")
-    print("=" * 60)
 
     # Load case study setting
     setting = io.load_json("case_study_setting.json")
@@ -1023,31 +1131,19 @@ def main():
     print("Results saved.")
 
     # =========================================================================
-    # STEP 8: Generate plots
+    # STEP 4: Generate plots
     # =========================================================================
     print("\n" + "=" * 60)
-    print("STEP 8: Generate plots")
+    print("STEP 4: Generate plots")
     print("=" * 60)
     pipeline.plot_results()
+    pipeline.plot_corrosion_forecasts(setting)
+    pipeline.plot_moment_forecasts(setting)
     pipeline.plot_prior_posterior_pdfs(setting)
     pipeline.save_jpdf_snapshots(setting)
 
-    # =========================================================================
-    # Summary
-    # =========================================================================
-    print("\n" + "=" * 60)
-    print("SUMMARY")
-    print("=" * 60)
-    times = sorted(results.keys())
-    print(f"{'Time':>6} | {'Beta (prior)':>12} | {'Beta (post)':>12} | {'Pf (post)':>12}")
-    print("-" * 60)
-    for t in times:
-        r = results[t]
-        print(
-            f"{t:>6.0f} | {r['prior']['beta']:>12.2f} | "
-            f"{r['posterior']['beta']:>12.2f} | {r['posterior']['pf']:>12.2e}"
-        )
-
 
 if __name__ == "__main__":
+
     main()
+
