@@ -75,8 +75,7 @@ class ReliabilityPipeline:
         if self.specs_path is not None:
             self.jpdf.set_prior_from_specs(self.specs_path)
         else:
-            # Initialize C50 with defaults
-            self.jpdf.init_C50_prior(C50_mu=1.5, C50_std=0.75)
+            self.jpdf.init_C50_prior(C50_mu=self.config.C50_mu, C50_std=self.config.C50_std)
 
         # Generate samples
         self.jpdf.initiate_samples(n_samples=n_samples, seed=seed)
@@ -96,6 +95,7 @@ class ReliabilityPipeline:
             obs_error_std=self.config.obs_error_std,
             t_ref=self.config.t_ref,
             n_grid=self.config.n_C50_grid,
+            n_corrosion_grid=self.config.n_grid,
         )
 
         # Initialize performance function
@@ -334,7 +334,8 @@ class ReliabilityPipeline:
             raise ValueError("Call build_fragility_surface() or load_fragility_surface() first.")
 
         # Get C50 PDF
-        C50_pdf = self.jpdf.C50_pdf if use_posterior else self.jpdf.C50_prior
+        # C50_pdf = self.jpdf.C50_pdf if use_posterior else self.jpdf.C50_prior
+        C50_pdf = self.jpdf.C50_pdf if use_posterior else np.ones_like(self.jpdf.C50_prior) / 2.5  # TODO: Leftover cooking from old script
 
         # Get corrosion ratio PDF
         cr_grid, cr_pdf = self.get_corrosion_ratio_pdf(t, C50_pdf, last_obs_time, last_obs)
@@ -427,6 +428,29 @@ class ReliabilityPipeline:
                     obs_values.append(setting[time_key]["corrosion"])
             return np.array(obs_times), np.array(obs_values)
 
+        # Build survived moment interpolation from setting
+        survived_times = []
+        survived_moments = []
+        for time_key in sorted(setting.keys()):
+            ms = setting[time_key].get("moment_survived")
+            if ms is not None:
+                survived_times.append(float(time_key))
+                survived_moments.append(ms)
+
+        def interpolate_moment_survived(ft: float, t_obs: float) -> float:
+            """Interpolate survived moment at forecast time ft.
+
+            For ft <= last survived time, interpolate along the survived line.
+            For ft > last survived time, extrapolate linearly.
+            For ft < first survived time or no data, return 0.
+            Only use survived moments up to the current observation time t_obs.
+            """
+            st = [s for s, m in zip(survived_times, survived_moments) if s <= t_obs]
+            sm = [m for s, m in zip(survived_times, survived_moments) if s <= t_obs]
+            if not st:
+                return 0.
+            return float(np.interp(ft, st, sm, left=sm[0], right=sm[-1]))
+
         # Reset C50 to prior
         self.jpdf.reset_C50_to_prior()
 
@@ -445,7 +469,6 @@ class ReliabilityPipeline:
             key = str(t) if str(t) in setting else f"{t:.1f}"
             corrosion_obs = setting[key]["corrosion"] if key in setting else None
             cr_obs = corrosion_obs / self.config.start_thickness if corrosion_obs else None
-            moment_survived = setting[key].get("moment_survived", 0.) if key in setting else 0.
 
             # Compute Pf FORECAST for all future times (from t to t_end)
             future_times = [ft for ft in analysis_times if ft >= t]
@@ -457,7 +480,9 @@ class ReliabilityPipeline:
 
             for ft in future_times:
 
-                # Prior forecast (using fixed prior C50)
+                moment_survived = interpolate_moment_survived(ft, t)
+
+                # Prior forecast
                 result_prior = self.compute_pf_at_time(
                     t=ft,
                     moment_survived=0.,
@@ -467,7 +492,7 @@ class ReliabilityPipeline:
                 )
                 beta_forecast_prior[ft] = result_prior["beta"]
 
-                # Posterior forecast (using current C50 posterior)
+                # Posterior forecast w/o proven strength
                 result_posterior = self.compute_pf_at_time(
                     t=ft,
                     moment_survived=0.,
@@ -477,10 +502,13 @@ class ReliabilityPipeline:
                 )
                 beta_forecast_posterior[ft] = result_posterior["beta"]
 
-                # Posterior forecast (using current C50 posterior) with proven strength
+                # Interpolate survived moment at forecast time ft
+                ms_at_ft = interpolate_moment_survived(ft, t)
+
+                # Posterior forecast w/ proven strength
                 result_posterior_proven_strength = self.compute_pf_at_time(
                     t=ft,
-                    moment_survived=moment_survived,
+                    moment_survived=ms_at_ft,
                     use_posterior=True,
                     last_obs_time=t,
                     last_obs=corrosion_obs,
@@ -488,19 +516,17 @@ class ReliabilityPipeline:
                 beta_forecast_posterior_proven_strength[ft] = result_posterior_proven_strength["beta"]
 
                 # Store corrosion ratio PDFs for forecast times
-                cr_grid, cr_pdf_prior = self.get_corrosion_ratio_pdf(ft, self.jpdf.C50_prior)
-                _, cr_pdf_post = self.get_corrosion_ratio_pdf(ft, self.jpdf.C50_pdf, last_obs_time=t, last_obs=corrosion_obs)
-                cr_forecast_prior[ft] = cr_pdf_prior.tolist()
-                cr_forecast_posterior[ft] = cr_pdf_post.tolist()
+                # cr_grid, cr_pdf_prior = self.get_corrosion_ratio_pdf(ft, self.jpdf.C50_prior)
+                # _, cr_pdf_post = self.get_corrosion_ratio_pdf(ft, self.jpdf.C50_pdf, last_obs_time=t, last_obs=corrosion_obs)
+                cr_forecast_prior[ft] = result_prior["cr_pdf"]
+                cr_forecast_posterior[ft] = result_posterior["cr_pdf"]
 
             # Current time results
             beta_current_prior = beta_forecast_prior[min(beta_forecast_prior)]
             beta_current_posterior = beta_forecast_posterior[min(beta_forecast_posterior)]
             beta_current_posterior_proven_strength = beta_forecast_posterior_proven_strength[min(beta_forecast_posterior_proven_strength)]
 
-            # Get corrosion ratio PDFs at current time
-            cr_grid_prior, cr_pdf_prior = self.get_corrosion_ratio_pdf(t, self.jpdf.C50_prior)
-            cr_grid_post, cr_pdf_post = self.get_corrosion_ratio_pdf(t, self.jpdf.C50_pdf)
+            cr_grid_prior, _ = self.get_corrosion_ratio_pdf(t, self.jpdf.C50_prior)
 
             self.results[t] = {
                 "time": t,
@@ -509,19 +535,16 @@ class ReliabilityPipeline:
                 "moment_survived": moment_survived,
                 "prior": {
                     "beta": beta_current_prior,
-                    "cr_pdf": cr_pdf_prior.tolist(),
                     "beta_forecast": beta_forecast_prior,
                     "cr_forecast": cr_forecast_prior,
                 },
                 "posterior": {
                     "beta": beta_current_posterior,
-                    "cr_pdf": cr_pdf_post.tolist(),
                     "beta_forecast": beta_forecast_posterior,
                     "cr_forecast": cr_forecast_posterior,
                 },
                 "posterior_proven_strength": {
                     "beta": beta_current_posterior_proven_strength,
-                    "cr_pdf": cr_pdf_post.tolist(),
                     "beta_forecast": beta_forecast_posterior_proven_strength,
                     "cr_forecast": cr_forecast_posterior,
                 },
@@ -537,6 +560,9 @@ class ReliabilityPipeline:
             if verbose:
                 print(f"  Prior:     Pf={result_prior['pf']:.2e}, beta={result_prior['beta']:.2f}")
                 print(f"  Posterior: Pf={result_posterior['pf']:.2e}, beta={result_posterior['beta']:.2f}")
+
+            #TODO: Mistake in old code (we use all observations in updating, not just the last one)
+            # self.jpdf.C50_prior = self.jpdf.C50_pdf.copy()
 
         return self.results
 
@@ -909,7 +935,7 @@ def main():
     pipeline.plot_betas()
     pipeline.plot_corrosion_forecasts(setting)
     pipeline.plot_moment_forecasts(setting)
-    pipeline.save_jpdf_snapshots(setting)
+    # pipeline.save_jpdf_snapshots(setting)
 
 
 if __name__ == "__main__":

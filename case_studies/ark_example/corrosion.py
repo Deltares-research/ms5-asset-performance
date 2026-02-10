@@ -31,6 +31,7 @@ class CorrosionModel:
         obs_error_std: Observation error standard deviation [mm].
         t_ref: Reference time for C50 [years].
         n_grid: Grid size for C50 discretization.
+        n_corrosion_grid: Grid size for corrosion discretization.
     """
 
     def __init__(
@@ -42,6 +43,7 @@ class CorrosionModel:
         obs_error_std: float = 0.4,
         t_ref: float = 50.0,
         n_grid: int = 100,
+        n_corrosion_grid: int = 1000,
     ):
         self.C50_mu = C50_mu
         self.C50_std = C50_std
@@ -50,25 +52,19 @@ class CorrosionModel:
         self.obs_error_std = obs_error_std
         self.t_ref = t_ref
         self.n_grid = n_grid
+        self.n_corrosion_grid = n_corrosion_grid
 
         # Initialize C50 grid and prior
         self._init_prior()
 
     def _init_prior(self) -> None:
         """Initialize C50 grid and prior distribution."""
-        # Grid from 0 to ~4 std above mean
-        self.C50_grid = np.linspace(
-            max(0.01, self.C50_mu - 3 * self.C50_std),
-            self.C50_mu + 3 * self.C50_std,
-            self.n_grid,
-        )
+        self.C50_grid = np.linspace(0.5, 2.5, self.n_grid)
 
-        # Truncated normal prior for C50 (positive values only)
-        a = (0 - self.C50_mu) / self.C50_std
-        b = (self.start_thickness - self.C50_mu) / self.C50_std
-        self.C50_prior = stats.truncnorm.pdf(
-            self.C50_grid, a, b, loc=self.C50_mu, scale=self.C50_std
-        )
+        # Truncated normal prior for C50
+        a_clip = (self.C50_grid.min() - self.C50_mu) / self.C50_std
+        b_clip = (self.C50_grid.max() - self.C50_mu) / self.C50_std
+        self.C50_prior = stats.truncnorm.pdf(self.C50_grid, a_clip, b_clip, loc=self.C50_mu, scale=self.C50_std)
         self.C50_prior /= np.trapezoid(self.C50_prior, self.C50_grid)
 
     def mean_corrosion(self, t: float | NDArray, C50: float | NDArray) -> NDArray:
@@ -84,7 +80,7 @@ class CorrosionModel:
         """
         t = np.atleast_1d(t)
         C50 = np.atleast_1d(C50)
-        return C50 * (1 + self.corrosion_rate / self.C50_mu * (t - self.t_ref))
+        return C50 * (1 + self.corrosion_rate / 1.5 * (t - self.t_ref))
 
     def corrosion_params(
         self, t: float | NDArray, C50: float | NDArray
@@ -100,7 +96,7 @@ class CorrosionModel:
             Tuple of (mu, scale, a, b) for truncnorm distribution.
         """
         mu = self.mean_corrosion(t, C50)
-        scale = mu * 0.5  # CoV = 0.5
+        scale = np.maximum(mu * 0.5, 1e-10)  # CoV = 0.5, avoid zero
         a = (0 - mu) / scale  # Lower truncation
         b = (self.start_thickness - mu) / scale  # Upper truncation
         return mu, scale, a, b
@@ -242,11 +238,11 @@ class CorrosionModel:
             C50_pdf = self.C50_prior
 
         # Create corrosion grid
-        corrosion_grid = np.linspace(0, self.start_thickness, self.n_grid)
+        corrosion_grid = np.linspace(0, self.start_thickness, self.n_corrosion_grid)
         ratio_grid = corrosion_grid / self.start_thickness
 
         # For each C50, compute PDF of corrosion
-        C50_grid = self.C50_grid[:, np.newaxis]
+        C50_grid = self.C50_grid[:, np.newaxis, np.newaxis]
 
         if last_obs:
             d_time = t - last_obs_time
@@ -262,13 +258,13 @@ class CorrosionModel:
         corrosion_pdf = stats.truncnorm.pdf(corrosion_grid, a, b, loc=mu, scale=scale)
 
         # Weight by C50 PDF and integrate
-        corrosion_pdf *= C50_pdf[:, np.newaxis]
+        corrosion_pdf *= C50_pdf[:, np.newaxis, np.newaxis]
         pdf = np.trapezoid(corrosion_pdf, self.C50_grid, axis=0)
 
         # Normalize
-        pdf /= np.trapezoid(pdf, corrosion_grid)
+        pdf /= np.trapezoid(pdf, corrosion_grid, axis=-1)
 
         # Transform to ratio PDF
-        ratio_pdf = pdf * 1 / (1 / self.start_thickness)  # Scaling of PDF between corrosion and corrosion rate
+        ratio_pdf = pdf * 1 / (1 / self.start_thickness)  # Scaling of PDF from corrosion to corrosion rate
 
-        return ratio_grid, ratio_pdf
+        return ratio_grid, ratio_pdf.squeeze()

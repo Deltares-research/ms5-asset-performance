@@ -222,9 +222,6 @@ class FragilitySurfaceIndex:
         """
         moment_lo, moment_hi, t = self._find_bracket(moment_survived)
 
-        if t == 0.0:
-            return self._get_curve(moment_lo)
-
         # Interpolate to create new curve
         curve_lo = self._get_curve(moment_lo)
         curve_hi = self._get_curve(moment_hi)
@@ -239,7 +236,6 @@ class FragilitySurfaceIndex:
                 "moment_survived": moment_survived,
                 "moment_lo": moment_lo,
                 "moment_hi": moment_hi,
-                "t": t,
             },
         )
 

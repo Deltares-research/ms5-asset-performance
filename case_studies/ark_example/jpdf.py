@@ -118,16 +118,12 @@ class JPDF:
             C50_std: Standard deviation of C50.
         """
         n_grid = self.config.n_C50_grid
+        self.C50_grid = np.linspace(0.5, 2.5, n_grid)
 
-        # Grid from ~0 to reasonable upper bound
-        lower = max(0.01, C50_mu - 4 * C50_std)
-        upper = C50_mu + 4 * C50_std
-        self.C50_grid = np.linspace(lower, upper, n_grid)
-
-        # Use uniform prior for C50
-        a = self.C50_grid.min()
-        b = self.C50_grid.max() - a
-        self.C50_prior = st.uniform(loc=a, scale=b).pdf(self.C50_grid)
+        # Truncated normal prior for C50
+        a_clip = (self.C50_grid.min() - C50_mu) / C50_std
+        b_clip = (self.C50_grid.max() - C50_mu) / C50_std
+        self.C50_prior = st.truncnorm.pdf(self.C50_grid, a_clip, b_clip, loc=C50_mu, scale=C50_std)
 
         # Initialize current PDF to prior
         self.C50_pdf = self.C50_prior.copy()
@@ -169,14 +165,13 @@ class JPDF:
         corr_deviations = np.concatenate((corr_deviations[:, 0][:, np.newaxis], np.diff(corr_deviations, axis=1)), axis=1)
 
         loglikes = st.norm(loc=0, scale=1).logpdf(corr_deviations)
-
         loglike = loglikes.sum(axis=1)
 
         log_post = log_prior + loglike
         post = np.exp(log_post)
         post /= np.trapezoid(post, C50_grid.squeeze())
 
-        self.C50_pdf = post
+        self.C50_pdf = post.copy()
 
     def get_C50_stats(self) -> Dict[str, float]:
         """
