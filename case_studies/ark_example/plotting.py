@@ -1241,3 +1241,95 @@ def plot_beta_forecast_grid(
     plt.close()
 
     return fig
+
+
+def plot_end_of_life(
+    results: dict,
+    beta_req: float = 2.3,
+    t_ref: float = 50.0,
+    forecast_key: str = "posterior_proven_strength",
+) -> plt.Figure:
+    """
+    Bar plot of estimated end-of-life per observation time.
+
+    End of life is the forecast time at which beta first drops below beta_req.
+    Computed from the beta forecast of each observation time.
+
+    Top subplot: bars showing EOL (y-axis starts at t_ref).
+    Bottom subplot: line showing change in EOL relative to previous obs time.
+
+    Args:
+        results: Pipeline results dict keyed by observation time.
+        beta_req: Required reliability index.
+        t_ref: Reference time (minimum for y-axis).
+        forecast_key: Which forecast to use ("prior", "posterior",
+            or "posterior_proven_strength").
+
+    Returns:
+        Matplotlib figure.
+    """
+    obs_times = sorted(results.keys())
+
+    # Compute end-of-life for each observation time
+    eol_values = []
+    for t in obs_times:
+        bf = results[t][forecast_key]["beta_forecast"]
+        forecast_times = sorted(bf.keys())
+        forecast_betas = [bf[ft] for ft in forecast_times]
+
+        # Find first time beta < beta_req (linear interpolation)
+        eol = forecast_times[-1]  # default: beyond horizon
+        for k in range(len(forecast_betas) - 1):
+            if forecast_betas[k] >= beta_req and forecast_betas[k + 1] < beta_req:
+                # Linear interpolation between k and k+1
+                t0, t1 = forecast_times[k], forecast_times[k + 1]
+                b0, b1 = forecast_betas[k], forecast_betas[k + 1]
+                eol = t0 + (beta_req - b0) / (b1 - b0) * (t1 - t0)
+                break
+            elif forecast_betas[k] < beta_req:
+                eol = forecast_times[k]
+                break
+        eol_values.append(eol)
+
+    eol_values = np.array(eol_values)
+
+    # Delta EOL between consecutive observation times
+    delta_eol = np.diff(eol_values)
+
+    fig, ax1 = plt.subplots(figsize=(8, 5))
+
+    # Left y-axis: bar plot of EOL
+    bar_labels = [f"{t:.0f}" for t in obs_times]
+    bars = ax1.bar(bar_labels, eol_values - t_ref, bottom=t_ref, color="steelblue",
+                   edgecolor="k", linewidth=0.5, label="End of life")
+    ax1.set_ylabel("End of life [yr]", fontsize=12, color="steelblue")
+    ax1.set_ylim(t_ref, max(eol_values) * 1.05)
+    ax1.tick_params(axis="y", labelcolor="steelblue")
+    ax1.grid(True, alpha=0.3, axis="y")
+    ax1.set_xlabel("Observation time [yr]", fontsize=12)
+
+    # Annotate bars with EOL value
+    for bar, eol in zip(bars, eol_values):
+        ax1.text(bar.get_x() + bar.get_width() / 2, eol + 0.3,
+                 f"{eol:.1f}", ha="center", va="bottom", fontsize=9)
+
+    # Right y-axis: line plot of delta EOL
+    ax2 = ax1.twinx()
+    x_delta = np.arange(1, len(obs_times))  # bar indices 1..N-1
+    ax2.plot(x_delta, delta_eol, "o-", color="darkorange", linewidth=2,
+             markersize=6, label=r"$\Delta$ EOL")
+    ax2.axhline(0, color="darkorange", linewidth=0.5, alpha=0.5)
+    ax2.set_ylabel(r"$\Delta$ EOL [yr]", fontsize=12, color="darkorange")
+    ax2.tick_params(axis="y", labelcolor="darkorange")
+
+    # Combined legend
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=10, loc="upper left")
+
+    fig.suptitle("End-of-Life Estimate per Observation Time",
+                 fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    plt.close()
+
+    return fig

@@ -870,6 +870,41 @@ class ReliabilityPipeline:
 
         print(f"Moment capacity forecast plots saved to {png_dir}")
 
+    def plot_end_of_life(self, output_dir: Optional[Path | str] = None) -> None:
+        """
+        Generate end-of-life bar plot.
+
+        Shows EOL (time beta drops below requirement) per observation time,
+        plus the change in EOL between consecutive observations.
+
+        PNGs are saved into ``output_dir/end_of_life/`` and a companion
+        PDF is written to ``output_dir/end_of_life.pdf``.
+
+        Args:
+            output_dir: Directory for plot files. Uses remote path if None.
+        """
+        if not self.results:
+            print("No results to plot.")
+            return
+
+        if output_dir is None:
+            output_dir = io.get_remote_path() / "results/plots"
+        output_dir = Path(output_dir)
+
+        png_dir = output_dir / "end_of_life"
+        png_dir.mkdir(parents=True, exist_ok=True)
+
+        fig = plotting.plot_end_of_life(
+            results=self.results,
+            beta_req=self.config.beta_req,
+            t_ref=self.config.t_ref,
+        )
+        plotting.save_figure(fig, png_dir / "end_of_life.png")
+
+        plotting.collect_pngs_to_pdf(png_dir, output_dir / "end_of_life.pdf")
+
+        print(f"End-of-life plot saved to {png_dir}")
+
 def main():
     """Example pipeline execution with mock data."""
     # Paths
@@ -933,6 +968,7 @@ def main():
     pipeline.plot_betas()
     pipeline.plot_corrosion_forecasts(setting)
     pipeline.plot_moment_forecasts(setting)
+    pipeline.plot_end_of_life()
     # pipeline.save_jpdf_snapshots(setting)
 
 
