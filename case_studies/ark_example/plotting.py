@@ -307,10 +307,11 @@ def collect_pngs_to_pdf(png_dir: Path | str, pdf_path: Path | str, dpi: int = 15
     with PdfPages(pdf_path) as pdf:
         for png_file in png_files:
             img = plt.imread(str(png_file))
-            fig, ax = plt.subplots()
+            h, w = img.shape[:2]
+            fig = plt.figure(figsize=(w / dpi, h / dpi), dpi=dpi)
+            ax = fig.add_axes([0, 0, 1, 1])
             ax.imshow(img)
             ax.axis("off")
-            fig.tight_layout(pad=0)
             pdf.savefig(fig, dpi=dpi)
             plt.close(fig)
 
@@ -323,7 +324,7 @@ def plot_beta_prior_posterior(
     times: Sequence[float],
     beta_prior: Sequence[float],
     beta_posterior: Sequence[float],
-    beta_req: float = 3.8,
+    beta_req: float = 2.3,
     max_beta: float = 6.0,
     title: str = "",
     xlim: tuple = (50, 80),
@@ -743,7 +744,7 @@ def plot_jpdf_snapshot(
     current_cr: float = None,
     moment_cap: float = 750.0,
     start_thickness: float = 9.5,
-    beta_req: float = 3.8,
+    beta_req: float = 2.3,
 ) -> plt.Figure:
     """
     Generate a snapshot image of the JPDF state at a given timestep.
@@ -874,18 +875,18 @@ def plot_jpdf_snapshot(
 def plot_beta_forecast_at_time(
     current_time: float,
     results: dict,
-    beta_req: float = 3.8,
+    beta_req: float = 2.3,
 ) -> plt.Figure:
     """
-    Plot beta forecasts at a specific observation time (CUMULATIVE).
+    Plot beta forecasts at a specific observation time.
 
-    For each past observation time t_obs, builds a cumulative line:
-    - Historical segment: posterior betas from all observation times <= t_obs
-    - Forecast segment: forecasted betas for times > t_obs
-
-    This creates continuous lines from t_min to t_max, where each line shows:
-    - What actually happened up to t_obs (based on Bayesian updates)
-    - What was forecasted from t_obs onwards
+    Shows:
+    - Blue solid line: Prior forecast (no updating)
+    - Red dots: Posterior beta at each observation time
+    - Red dotted lines: Posterior forecasts from past observation times
+    - Red dashed line: Posterior forecast from the current (last) observation time
+    - Red solid line: Hindcast connecting posterior betas with forecast segments
+    - Black dashed: Requirement
 
     Args:
         current_time: Current observation time.
@@ -895,83 +896,73 @@ def plot_beta_forecast_at_time(
     Returns:
         Matplotlib figure.
     """
-    fig, ax = plt.subplots(figsize=(10, 6))
+    from itertools import chain
+
+    min_beta = 1.0
+    max_beta = 3.5
 
     obs_times = sorted(results.keys())
-    max_beta = 6.0
-
-    # Colormap: older observations are lighter, current is darkest
-    n_obs = len(obs_times)
-    colors = plt.cm.Blues(np.linspace(0.3, 0.9, n_obs))
-
-    # Get the full time range from the first observation's forecast
     first_result = results[obs_times[0]]
     all_forecast_times = sorted(first_result["prior"]["beta_forecast"].keys())
     t_min, t_max = min(all_forecast_times), max(all_forecast_times)
 
-    # Plot prior forecast (reference, dashed gray)
-    if "beta_forecast" in first_result["prior"]:
-        bf = first_result["prior"]["beta_forecast"]
-        times_forecast = sorted(bf.keys())
-        beta_vals = [min(bf[t], max_beta) for t in times_forecast]
+    fig = plt.figure(figsize=(8, 4))
 
-        ax.plot(times_forecast, beta_vals, color="gray", linestyle="--",
-                linewidth=2, alpha=0.7, label="Prior (no updating)")
+    # Prior forecast (blue solid)
+    bf_prior = first_result["prior"]["beta_forecast"]
+    times_prior = sorted(bf_prior.keys())
+    beta_prior = [min(bf_prior[t], max_beta) for t in times_prior]
+    plt.plot(times_prior, beta_prior, c="b", label="Prior")
 
-    # Build cumulative lines for each observation time
+    # Hindcast: solid red line connecting posterior betas with forecast segments
+    hindcast_segments = []
+    for prev_t, curr_t in zip(obs_times[:-1], obs_times[1:]):
+        prev_beta = min(results[prev_t]["posterior"]["beta"], max_beta)
+        curr_beta = min(results[curr_t]["posterior"]["beta"], max_beta)
+        prev_forecast_at_curr = results[prev_t]["posterior"]["beta_forecast"].get(curr_t)
+        if prev_forecast_at_curr is not None:
+            prev_forecast_at_curr = min(prev_forecast_at_curr, max_beta)
+            hindcast_segments.append([
+                (prev_t, prev_beta),
+                (curr_t, prev_forecast_at_curr),
+                (curr_t, curr_beta),
+            ])
+
+    if hindcast_segments:
+        hindcast_points = list(chain.from_iterable(hindcast_segments))
+        plt.plot([p[0] for p in hindcast_points], [p[1] for p in hindcast_points], c="r")
+
+    # Posterior dots and forecast lines
     for i, obs_t in enumerate(obs_times):
-        # Build cumulative line: historical betas + forecast betas
-        cumulative_times = []
-        cumulative_betas = []
-
-        # Historical segment: posterior betas from past observation times up to obs_t
-        for past_t in obs_times:
-            if past_t <= obs_t:
-                cumulative_times.append(past_t)
-                cumulative_betas.append(min(results[past_t]["posterior"]["beta"], max_beta))
-
-        # Forecast segment: forecasted betas for times > obs_t
         result = results[obs_t]
+        beta_current = min(result["posterior"]["beta"], max_beta)
+
+        # Red dot
+        label = "Posterior" if i == 0 else None
+        plt.scatter(obs_t, beta_current, color="r", zorder=5, label=label)
+
+        # Forecast line from this observation time
         if "beta_forecast" in result["posterior"]:
             bf = result["posterior"]["beta_forecast"]
-            for t in sorted(bf.keys()):
-                if t > obs_t:
-                    cumulative_times.append(t)
-                    cumulative_betas.append(min(bf[t], max_beta))
+            times_f = sorted(bf.keys())
+            betas_f = [min(bf[t], max_beta) for t in times_f]
 
-        # Current observation time gets emphasized
-        is_current = (obs_t == current_time)
-        linewidth = 2.5 if is_current else 1.5
-        alpha = 1.0 if is_current else 0.7
+            is_current = (obs_t == current_time)
+            if is_current:
+                plt.plot(times_f, betas_f, c="r", linestyle="--")
+            else:
+                plt.plot(times_f, betas_f, c="r", linestyle="dotted", alpha=0.4)
 
-        ax.plot(cumulative_times, cumulative_betas, color=colors[i],
-                linewidth=linewidth, alpha=alpha,
-                label=f"t_obs={obs_t:.0f}" + (" (current)" if is_current else ""))
+    # Requirement
+    plt.axhline(beta_req, c="k", linestyle="--", label="Requirement")
 
-        # Mark the observation point with a marker
-        obs_idx = cumulative_times.index(obs_t)
-        ax.scatter([obs_t], [cumulative_betas[obs_idx]], color=colors[i],
-                   s=80 if is_current else 50, zorder=5,
-                   edgecolor="k" if is_current else "none",
-                   linewidth=1.5 if is_current else 0)
-
-    # Requirement line
-    ax.axhline(beta_req, color="r", linestyle="-", linewidth=2,
-               label=f"Requirement (β={beta_req})")
-
-    # Vertical line at current observation time
-    ax.axvline(current_time, color="k", linestyle=":", linewidth=1, alpha=0.5)
-
-    ax.set_xlabel("Forecast time [yr]", fontsize=12)
-    ax.set_ylabel("β [-]", fontsize=12)
-    ax.set_title(f"Reliability Index Forecast at Observation Time t = {current_time:.0f}",
-                 fontsize=13, fontweight="bold")
-    ax.legend(fontsize=9, loc="upper right", ncol=2)
-    ax.grid(True, alpha=0.3)
-    ax.set_ylim(0, max_beta)
-    ax.set_xlim(t_min, t_max)
-
-    plt.tight_layout()
+    plt.xlabel("Forecast time [yr]", fontsize=12)
+    plt.ylabel(r"$\beta$ [-]", fontsize=12)
+    plt.xlim(t_min, t_max)
+    plt.ylim(min_beta, max_beta)
+    plt.legend(fontsize=12)
+    plt.grid()
+    plt.subplots_adjust(bottom=0.15)
     plt.close()
 
     return fig
@@ -979,7 +970,7 @@ def plot_beta_forecast_at_time(
 
 def plot_beta_forecasts(
     results: dict,
-    beta_req: float = 3.8,
+    beta_req: float = 2.3,
     title: str = "Reliability Index Forecasts",
 ) -> plt.Figure:
     """
@@ -1047,7 +1038,7 @@ def plot_beta_forecasts(
 
 def plot_posterior_forecast_evolution(
     results: dict,
-    beta_req: float = 3.8,
+    beta_req: float = 2.3,
     title: str = "Posterior Forecast Evolution",
 ) -> plt.Figure:
     """
@@ -1132,7 +1123,7 @@ def plot_posterior_forecast_evolution(
 
 def plot_beta_forecast_grid(
     results: dict,
-    beta_req: float = 3.8,
+    beta_req: float = 2.3,
     ncols: int = 3,
     title: str = "Reliability Index Forecasts per Observation Time",
 ) -> plt.Figure:

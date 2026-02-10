@@ -637,7 +637,7 @@ class ReliabilityPipeline:
 
         print(f"JPDF snapshots saved to {png_dir}")
 
-    def plot_results(self, output_dir: Optional[Path | str] = None) -> None:
+    def plot_betas(self, output_dir: Optional[Path | str] = None) -> None:
         """
         Generate plots of results with forecasts.
 
@@ -675,26 +675,9 @@ class ReliabilityPipeline:
             fig = plotting.plot_beta_forecast_at_time(
                 current_time=t,
                 results=results_up_to_t,
-                beta_req=3.8,
+                beta_req=self.config.beta_req,
             )
             plotting.save_figure(fig, png_dir / f"beta_forecast_t{int(t):03d}.png")
-
-        # Generate grid plot with all observation times
-        fig_grid = plotting.plot_beta_forecast_grid(
-            results=self.results,
-            beta_req=3.8,
-            ncols=3,
-            title="Reliability Index Forecasts per Observation Time",
-        )
-        plotting.save_figure(fig_grid, png_dir / "beta_forecast_grid.png")
-
-        # Generate evolution plot (all forecasts on one figure)
-        fig_evolution = plotting.plot_posterior_forecast_evolution(
-            results=self.results,
-            beta_req=3.8,
-            title="Posterior Forecast Evolution with Observations",
-        )
-        plotting.save_figure(fig_evolution, png_dir / "beta_forecast_evolution.png")
 
         # Collect all PNGs into a sibling PDF
         plotting.collect_pngs_to_pdf(png_dir, output_dir / "beta_forecast.pdf")
@@ -863,172 +846,6 @@ class ReliabilityPipeline:
 
         print(f"Moment capacity forecast plots saved to {png_dir}")
 
-    def plot_prior_posterior_pdfs(
-        self,
-        setting: Dict[str, Any],
-        output_dir: Optional[Path | str] = None,
-    ) -> None:
-        """
-        Generate prior vs posterior plots for corrosion and moment capacity.
-
-        PNGs are saved into ``output_dir/prior_posterior/`` and a companion
-        PDF is written to ``output_dir/prior_posterior.pdf``.
-
-        Args:
-            setting: Case study setting with time-series data.
-            output_dir: Directory for plot files.
-        """
-        if output_dir is None:
-            output_dir = io.get_remote_path() / "results/plots"
-        output_dir = Path(output_dir)
-
-        png_dir = output_dir / "prior_posterior"
-        png_dir.mkdir(parents=True, exist_ok=True)
-
-        times = sorted([float(k) for k in setting.keys() if k != "metadata"])
-        metadata = setting.get("metadata", {})
-
-        # Extract corrosion observations
-        obs_times = []
-        obs_corrosion = []
-        obs_moment_cap = []
-
-        moment_cap_start = self.config.moment_cap
-        start_thickness = self.config.start_thickness
-
-        for t in times:
-            key = str(t) if str(t) in setting else f"{t:.1f}"
-            if key in setting:
-                obs_times.append(t)
-                obs_corrosion.append(setting[key]["corrosion"])
-                cr = setting[key].get("corrosion_ratio", setting[key]["corrosion"] / start_thickness)
-                obs_moment_cap.append(moment_cap_start * (1 - cr))
-
-        # Compute corrosion and moment capacity forecasts
-        # For simplicity, use linear model based on C50 stats
-        C50_stats_prior = {"mean": 1.5, "std": 0.75}
-
-        # Forecast time grid: from first to last observation with specified interval
-        t_start = times[0]
-        t_end = times[-1]
-        interval = self.config.forecast_interval
-        times_forecast = np.arange(t_start, t_end + interval, interval)
-
-        # Prior forecasts
-        # Corrosion model: corrosion(t) = C50 + rate * (t - t_ref)
-        corrosion_rate = self.config.corrosion_rate
-        t_ref = 50.0
-        C50_mu = C50_stats_prior["mean"]
-        C50_std = C50_stats_prior["std"]
-
-        corrosion_mean_prior = C50_mu + corrosion_rate * (times_forecast - t_ref)
-        corrosion_std_prior = np.full_like(times_forecast, C50_std)  # std doesn't change with time
-        corrosion_q05_prior = corrosion_mean_prior - 1.645 * corrosion_std_prior
-        corrosion_q95_prior = corrosion_mean_prior + 1.645 * corrosion_std_prior
-
-        # Posterior: condition on observations up to each time
-        # The posterior mean passes exactly through the last observation
-        if self.results and obs_times:
-            result_times = sorted(self.results.keys())
-            corrosion_mean_post = np.zeros_like(times_forecast)
-            corrosion_std_post = np.zeros_like(times_forecast)
-
-            for i, t_forecast in enumerate(times_forecast):
-                # Find the latest observation time <= t_forecast
-                relevant_obs_times = [t for t in obs_times if t <= t_forecast]
-                if relevant_obs_times:
-                    latest_obs_t = max(relevant_obs_times)
-                    latest_obs_idx = obs_times.index(latest_obs_t)
-                    latest_obs_corrosion = obs_corrosion[latest_obs_idx]
-
-                    # Infer C50 from the last observation: C50 = obs - rate * (t_obs - t_ref)
-                    C50_inferred = latest_obs_corrosion - corrosion_rate * (latest_obs_t - t_ref)
-
-                    # Use inferred C50 to compute corrosion at forecast time
-                    corrosion_mean_post[i] = C50_inferred + corrosion_rate * (t_forecast - t_ref)
-
-                    # Get std from results if available, else use prior std
-                    if latest_obs_t in self.results:
-                        C50_stats_t = self.results[latest_obs_t]["posterior"].get("C50_stats", C50_stats_prior)
-                        corrosion_std_post[i] = C50_stats_t.get("std", C50_std)
-                    else:
-                        corrosion_std_post[i] = C50_std
-                else:
-                    # Before first observation, use prior
-                    corrosion_mean_post[i] = C50_mu + corrosion_rate * (t_forecast - t_ref)
-                    corrosion_std_post[i] = C50_std
-        else:
-            corrosion_mean_post = C50_mu + corrosion_rate * (times_forecast - t_ref)
-            corrosion_std_post = np.full_like(times_forecast, C50_std)
-
-        corrosion_q05_post = corrosion_mean_post - 1.645 * corrosion_std_post
-        corrosion_q95_post = corrosion_mean_post + 1.645 * corrosion_std_post
-
-        # Corrosion plot
-        fig = plotting.plot_corrosion_prior_posterior(
-            times_forecast=times_forecast,
-            corrosion_mean_prior=corrosion_mean_prior,
-            corrosion_q05_prior=np.maximum(corrosion_q05_prior, 0),
-            corrosion_q95_prior=corrosion_q95_prior,
-            corrosion_mean_posterior=corrosion_mean_post,
-            corrosion_q05_posterior=np.maximum(corrosion_q05_post, 0),
-            corrosion_q95_posterior=corrosion_q95_post,
-            obs_times=obs_times,
-            obs_values=obs_corrosion,
-            obs_error_std=self.config.obs_error_std,
-            title="Corrosion progression: Prior vs Posterior",
-            xlim=(times[0], times[-1]),
-            ylim=(0, min(start_thickness, max(corrosion_q95_prior) * 1.2)),
-        )
-        plotting.save_figure(fig, png_dir / "corrosion_prior_posterior.png")
-
-        # Moment capacity from corrosion ratio
-        cr_mean_prior = corrosion_mean_prior / start_thickness
-        cr_q05_prior = np.maximum(corrosion_q05_prior, 0) / start_thickness
-        cr_q95_prior = corrosion_q95_prior / start_thickness
-
-        cr_mean_post = corrosion_mean_post / start_thickness
-        cr_q05_post = np.maximum(corrosion_q05_post, 0) / start_thickness
-        cr_q95_post = corrosion_q95_post / start_thickness
-
-        moment_mean_prior = moment_cap_start * (1 - cr_mean_prior)
-        moment_q95_prior = moment_cap_start * (1 - cr_q05_prior)  # Flip quantiles
-        moment_q05_prior = moment_cap_start * (1 - cr_q95_prior)
-
-        moment_mean_post = moment_cap_start * (1 - cr_mean_post)
-        moment_q95_post = moment_cap_start * (1 - cr_q05_post)
-        moment_q05_post = moment_cap_start * (1 - cr_q95_post)
-
-        # Get moment_survived from setting
-        moment_survived = None
-        for key in setting:
-            if key != "metadata" and "moment_survived" in setting[key]:
-                moment_survived = setting[key]["moment_survived"]
-                break
-
-        fig = plotting.plot_moment_capacity_prior_posterior(
-            times_forecast=times_forecast,
-            moment_mean_prior=moment_mean_prior,
-            moment_q05_prior=moment_q05_prior,
-            moment_q95_prior=moment_q95_prior,
-            moment_mean_posterior=moment_mean_post,
-            moment_q05_posterior=moment_q05_post,
-            moment_q95_posterior=moment_q95_post,
-            moment_survived=moment_survived,
-            obs_times=obs_times,
-            obs_moment_cap=obs_moment_cap,
-            title="Moment capacity: Prior vs Posterior",
-            xlim=(times[0], times[-1]),
-            ylim=(0, moment_cap_start * 1.1),
-        )
-        plotting.save_figure(fig, png_dir / "moment_prior_posterior.png")
-
-        # Collect all PNGs into a sibling PDF
-        plotting.collect_pngs_to_pdf(png_dir, output_dir / "prior_posterior.pdf")
-
-        print(f"Prior/Posterior plots saved to {png_dir}")
-
-
 def main():
     """Example pipeline execution with mock data."""
     # Paths
@@ -1089,10 +906,9 @@ def main():
     print("\n" + "=" * 60)
     print("STEP 4: Generate plots")
     print("=" * 60)
-    pipeline.plot_results()
+    pipeline.plot_betas()
     pipeline.plot_corrosion_forecasts(setting)
     pipeline.plot_moment_forecasts(setting)
-    pipeline.plot_prior_posterior_pdfs(setting)
     pipeline.save_jpdf_snapshots(setting)
 
 

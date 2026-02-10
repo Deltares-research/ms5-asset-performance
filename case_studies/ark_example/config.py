@@ -41,6 +41,7 @@ class CaseStudyConfig:
     n_grid: int = 100
     n_C50_grid: int = 1_000
     forecast_interval: int = 1
+    beta_req: float = 2.3
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CaseStudyConfig":
@@ -59,6 +60,7 @@ class CaseStudyConfig:
             n_grid=params.get("n_grid", 100),
             n_C50_grid=params.get("n_C50_grid", 100),
             forecast_interval=params.get("forecast_interval", 2.0),
+            beta_req=params.get("beta_req", 2.3),
         )
 
     @classmethod
@@ -83,4 +85,5 @@ class CaseStudyConfig:
             "n_grid": self.n_grid,
             "n_C50_grid": self.n_C50_grid,
             "forecast_interval": self.forecast_interval,
+            "beta_req": self.beta_req,
         }
