@@ -441,10 +441,11 @@ class ReliabilityPipeline:
             if len(obs_times) > 0:
                 self.jpdf.update_C50(obs_times, obs_values)
 
-            # Get observed corrosion ratio
+            # Get observed corrosion ratio and survived moment from setting
             key = str(t) if str(t) in setting else f"{t:.1f}"
             corrosion_obs = setting[key]["corrosion"] if key in setting else None
             cr_obs = corrosion_obs / self.config.start_thickness if corrosion_obs else None
+            moment_survived = setting[key].get("moment_survived", 0.) if key in setting else 0.
 
             # Compute Pf FORECAST for all future times (from t to t_end)
             future_times = [ft for ft in analysis_times if ft >= t]
@@ -455,8 +456,6 @@ class ReliabilityPipeline:
             cr_forecast_posterior = {}
 
             for ft in future_times:
-                # Survived moment
-                moment_survived = 560. + (530. - 650) / (75. - 50.) * (t - self.config.t_ref)
 
                 # Prior forecast (using fixed prior C50)
                 result_prior = self.compute_pf_at_time(
@@ -813,15 +812,6 @@ class ReliabilityPipeline:
         png_dir = output_dir / "moment"
         png_dir.mkdir(parents=True, exist_ok=True)
 
-        # Read specs for C50 prior parameters
-        with open(self.specs_path, "r") as f:
-            specs = json.load(f)
-        params = specs.get("parameters", {})
-        C50_mu = params.get("C50_mu", 1.5)
-        C50_std = params.get("C50_std", 0.75)
-
-        corrosion_rate = self.config.corrosion_rate
-        t_ref = self.config.t_ref
         start_thickness = self.config.start_thickness
         moment_cap_start = self.config.moment_cap
 
@@ -838,68 +828,31 @@ class ReliabilityPipeline:
                 cr = setting[key].get("corrosion_ratio", setting[key]["corrosion"] / start_thickness)
                 obs_moment_cap.append(moment_cap_start * (1 - cr))
 
-        # Forecast time grid
         t_start = times[0]
         t_end = times[-1]
-        interval = self.config.forecast_interval
-        times_forecast = np.arange(t_start, t_end + interval, interval)
 
-        # Prior: corrosion → corrosion ratio → moment capacity
-        corrosion_mean_prior = C50_mu + corrosion_rate * (times_forecast - t_ref)
-        corrosion_std_prior = np.full_like(times_forecast, C50_std)
-        corrosion_q05_prior = np.maximum(corrosion_mean_prior - 1.645 * corrosion_std_prior, 0)
-        corrosion_q95_prior = corrosion_mean_prior + 1.645 * corrosion_std_prior
-
-        cr_mean_prior = corrosion_mean_prior / start_thickness
-        cr_q05_prior = corrosion_q05_prior / start_thickness
-        cr_q95_prior = corrosion_q95_prior / start_thickness
-
-        moment_mean_prior = moment_cap_start * (1 - cr_mean_prior)
-        moment_q95_prior = moment_cap_start * (1 - cr_q05_prior)   # flip quantiles
-        moment_q05_prior = moment_cap_start * (1 - cr_q95_prior)
+        # Collect survived moments from setting
+        survived_times = []
+        survived_moments = []
+        for t in obs_times:
+            key = str(t) if str(t) in setting else f"{t:.1f}"
+            if key in setting:
+                ms = setting[key].get("moment_survived")
+                if ms is not None:
+                    survived_times.append(t)
+                    survived_moments.append(ms)
 
         # One plot per observation time
         for current_t in obs_times:
-            latest_obs_idx = obs_times.index(current_t)
-            latest_obs_corrosion = obs_corrosion[latest_obs_idx]
-            C50_inferred = latest_obs_corrosion - corrosion_rate * (current_t - t_ref)
-
-            corrosion_mean_post = C50_inferred + corrosion_rate * (times_forecast - t_ref)
-
-            if current_t in self.results:
-                C50_stats_t = self.results[current_t]["posterior"].get("C50_stats", {})
-                post_std = C50_stats_t.get("std", C50_std)
-            else:
-                post_std = C50_std
-
-            corrosion_q05_post = np.maximum(corrosion_mean_post - 1.645 * post_std, 0)
-            corrosion_q95_post = corrosion_mean_post + 1.645 * post_std
-
-            cr_mean_post = corrosion_mean_post / start_thickness
-            cr_q05_post = corrosion_q05_post / start_thickness
-            cr_q95_post = corrosion_q95_post / start_thickness
-
-            moment_mean_post = moment_cap_start * (1 - cr_mean_post)
-            moment_q95_post = moment_cap_start * (1 - cr_q05_post)
-            moment_q05_post = moment_cap_start * (1 - cr_q95_post)
-
-            # Get moment_survived from results at current_t
-            moment_survived = None
-            if current_t in self.results:
-                moment_survived = self.results[current_t].get("moment_survived")
-
             fig = plotting.plot_moment_forecast_at_time(
-                current_time=current_t,
-                times_forecast=times_forecast,
-                moment_mean_prior=moment_mean_prior,
-                moment_q05_prior=moment_q05_prior,
-                moment_q95_prior=moment_q95_prior,
-                moment_mean_posterior=moment_mean_post,
-                moment_q05_posterior=moment_q05_post,
-                moment_q95_posterior=moment_q95_post,
-                moment_survived=moment_survived,
-                obs_times=obs_times,
-                obs_moment_cap=obs_moment_cap,
+                cr_grid=self.fragility_surface.corrosion_ratios,
+                cr_forecast_prior=self.results[t_start]["prior"]["cr_forecast"],
+                cr_forecast_posterior=self.results[current_t]["posterior"]["cr_forecast"],
+                moment_cap=moment_cap_start,
+                survived_times=survived_times or None,
+                survived_moments=survived_moments or None,
+                obs_times=[t for t in obs_times if t <= current_t],
+                obs_moment_cap=[m for t, m in zip(obs_times, obs_moment_cap) if t <= current_t],
                 xlim=(t_start, t_end),
                 ylim=(0, moment_cap_start * 1.1),
             )

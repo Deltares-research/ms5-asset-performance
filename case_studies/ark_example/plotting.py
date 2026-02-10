@@ -614,87 +614,98 @@ def plot_moment_capacity_prior_posterior(
 
 
 def plot_moment_forecast_at_time(
-    current_time: float,
-    times_forecast: Sequence[float],
-    moment_mean_prior: Sequence[float],
-    moment_q05_prior: Sequence[float],
-    moment_q95_prior: Sequence[float],
-    moment_mean_posterior: Sequence[float],
-    moment_q05_posterior: Sequence[float],
-    moment_q95_posterior: Sequence[float],
-    moment_survived: float = None,
+    cr_grid: Sequence[float],
+    cr_forecast_prior: Dict[float, Sequence[float]],
+    cr_forecast_posterior: Dict[float, Sequence[float]],
+    moment_cap: float = 750.0,
+    survived_times: Sequence[float] = None,
+    survived_moments: Sequence[float] = None,
     obs_times: Sequence[float] = None,
     obs_moment_cap: Sequence[float] = None,
+    alpha: float = 0.05,
     xlim: tuple = (50, 80),
-    ylim: tuple = (100, 800),
+    ylim: tuple = (0, 800),
 ) -> plt.Figure:
     """
     Plot moment capacity forecast at a specific observation time.
+
+    Derives moment capacity from corrosion ratio PDFs:
+    moment = moment_cap * (1 - cr).
 
     Shows:
     - Prior moment capacity band (full time range)
     - Observed moment capacity up to current_time
     - Posterior forecast from current_time onwards
-    - Survived moment line (if provided)
+    - Survived moments as scatter markers (if provided)
 
     Args:
-        current_time: Current observation time.
-        times_forecast: Forecast time grid.
-        moment_mean_prior: Prior mean moment capacity.
-        moment_q05_prior: Prior 5th percentile.
-        moment_q95_prior: Prior 95th percentile.
-        moment_mean_posterior: Posterior mean moment capacity.
-        moment_q05_posterior: Posterior 5th percentile.
-        moment_q95_posterior: Posterior 95th percentile.
-        moment_survived: Survived moment threshold (horizontal line).
+        cr_grid: Corrosion ratio grid values.
+        cr_forecast_prior: Dict of {time: cr_pdf} for prior forecast.
+        cr_forecast_posterior: Dict of {time: cr_pdf} for posterior forecast.
+        moment_cap: Initial moment capacity [kNm].
+        survived_times: Times at which moment was survived.
+        survived_moments: Survived moment values at each time.
         obs_times: All observation times.
         obs_moment_cap: All observed moment capacity values.
+        alpha: Confidence level for quantiles.
         xlim: X-axis limits.
         ylim: Y-axis limits.
 
     Returns:
         Matplotlib figure.
     """
-    times_forecast = np.asarray(times_forecast)
+    from scipy.integrate import cumulative_trapezoid
+
+    cr_grid = np.asarray(cr_grid)
     fig, ax = plt.subplots(figsize=(10, 5))
 
-    # Prior band (full range)
-    ax.fill_between(times_forecast, moment_q05_prior, moment_q95_prior,
-                    color="b", alpha=0.15)
-    ax.plot(times_forecast, moment_q05_prior, color="b", linewidth=0.5)
-    ax.plot(times_forecast, moment_q95_prior, color="b", linewidth=0.5)
-    ax.plot(times_forecast, moment_mean_prior, color="b", linewidth=1.5, label="Prior")
+    # Prior: cr PDF → cr mean/quantiles → moment
+    cr_forecasts_prior = np.vstack(list(cr_forecast_prior.values()))
+    cr_prior_mean = np.trapezoid(cr_forecasts_prior * cr_grid[None, :], cr_grid, axis=1)
+    cr_prior_cdf = cumulative_trapezoid(cr_forecasts_prior, cr_grid)
+    cr_prior_q05 = cr_grid[np.argmin(np.abs(cr_prior_cdf - alpha), axis=1)]
+    cr_prior_q95 = cr_grid[np.argmin(np.abs(cr_prior_cdf - (1 - alpha)), axis=1)]
 
-    # Posterior forecast (from current_time onwards)
-    mask = times_forecast >= current_time
-    ax.fill_between(times_forecast[mask],
-                    np.asarray(moment_q05_posterior)[mask],
-                    np.asarray(moment_q95_posterior)[mask],
-                    color="r", alpha=0.2)
-    ax.plot(times_forecast[mask], np.asarray(moment_q05_posterior)[mask],
-            color="r", linewidth=0.5)
-    ax.plot(times_forecast[mask], np.asarray(moment_q95_posterior)[mask],
-            color="r", linewidth=0.5)
-    ax.plot(times_forecast[mask], np.asarray(moment_mean_posterior)[mask],
-            color="r", linewidth=2, label="Posterior forecast")
+    moment_prior_mean = moment_cap * (1 - cr_prior_mean)
+    moment_prior_q95 = moment_cap * (1 - cr_prior_q05)   # flip: low cr → high moment
+    moment_prior_q05 = moment_cap * (1 - cr_prior_q95)
 
-    # Observations up to current_time
+    # Posterior: same derivation
+    cr_forecasts_posterior = np.vstack(list(cr_forecast_posterior.values()))
+    cr_posterior_mean = np.trapezoid(cr_forecasts_posterior * cr_grid[None, :], cr_grid, axis=1)
+    cr_posterior_cdf = cumulative_trapezoid(cr_forecasts_posterior, cr_grid)
+    cr_posterior_q05 = cr_grid[np.argmin(np.abs(cr_posterior_cdf - alpha), axis=1)]
+    cr_posterior_q95 = cr_grid[np.argmin(np.abs(cr_posterior_cdf - (1 - alpha)), axis=1)]
+
+    moment_posterior_mean = moment_cap * (1 - cr_posterior_mean)
+    moment_posterior_q95 = moment_cap * (1 - cr_posterior_q05)
+    moment_posterior_q05 = moment_cap * (1 - cr_posterior_q95)
+
+    # Prior band
+    times_prior = np.asarray(list(cr_forecast_prior.keys()))
+    ax.fill_between(times_prior, moment_prior_q05, moment_prior_q95, color="b", alpha=0.15)
+    ax.plot(times_prior, moment_prior_q05, color="b", linewidth=0.5)
+    ax.plot(times_prior, moment_prior_q95, color="b", linewidth=0.5)
+    ax.plot(times_prior, moment_prior_mean, color="b", linewidth=1.5, label="Prior")
+
+    # Posterior band
+    times_posterior = np.asarray(list(cr_forecast_posterior.keys()))
+    ax.fill_between(times_posterior, moment_posterior_q05, moment_posterior_q95, color="r", alpha=0.15)
+    ax.plot(times_posterior, moment_posterior_q05, color="r", linewidth=0.5)
+    ax.plot(times_posterior, moment_posterior_q95, color="r", linewidth=0.5)
+    ax.plot(times_posterior, moment_posterior_mean, color="r", linewidth=1.5, label="Posterior")
+
+    # Observations
     if obs_times is not None and obs_moment_cap is not None:
-        obs_up_to = [(t, v) for t, v in zip(obs_times, obs_moment_cap) if t <= current_time]
-        if obs_up_to:
-            t_obs, v_obs = zip(*obs_up_to)
-            ax.scatter(t_obs, v_obs, color="k", s=50, zorder=5, label="Observations")
+        ax.scatter(obs_times, obs_moment_cap, color="k", s=50, zorder=5, label="Observations")
 
-    # Survived moment
-    if moment_survived is not None:
-        ax.axhline(moment_survived, c="g", linestyle="-", label="Survived moment")
-
-    # Vertical line at current time
-    ax.axvline(current_time, color="k", linestyle=":", linewidth=1, alpha=0.5)
+    # Survived moments
+    if survived_times is not None and survived_moments is not None:
+        ax.plot(survived_times, survived_moments, color="g", linewidth=1.5, label="Survived moment")
 
     ax.set_xlabel("Forecast time [yr]", fontsize=12)
     ax.set_ylabel("Moment capacity [kNm]", fontsize=12)
-    ax.set_title(f"Moment Capacity Forecast at t_obs = {current_time:.0f}",
+    ax.set_title(f"Moment Capacity Forecast at t_obs = {times_posterior.min():.0f}",
                  fontsize=13, fontweight="bold")
     ax.set_xlim(xlim)
     ax.set_ylim(ylim)
