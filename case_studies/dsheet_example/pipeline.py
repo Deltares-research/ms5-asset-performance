@@ -27,6 +27,7 @@ from case_studies.dsheet_example.performance_function import (
 )
 from case_studies.dsheet_example import io
 from case_studies.dsheet_example import plotting
+from dotenv import load_dotenv
 
 
 class ReliabilityPipeline:
@@ -902,13 +903,9 @@ class ReliabilityPipeline:
 
 
 def main():
-    """Example pipeline execution with mock data."""
-    # Paths
-    mock_dir = Path(__file__).parent / "mock/data"
-    specs_path = mock_dir / "case_study_specifications.json"
-
-    # Set environment for io module
-    os.environ["REMOTE_DATA_PATH"] = str(mock_dir)
+    """Load data path"""
+    load_dotenv("dsheet_example.env")
+    specs_path = Path(os.environ.get("REMOTE_DATA_PATH", None)) / "case_study_specifications.json"
 
     # Initialize pipeline
     config = CaseStudyConfig.from_json(specs_path)
@@ -947,7 +944,7 @@ def main():
     surface = pipeline.build_fragility_surface(
         n_cr=1000,
         n_moments=50,
-        force_rebuild=True,  # Set False to use cached version
+        force_rebuild=False,  # Set False to use cached version
         verbose=True,
     )
 
