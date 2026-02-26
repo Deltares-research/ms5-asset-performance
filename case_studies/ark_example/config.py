@@ -31,15 +31,18 @@ class CaseStudyConfig:
     moment_cap: float = 750.0
     EI_start: float = 30000.0
     start_thickness: float = 9.5
+    C50_mu: float = 1.0
+    C50_std: float = 0.75
     corrosion_rate: float = 0.022
     obs_error_std: float = 0.4
     t_ref: float = 50.0
     t_start: float = 50.0
     t_end: float = 80.0
     n_mcs: int = 100_000
-    n_grid: int = 1_000
+    n_grid: int = 1000
     n_C50_grid: int = 100
-    forecast_interval: float = 2.0
+    forecast_interval: int = 1
+    beta_req: float = 2.3
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CaseStudyConfig":
@@ -49,6 +52,7 @@ class CaseStudyConfig:
             moment_cap=params.get("moment_cap", 750.0),
             EI_start=params.get("EI_start", 30000.0),
             start_thickness=params.get("start_thickness", 9.5),
+            C50_std=params.get("C50_std", 0.75),
             corrosion_rate=params.get("corrosion_rate", 0.022),
             obs_error_std=params.get("obs_error_std", 0.4),
             t_ref=params.get("t_ref", 50.0),
@@ -58,6 +62,7 @@ class CaseStudyConfig:
             n_grid=params.get("n_grid", 100),
             n_C50_grid=params.get("n_C50_grid", 100),
             forecast_interval=params.get("forecast_interval", 2.0),
+            beta_req=params.get("beta_req", 2.3),
         )
 
     @classmethod
@@ -73,6 +78,7 @@ class CaseStudyConfig:
             "moment_cap": self.moment_cap,
             "EI_start": self.EI_start,
             "start_thickness": self.start_thickness,
+            "C50_std": self.C50_std,
             "corrosion_rate": self.corrosion_rate,
             "obs_error_std": self.obs_error_std,
             "t_ref": self.t_ref,
@@ -82,4 +88,5 @@ class CaseStudyConfig:
             "n_grid": self.n_grid,
             "n_C50_grid": self.n_C50_grid,
             "forecast_interval": self.forecast_interval,
+            "beta_req": self.beta_req,
         }

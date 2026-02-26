@@ -2,7 +2,7 @@
 Train surrogate model (MLP) for D-Sheet piling moment prediction.
 
 Usage:
-    python -m case_studies.dsheet_example.train --epochs 10000 --lr 1e-4
+    python -m case_studies.ark_example.train --epochs 10000 --lr 1e-4
 """
 
 from argparse import ArgumentParser

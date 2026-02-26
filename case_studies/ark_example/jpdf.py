@@ -13,10 +13,9 @@ from typing import Dict, Any, Optional, List
 
 import numpy as np
 import scipy.stats as st
-from PIL.ImageOps import scale
 from numpy.typing import NDArray
 
-from case_studies.dsheet_example.config import CaseStudyConfig
+from case_studies.ark_example.config import CaseStudyConfig
 
 
 class JPDF:
@@ -80,15 +79,7 @@ class JPDF:
             if dist_type in ["normal", "norm", "n", "gaussian"]:
                 mean = v.get("mean", 0.0)
                 std = v.get("standard_deviation", 1.0)
-                lower = v.get("lower_bound", None)
-                upper = v.get("upper_bound", None)
-                if not lower and not upper:
-                    var = st.norm(loc=mean, scale=std)
-                else:
-                    # Convert to truncnorm boundaries
-                    a = (lower - mean) / std
-                    b = (upper - mean) / std
-                    var = st.truncnorm(loc=mean, scale=std, a=a, b=b)
+                var = st.norm(loc=mean, scale=std)
             elif dist_type in ["lognormal", "lognorm"]:
                 mean = v.get("mean", 1.0)
                 std = v.get("standard_deviation", 0.5)
@@ -127,18 +118,12 @@ class JPDF:
             C50_std: Standard deviation of C50.
         """
         n_grid = self.config.n_C50_grid
+        self.C50_grid = np.linspace(0.5, 2.5, n_grid)
 
-        # Grid from ~0 to reasonable upper bound
-        lower = max(0.01, C50_mu - 4 * C50_std)
-        upper = self.config.start_thickness
-        self.C50_grid = np.linspace(lower, upper, n_grid)
-
-        # Truncated normal prior (positive values)
-        a = (0 - C50_mu) / C50_std
-        b = (upper - C50_mu) / C50_std
-        b = np.inf
-        self.C50_prior = st.truncnorm.pdf(self.C50_grid, a, b, loc=C50_mu, scale=C50_std)
-        self.C50_prior /= np.trapezoid(self.C50_prior, self.C50_grid)
+        # Truncated normal prior for C50
+        a_clip = (self.C50_grid.min() - C50_mu) / C50_std
+        b_clip = (self.C50_grid.max() - C50_mu) / C50_std
+        self.C50_prior = st.truncnorm.pdf(self.C50_grid, a_clip, b_clip, loc=C50_mu, scale=C50_std)
 
         # Initialize current PDF to prior
         self.C50_pdf = self.C50_prior.copy()
@@ -152,7 +137,6 @@ class JPDF:
         self,
         obs_times: NDArray,
         obs_values: NDArray,
-        C50_mu: Optional[float] = None,
     ) -> None:
         """
         Update C50 PDF via Bayesian inference given corrosion observations.
@@ -160,45 +144,34 @@ class JPDF:
         Args:
             obs_times: Times of observations [years].
             obs_values: Observed corrosion values [mm].
-            C50_mu: Reference C50 mean (for corrosion model). Uses prior mean if None.
         """
         if self.C50_pdf is None or self.C50_grid is None:
             raise ValueError("C50 not initialized. Call set_prior_from_specs first.")
 
-        if C50_mu is None:
-            C50_mu = np.trapezoid(self.C50_grid * self.C50_prior, self.C50_grid)
-
+        C50_mu = self.config.C50_mu
         corrosion_rate = self.config.corrosion_rate
         obs_error_std = self.config.obs_error_std
         t_ref = self.config.t_ref
 
-        log_prior = np.log(self.C50_pdf + 1e-10)
+        log_prior = np.log(self.C50_prior + 1e-10)
 
         # Compute likelihood
         C50_grid = self.C50_grid[:, np.newaxis]  # (n_grid, 1)
         obs_times = np.asarray(obs_times)[np.newaxis, :]  # (1, n_obs)
         obs_values = np.asarray(obs_values)  # (n_obs,)
 
-        # Expected corrosion: C(t) = C50 * (1 + rate/C50_mu * (t - t_ref))
-        mu = C50_grid * (1 + corrosion_rate / C50_mu * (obs_times - t_ref))
+        corr_mu = C50_grid * (1 + corrosion_rate / C50_mu * (obs_times - self.config.t_ref))
+        corr_deviations = (obs_values - corr_mu) / obs_error_std
+        corr_deviations = np.concatenate((corr_deviations[:, 0][:, np.newaxis], np.diff(corr_deviations, axis=1)), axis=1)
 
-        # Deviations
-        deviations = (obs_values - mu) / obs_error_std
+        loglikes = st.norm(loc=0, scale=1).logpdf(corr_deviations)
+        loglike = loglikes.sum(axis=1)
 
-        # Use differences for sequential observations
-        deviations_diff = np.concatenate(
-            [deviations[:, 0:1], np.diff(deviations, axis=1)], axis=1
-        )
+        log_post = log_prior + loglike
+        post = np.exp(log_post)
+        post /= np.trapezoid(post, C50_grid.squeeze())
 
-        # Log-likelihood
-        log_likelihood = st.norm.logpdf(deviations_diff).sum(axis=1)
-
-        # Posterior
-        log_posterior = log_prior + log_likelihood
-        posterior = np.exp(log_posterior - log_posterior.max())
-        posterior /= np.trapezoid(posterior, self.C50_grid)
-
-        self.C50_pdf = posterior
+        self.C50_pdf = post.copy()
 
     def get_C50_stats(self) -> Dict[str, float]:
         """
@@ -248,9 +221,6 @@ class JPDF:
             mean=np.zeros(self.nvar),
             cov=self.correlation_matrix,
         ).rvs(n_samples)
-
-        # Always use mean (starting) EI in samples. This will be adjusted accoridng to the degradation later.
-        self.U_samples[:, -1] = 0
 
         # Transform to X-space
         self.X_samples = np.zeros_like(self.U_samples)
