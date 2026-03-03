@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
+from dotenv import load_dotenv
 from numpy.typing import NDArray
 import json
 from case_studies.ark_example.config import CaseStudyConfig
@@ -906,13 +907,9 @@ class ReliabilityPipeline:
         print(f"End-of-life plot saved to {png_dir}")
 
 def main():
-    """Example pipeline execution with mock data."""
     # Paths
-    mock_dir = Path(__file__).parent / "mock/data"
-    specs_path = mock_dir / "case_study_specifications.json"
-
-    # Set environment for io module
-    os.environ["REMOTE_DATA_PATH"] = str(mock_dir)
+    load_dotenv("ark_example.env")
+    specs_path = Path(os.environ["REMOTE_DATA_PATH"]) / "case_study_specifications.json"
 
     # Initialize pipeline
     config = CaseStudyConfig.from_json(specs_path)
