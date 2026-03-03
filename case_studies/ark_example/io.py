@@ -36,7 +36,7 @@ def get_remote_path() -> Path:
     env_path = Path(__file__).parent / "ark_example.env"
     load_dotenv(env_path)
 
-    remote_path = os.environ.get("REMOTE_DATA_PATH")
+    remote_path = os.environ.get("REMOTE_PATH")
     if remote_path is None:
         raise ValueError("REMOTE_DATA_PATH not set in ark_example.env")
 
@@ -53,7 +53,7 @@ def load_json(filename: str) -> Dict[str, Any]:
     Returns:
         Parsed JSON content.
     """
-    filepath = get_remote_path() / filename
+    filepath = get_remote_path() / f"input/{filename}"
     with open(filepath, "r") as f:
         return json.load(f)
 
@@ -66,7 +66,7 @@ def save_json(data: Dict[str, Any], filename: str) -> None:
         data: Data to save.
         filename: Name of JSON file (relative to remote folder).
     """
-    filepath = get_remote_path() / filename
+    filepath = get_remote_path() / f"output/results/{filename}"
     filepath.parent.mkdir(parents=True, exist_ok=True)
     with open(filepath, "w") as f:
         json.dump(data, f, indent=4)
@@ -82,7 +82,7 @@ def load_npy(filename: str) -> NDArray:
     Returns:
         Numpy array.
     """
-    filepath = get_remote_path() / filename
+    filepath = get_remote_path() / f"input/{filename}"
     return np.load(filepath)
 
 
@@ -94,7 +94,7 @@ def save_npy(data: NDArray, filename: str) -> None:
         data: Array to save.
         filename: Name of .npy file (relative to remote folder).
     """
-    filepath = get_remote_path() / filename
+    filepath = get_remote_path() / f"input/{filename}"
     filepath.parent.mkdir(parents=True, exist_ok=True)
     np.save(filepath, data)
 
@@ -243,7 +243,7 @@ def load_surrogate_model(
     Returns:
         Tuple of (model, scaler_x, scaler_y).
     """
-    model_dir = get_remote_path() / "surrogate/model"
+    model_dir = get_remote_path() / "input/surrogate/model"
     device = device or torch.device("cpu")
 
     model = model_class(**model_kwargs)
@@ -321,8 +321,8 @@ def load_fragility_curve(name: str = "fragility"):
     from case_studies.dsheet_example.performance_function import FragilityCurve
 
     # Try npz first (has cached moments), then json
-    npz_path = get_remote_path() / f"results/{name}.npz"
-    json_path = get_remote_path() / f"results/{name}.json"
+    npz_path = get_remote_path() / f"output/{name}.npz"
+    json_path = get_remote_path() / f"output/{name}.json"
 
     if npz_path.exists():
         return FragilityCurve.load(npz_path)
@@ -341,15 +341,15 @@ def save_fragility_curve(fragility, name: str = "fragility") -> None:
         name: Base name of fragility file (without extension).
         fmt: Format - "npz" (with cached moments) or "json" (portable summary).
     """
-    filepath = get_remote_path() / f"results/{name}.json"
+    filepath = get_remote_path() / f"output/{name}.json"
     filepath.parent.mkdir(parents=True, exist_ok=True)
     fragility.save(filepath, fmt=fmt)
 
 
 def fragility_exists(name: str = "fragility") -> bool:
     """Check if a fragility curve exists in the remote folder."""
-    npz_path = get_remote_path() / f"results/{name}.npz"
-    json_path = get_remote_path() / f"results/{name}.json"
+    npz_path = get_remote_path() / f"output/{name}.npz"
+    json_path = get_remote_path() / f"output/{name}.json"
     return npz_path.exists() or json_path.exists()
 
 
@@ -370,7 +370,7 @@ def load_fragility_surface(name: str = "fragility_surface"):
         FragilitySurfaceIndex instance.
     """
 
-    surface_dir = get_remote_path() / f"results/{name}"
+    surface_dir = get_remote_path() / f"output/{name}"
     if not surface_dir.exists():
         raise FileNotFoundError(f"Fragility surface not found: {surface_dir}")
 
@@ -387,13 +387,13 @@ def save_fragility_surface(surface, name: str = "fragility_surface") -> None:
         surface: FragilitySurfaceIndex instance.
         name: Name of fragility surface directory.
     """
-    surface_dir = get_remote_path() / f"results/{name}"
+    surface_dir = get_remote_path() / f"output/{name}"
     surface.save(surface_dir)
 
 
 def fragility_surface_exists(name: str = "fragility_surface") -> bool:
     """Check if a fragility surface exists in the remote folder."""
-    surface_dir = get_remote_path() / f"results/{name}"
+    surface_dir = get_remote_path() / f"output/{name}"
     manifest_path = surface_dir / "manifest.json"
     return manifest_path.exists()
 

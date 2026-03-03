@@ -18,7 +18,9 @@ import numpy as np
 from dotenv import load_dotenv
 from numpy.typing import NDArray
 import json
+from datetime import datetime
 from case_studies.ark_example.config import CaseStudyConfig
+from case_studies.ark_example.io import get_remote_path
 from case_studies.ark_example.jpdf import JPDF
 from case_studies.ark_example.corrosion import CorrosionModel
 from case_studies.ark_example.performance_function import (
@@ -572,7 +574,12 @@ class ReliabilityPipeline:
         for t, data in self.results.items():
             results_json[str(t)] = data
 
-        io.save_json(results_json, f"results/{filename}")
+        load_dotenv("ark_example.env")
+        username = os.environ.get("USER", "unknown").lower()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        output_folder = f"{username}_{timestamp}/{filename}"
+
+        io.save_json(results_json, output_folder)
 
     def save_jpdf_snapshots(
         self,
@@ -686,7 +693,10 @@ class ReliabilityPipeline:
             return
 
         if output_dir is None:
-            output_dir = io.get_remote_path() / "results/plots"
+            load_dotenv("ark_example.env")
+            username = os.environ.get("USER", "unknown").lower()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+            output_dir = io.get_remote_path() / f"output/results/{username}_{timestamp}/plots"
         output_dir = Path(output_dir)
 
         png_dir = output_dir / "beta_forecast"
@@ -734,7 +744,10 @@ class ReliabilityPipeline:
             return
 
         if output_dir is None:
-            output_dir = io.get_remote_path() / "results/plots"
+            load_dotenv("ark_example.env")
+            username = os.environ.get("USER", "unknown").lower()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+            output_dir = io.get_remote_path() / f"output/results/{username}_{timestamp}/plots"
         output_dir = Path(output_dir)
 
         png_dir = output_dir / "corrosion"
@@ -814,7 +827,10 @@ class ReliabilityPipeline:
             return
 
         if output_dir is None:
-            output_dir = io.get_remote_path() / "results/plots"
+            load_dotenv("ark_example.env")
+            username = os.environ.get("USER", "unknown").lower()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+            output_dir = io.get_remote_path() / f"output/results/{username}_{timestamp}/plots"
         output_dir = Path(output_dir)
 
         png_dir = output_dir / "moment"
@@ -889,7 +905,10 @@ class ReliabilityPipeline:
             return
 
         if output_dir is None:
-            output_dir = io.get_remote_path() / "results/plots"
+            load_dotenv("ark_example.env")
+            username = os.environ.get("USER", "unknown").lower()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+            output_dir = io.get_remote_path() / f"output/results/{username}_{timestamp}/plots"
         output_dir = Path(output_dir)
 
         png_dir = output_dir / "end_of_life"
@@ -909,7 +928,8 @@ class ReliabilityPipeline:
 def main():
     # Paths
     load_dotenv("ark_example.env")
-    specs_path = Path(os.environ["REMOTE_DATA_PATH"]) / "case_study_specifications.json"
+    os.environ["REMOTE_DATA_PATH"] = os.environ["REMOTE_PATH"] + r"/input"
+    specs_path = Path(os.environ["REMOTE_DATA_PATH"]) / "input/case_study_specifications.json"
 
     # Initialize pipeline
     config = CaseStudyConfig.from_json(specs_path)
