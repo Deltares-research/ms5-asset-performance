@@ -929,7 +929,7 @@ def main():
     # Paths
     load_dotenv("ark_example.env")
     os.environ["REMOTE_DATA_PATH"] = os.environ["REMOTE_PATH"] + r"/input"
-    specs_path = Path(os.environ["REMOTE_DATA_PATH"]) / "input/case_study_specifications.json"
+    specs_path = Path(os.environ["REMOTE_DATA_PATH"]) / "case_study_specifications.json"
 
     # Initialize pipeline
     config = CaseStudyConfig.from_json(specs_path)
