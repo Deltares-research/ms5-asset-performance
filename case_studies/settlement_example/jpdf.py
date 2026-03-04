@@ -1,45 +1,26 @@
-"""
-Joint probability distribution for D-Sheet piling case study.
-
-Manages:
-- Soil and wall parameter samples (X_samples)
-- C50 as a numerical PDF on a grid (updatable via Bayesian inference)
-- Performance function outputs (G_samples)
-"""
-
 import json
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-
 import numpy as np
 import scipy.stats as st
 from numpy.typing import NDArray
-
-from case_studies.ark_example.config import CaseStudyConfig
+from case_studies.settlement_example.config import CaseStudyConfig
 
 
 class JPDF:
-    """
-    Joint probability distribution for D-Sheet piling case study.
 
-    Manages:
-    - Soil and wall parameter samples (X_samples)
-    - C50 as a numerical PDF on a grid (updatable via Bayesian inference)
-    - Performance function outputs (G_samples)
-
-    Args:
-        name: Name identifier.
-        config: CaseStudyConfig instance.
-    """
-
-    def __init__(self, name: str = "", config: Optional[CaseStudyConfig] = None):
+    def __init__(
+            self,
+            name: str = "",
+            config: Optional[CaseStudyConfig] = None
+    ) -> None:
         self.name = name
         self.config = config or CaseStudyConfig()
 
         # Variables (loaded from specs)
         self.nvar: int = 0
         self.variable_names: List[str] = []
-        self.variables: List[st.rv_continuous] = []
+        self.variables: Dict[st.rv_continuous] = []
         self.correlation_matrix: Optional[NDArray] = None
 
         # Samples
@@ -47,10 +28,14 @@ class JPDF:
         self.U_samples: Optional[NDArray] = None  # Standard normal samples
         self.n_samples: int = 0
 
-        # C50 as numerical PDF on grid
-        self.C50_grid: Optional[NDArray] = None
-        self.C50_prior: Optional[NDArray] = None  # Fixed prior
-        self.C50_pdf: Optional[NDArray] = None    # Current (updated) PDF
+        # Numerical PDF on grid
+        self.CR_grid: Optional[NDArray] = None
+        self.CR_prior: Optional[NDArray] = None
+        self.CR_pdf: Optional[NDArray] = None
+
+        self.k_grid: Optional[NDArray] = None
+        self.k_prior: Optional[NDArray] = None
+        self.k_pdf: Optional[NDArray] = None
 
         # Performance outputs
         self.G_samples: Optional[Dict[float, NDArray]] = None  # g values per time
@@ -68,11 +53,10 @@ class JPDF:
 
         self.nvar = specs.get("number_of_variables", 0)
         self.variable_names = []
-        self.variables = []
+        self.variables = {}
 
         for i, v in enumerate(specs.get("variables", [])):
             name = v.get("name", f"var_{i+1}")
-            self.variable_names.append(name)
 
             dist_type = v.get("distribution_type", "normal").lower()
 
@@ -94,7 +78,8 @@ class JPDF:
             else:
                 raise ValueError(f"Unknown distribution type: {dist_type}")
 
-            self.variables.append(var)
+            self.variable_names.append(name)
+            self.variables[name] = var
 
         # Correlation matrix
         corr = specs.get("correlation_in_u_space")
@@ -103,204 +88,93 @@ class JPDF:
         else:
             self.correlation_matrix = np.eye(self.nvar)
 
-        # Initialize C50 prior from specs
-        params = specs.get("parameters", {})
-        C50_mu = params.get("C50_mu", 1.5)
-        C50_std = params.get("C50_std", 0.75)
-        self.init_C50_prior(C50_mu, C50_std)
+        # Initialize priors from specs
+        self.init_priors()
+        
+    def init_priors(self):
 
-    def init_C50_prior(self, C50_mu: float, C50_std: float) -> None:
-        """
-        Initialize C50 grid and prior PDF.
+        n_grid = self.config.n_CR_grid
+        self.CR_grid = np.linspace(0.5, 2.5, n_grid)
+        self.CR_prior = self.variables["CR"].pdf
+        self.CR_pdf = self.CR_prior.copy()
+        
+        n_grid = self.config.n_k_grid
+        self.k_grid = np.linspace(0.5, 2.5, n_grid)
+        self.k_prior = self.variable_names["k"].pdf
+        self.k_pdf = self.k_prior.copy()
 
-        Args:
-            C50_mu: Mean of C50.
-            C50_std: Standard deviation of C50.
-        """
-        n_grid = self.config.n_C50_grid
-        self.C50_grid = np.linspace(0.5, 2.5, n_grid)
+    def reset_priors(self) -> None:
+        if self.CR_prior is not None:
+            self.CR_pdf = self.CR_prior.copy()
+        if self.k_prior is not None:
+            self.k_pdf = self.k_prior.copy()
 
-        # Truncated normal prior for C50
-        a_clip = (self.C50_grid.min() - C50_mu) / C50_std
-        b_clip = (self.C50_grid.max() - C50_mu) / C50_std
-        self.C50_prior = st.truncnorm.pdf(self.C50_grid, a_clip, b_clip, loc=C50_mu, scale=C50_std)
+    def update(self, loglikes: NDArray) -> None:
 
-        # Initialize current PDF to prior
-        self.C50_pdf = self.C50_prior.copy()
+        if self.CR_pdf is None or self.CR_grid is None or self.k_pdf is None or self.k_grid is None:
+            raise ValueError("Variables not initialized. Call set_prior_from_specs first.")
 
-    def reset_C50_to_prior(self) -> None:
-        """Reset C50 PDF to the original prior."""
-        if self.C50_prior is not None:
-            self.C50_pdf = self.C50_prior.copy()
+        def update_variable(
+                grid: NDArray,
+                prior: NDArray,
+                loglikes: NDArray,
+        ) -> NDArray:
+            log_prior = np.log(prior + 1e-10)
+            log_post = log_prior + loglikes
+            post = np.exp(log_post)
+            post /= np.trapezoid(post, grid.squeeze())
+            return post.copy()
 
-    def update_C50(
-        self,
-        obs_times: NDArray,
-        obs_values: NDArray,
-    ) -> None:
-        """
-        Update C50 PDF via Bayesian inference given corrosion observations.
+        self.CR_pdf = update_variable(self.CR_grid, self.CR_prior, loglikes)
+        self.k_pdf = update_variable(self.k_grid, self.k_prior, loglikes.T)
 
-        Args:
-            obs_times: Times of observations [years].
-            obs_values: Observed corrosion values [mm].
-        """
-        if self.C50_pdf is None or self.C50_grid is None:
-            raise ValueError("C50 not initialized. Call set_prior_from_specs first.")
+    def get_stats(self) -> Dict[str, float]:
 
-        C50_mu = self.config.C50_mu
-        corrosion_rate = self.config.corrosion_rate
-        obs_error_std = self.config.obs_error_std
-        t_ref = self.config.t_ref
-
-        log_prior = np.log(self.C50_prior + 1e-10)
-
-        # Compute likelihood
-        C50_grid = self.C50_grid[:, np.newaxis]  # (n_grid, 1)
-        obs_times = np.asarray(obs_times)[np.newaxis, :]  # (1, n_obs)
-        obs_values = np.asarray(obs_values)  # (n_obs,)
-
-        corr_mu = C50_grid * (1 + corrosion_rate / C50_mu * (obs_times - self.config.t_ref))
-        corr_deviations = (obs_values - corr_mu) / obs_error_std
-        corr_deviations = np.concatenate((corr_deviations[:, 0][:, np.newaxis], np.diff(corr_deviations, axis=1)), axis=1)
-
-        loglikes = st.norm(loc=0, scale=1).logpdf(corr_deviations)
-        loglike = loglikes.sum(axis=1)
-
-        log_post = log_prior + loglike
-        post = np.exp(log_post)
-        post /= np.trapezoid(post, C50_grid.squeeze())
-
-        self.C50_pdf = post.copy()
-
-    def get_C50_stats(self) -> Dict[str, float]:
-        """
-        Get statistics of current C50 distribution.
-
-        Returns:
-            Dict with mean, std, and quantiles.
-        """
-        if self.C50_pdf is None or self.C50_grid is None:
+        if self.CR_pdf is None or self.CR_grid is None or self.k_pdf is None or self.k_grid is None:
             return {}
 
-        mean = np.trapezoid(self.C50_grid * self.C50_pdf, self.C50_grid)
-        var = np.trapezoid((self.C50_grid - mean)**2 * self.C50_pdf, self.C50_grid)
-        std = np.sqrt(var)
+        CR_mean = np.trapezoid(self.CR_grid * self.CR_pdf, self.CR_grid)
+        CR_var = np.trapezoid((self.CR_grid - mean)**2 * self.CR_pdf, self.CR_grid)
+        CR_std = np.sqrt(var)
 
         # CDF for quantiles
-        cdf = np.cumsum(self.C50_pdf) * np.diff(self.C50_grid, prepend=self.C50_grid[0])
+        cdf = np.cumsum(self.CR_pdf) * np.diff(self.CR_grid, prepend=self.CR_grid[0])
         cdf /= cdf[-1]
 
-        q05 = np.interp(0.05, cdf, self.C50_grid)
-        q50 = np.interp(0.50, cdf, self.C50_grid)
-        q95 = np.interp(0.95, cdf, self.C50_grid)
+        CR_q05 = np.interp(0.05, cdf, self.CR_grid)
+        CR_q50 = np.interp(0.50, cdf, self.CR_grid)
+        CR_q95 = np.interp(0.95, cdf, self.CR_grid)
+        
+        k_mean = np.trapezoid(self.k_grid * self.k_pdf, self.k_grid)
+        k_var = np.trapezoid((self.k_grid - mean)**2 * self.k_pdf, self.k_grid)
+        k_std = np.sqrt(var)
 
+        # CDF for quantiles
+        cdf = np.cumsum(self.k_pdf) * np.diff(self.k_grid, prepend=self.k_grid[0])
+        cdf /= cdf[-1]
+
+        k_q05 = np.interp(0.05, cdf, self.k_grid)
+        k_q50 = np.interp(0.50, cdf, self.k_grid)
+        k_q95 = np.interp(0.95, cdf, self.k_grid)
+        
         return {
-            "mean": mean,
-            "std": std,
-            "q05": q05,
-            "median": q50,
-            "q95": q95,
+            "CR": {
+                "mean": CR_mean,
+                "std": CR_std,
+                "q05": CR_q05,
+                "median": CR_q50,
+                "q95": CR_q95,
+            },
+            "k": {
+                "mean": k_mean,
+                "std": k_std,
+                "q05": k_q05,
+                "median": k_q50,
+                "q95": k_q95,
+            },
         }
-
-    def initiate_samples(self, n_samples: int, seed: Optional[int] = None) -> None:
-        """
-        Generate Monte Carlo samples for soil/wall parameters.
-
-        Args:
-            n_samples: Number of samples to generate.
-            seed: Random seed for reproducibility.
-        """
-        if seed is not None:
-            np.random.seed(seed)
-
-        self.n_samples = n_samples
-
-        # Sample in U-space (standard normal)
-        self.U_samples = st.multivariate_normal(
-            mean=np.zeros(self.nvar),
-            cov=self.correlation_matrix,
-        ).rvs(n_samples)
-
-        # Transform to X-space
-        self.X_samples = np.zeros_like(self.U_samples)
-        for i in range(self.nvar):
-            u_marginal = st.norm.cdf(self.U_samples[:, i])
-            self.X_samples[:, i] = self.variables[i].ppf(u_marginal)
-
-        # Initialize output storage
-        self.G_samples = {}
-        self.Y_samples = {}
-
-    def add_water_level(self, water_lvl: float = -1.0) -> None:
-        """
-        Append deterministic water level column to X_samples.
-
-        Args:
-            water_lvl: Water level value [m].
-        """
-        if self.X_samples is None:
-            raise ValueError("Samples not initialized. Call initiate_samples first.")
-
-        water_col = np.full((self.n_samples, 1), water_lvl)
-        self.X_samples = np.hstack([self.X_samples, water_col])
-        self.variable_names.append("water_lvl")
-
-    def store_results(self, t: float, g: NDArray, metadata: Optional[Dict] = None) -> None:
-        """
-        Store performance function results for a timestep.
-
-        Args:
-            t: Time [years].
-            g: Performance function values.
-            metadata: Additional metadata.
-        """
-        self.G_samples[t] = g
-        self.Y_samples[t] = metadata or {}
-
-    def get_samples_with_EI(self, EI_values: NDArray, ei_column_idx: int = -2) -> NDArray:
-        """
-        Get X_samples with specified EI values (for degraded stiffness).
-
-        Args:
-            EI_values: EI values to use (n_samples,).
-            ei_column_idx: Index of EI column in samples.
-
-        Returns:
-            Modified X_samples with updated EI column.
-        """
-        if self.X_samples is None:
-            raise ValueError("Samples not initialized.")
-
-        x = self.X_samples.copy()
-        x[:, ei_column_idx] = EI_values
-        return x
 
 
 if __name__ == "__main__":
-    # Example usage
-    config = CaseStudyConfig()
-    jpdf = JPDF(name="test", config=config)
 
-    # Load from mock specs
-    specs_path = Path(__file__).parent / "mock/data/case_study_specifications.json"
-    if specs_path.exists():
-        jpdf.set_prior_from_specs(specs_path)
-        print(f"Loaded {jpdf.nvar} variables: {jpdf.variable_names}")
-
-        # Generate samples
-        jpdf.initiate_samples(n_samples=1000, seed=42)
-        jpdf.add_water_level(-1.0)
-        print(f"X_samples shape: {jpdf.X_samples.shape}")
-
-        # C50 prior stats
-        stats = jpdf.get_C50_stats()
-        print(f"C50 prior: mean={stats['mean']:.3f}, std={stats['std']:.3f}")
-
-        # Simulate Bayesian update with mock observations
-        obs_times = np.array([50., 55., 60.])
-        obs_values = np.array([1.5, 1.8, 2.1])
-        jpdf.update_C50(obs_times, obs_values, C50_mu=1.5)
-
-        stats = jpdf.get_C50_stats()
-        print(f"C50 posterior: mean={stats['mean']:.3f}, std={stats['std']:.3f}")
+    pass

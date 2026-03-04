@@ -16,6 +16,8 @@ class CaseStudyConfig:
     RR: float = 0.02
     Ca: float = 0.0
     obs_error: float = 0.1
+    n_CR_grid: int = 100
+    k_CR_grid: int = 100
     doc_method: str = "Terzaghi"
 
     @classmethod
@@ -33,6 +35,8 @@ class CaseStudyConfig:
             RR=params.get("RR", None),
             Ca=params.get("Ca", None),
             obs_error=params.get("obs_error", None),
+            n_CR_grid=params.get("n_CR_grid", None),
+            k_CR_grid=params.get("k_CR_grid", None),
             doc_method=params.get("doc_method", None),
         )
 
@@ -56,5 +60,7 @@ class CaseStudyConfig:
             "RR": self.RR,
             "Ca": self.Ca,
             "obs_error": self.obs_error,
+            "n_CR_grid": self.n_CR_grid,
+            "k_CR_grid": self.k_CR_grid,
             "doc_method": self.doc_method,
         }
