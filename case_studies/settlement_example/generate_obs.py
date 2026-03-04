@@ -4,6 +4,7 @@ from pathlib import Path
 import json
 from dotenv import load_dotenv
 import os
+import random
 
 
 if __name__ == "__main__":
@@ -32,6 +33,11 @@ if __name__ == "__main__":
         sigma_p=specs["parameters"]["sigma_p"],
         method=specs["parameters"]["doc_method"],
     )
+
+    obs_error = specs["parameters"]["obs_error"]
+    random.seed(42)
+    gauss_errors = [random.gauss(mu=0, sigma=1) for _ in range(len(settlements))]
+    settlements = [s+gauss_err*obs_error for (s, gauss_err) in zip(settlements, gauss_errors)]
 
     setting = {f"{time:.1f}": f"{settlement.item():.4f}" for (time, settlement) in zip(times, settlements)}
 
