@@ -1,7 +1,7 @@
 import numpy as np
 from scipy import stats as st
 from numpy.typing import NDArray
-from case_studies.settlement_example.io import load_json, get_remote_path
+from case_studies.settlement_example.io import save_json, load_json, get_remote_path
 from jpdf import JPDF
 from performance_function import Performance
 from config import CaseStudyConfig
@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 import os
 import json
+from datetime import datetime
 from settlement_engine import get_settlement
 
 
@@ -277,6 +278,20 @@ class ReliabilityPipeline:
 
         return results
 
+    def save_results(self, filename: str = "reliability_results.json") -> None:
+        """Save results to file."""
+        # Convert to JSON-serializable format
+        results_json = {}
+        for t, data in self.results.items():
+            results_json[str(t)] = data
+
+        load_dotenv("ark_example.env")
+        username = os.environ.get("USER", "unknown").lower()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        output_folder = f"{username}_{timestamp}/{filename}"
+
+        save_json(results_json, output_folder)
+
 
 def main():
     # Paths
@@ -320,7 +335,13 @@ def main():
     # Save results
     pipeline.save_results()
     print("Results saved.")
-    
+
+    # =========================================================================
+    # STEP 4: Plots
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("STEP 4: Plots")
+    print("=" * 60)
     
     pass
 
