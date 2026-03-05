@@ -19,12 +19,12 @@ if __name__ == "__main__":
 
     true_vars = {row["name"]: row["true"] for row in specs["variables"]}
 
-    times = np.linspace(0., specs["parameters"]["preload_removal_time"], 13)
+    times = np.linspace(30, specs["parameters"]["preload_removal_time"], 12)
 
     settlements = get_settlement(
         t=times,
         CR=true_vars["CR"],
-        k=true_vars["k"]*3_600*24,
+        k=true_vars["k"],
         RR=specs["parameters"]["RR"],
         Ca=specs["parameters"]["Ca"],
         h=specs["parameters"]["layer_thickness"],

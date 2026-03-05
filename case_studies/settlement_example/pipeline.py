@@ -12,7 +12,7 @@ import os
 import json
 from datetime import datetime
 from settlement_engine import get_settlement
-from plotting import save_jpdf_plots, save_settlement_forecast_plots, save_end_diff_settlement_plots
+from plotting import save_jpdf_plots, save_settlement_forecast_plots, save_settlement_residual_plots
 
 
 class ReliabilityPipeline:
@@ -30,7 +30,7 @@ class ReliabilityPipeline:
         self.jpdf: Optional[JPDF] = None
         self.performance: Optional[Performance] = None
         self.settlement_at_obs_times: Optional[NDArray] = None
-        self.end_diff_settlement: Optional[NDArray] = None
+        self.settlement_residual: Optional[NDArray] = None
         self.settlement_forecast: Optional[NDArray] = None
         self.settlement_grid: Optional[NDArray] = None
         self.results: Dict[str, Any] = {}
@@ -60,7 +60,7 @@ class ReliabilityPipeline:
         end_time = self.config.end_time
         forecast_interval = self.config.forecast_interval
 
-        forecast_times = np.arange(0, preload_removal_time, forecast_interval)
+        forecast_times = np.arange(self.obs_times.min(), self.obs_times.max(), forecast_interval)
         forecast_times = np.append(forecast_times, [preload_removal_time, end_time])
         self.forecast_times = np.sort(np.unique(forecast_times))
 
@@ -97,7 +97,7 @@ class ReliabilityPipeline:
                 Ca=self.config.Ca,
                 h=self.config.layer_thickness,
                 sigma_0=self.config.sigma_0,
-                sigma_v=self.config.sigma_v,
+                sigma_v=self.config.sigma_0+self.config.preload,
                 sigma_p=self.config.sigma_p,
                 method=self.config.doc_method,
             )
@@ -110,7 +110,7 @@ class ReliabilityPipeline:
                 Ca=self.config.Ca,
                 h=self.config.layer_thickness,
                 sigma_0=self.config.sigma_0,
-                sigma_v=self.config.sigma_v,
+                sigma_v=self.config.sigma_0+self.config.preload,
                 sigma_p=self.config.sigma_p,
                 method=self.config.doc_method,
             )
@@ -121,17 +121,17 @@ class ReliabilityPipeline:
         # If settlement matrix is takes more than 100MB memory, reduce its accuracy.
         if settlements_obs.nbytes / 1e6 >= 100:
             settlements_obs = settlements_obs.astype(float32)
-            print("Reducing accuracy to of 'settlements' to float32")
+            print("Reducing accuracy of 'settlements' to float32")
             print(f"Current memory for 'settlements'={settlements_obs.nbytes/1e3:.0f}KB")
 
         # If settlement matrix is takes more than 100MB memory, reduce its accuracy.
         if settlement_forecast.nbytes / 1e6 >= 100:
             settlement_forecast = settlement_forecast.astype(float32)
-            print("Reducing accuracy to of 'settlements' to float32")
+            print("Reducing accuracy of 'settlements' to float32")
             print(f"Current memory for 'settlements'={settlement_forecast.nbytes/1e3:.0f}KB")
 
         self.settlement_at_obs_times = settlements_obs
-        self.end_diff_settlement = settlement_forecast[..., -1] - settlement_forecast[..., -2]
+        self.settlement_residual = settlement_forecast[..., -1] - settlement_forecast[..., -2]
         self.settlement_forecast = settlement_forecast
 
         settlement_min = min(np.nanmin(self.settlement_at_obs_times), np.nanmin(self.settlement_forecast))
@@ -139,8 +139,8 @@ class ReliabilityPipeline:
         settlement_grid = np.linspace(settlement_min, settlement_max, 1_001)
         self.settlement_grid = np.sort(np.unique(np.append(settlement_grid, 0)))
 
-        diff_min = np.nanmin(self.end_diff_settlement)
-        diff_max = np.nanmax(self.end_diff_settlement)
+        diff_min = np.nanmin(self.settlement_residual)
+        diff_max = np.nanmax(self.settlement_residual)
         diff_grid = np.linspace(diff_min, diff_max, 1_001)
         self.end_diff_grid = np.sort(np.unique(np.append(diff_grid, 0)))
 
@@ -156,11 +156,15 @@ class ReliabilityPipeline:
 
         settlement_centers = (settlement[:-1, :-1] + settlement[:-1, 1:] + settlement[1:, :-1] + settlement[1:, 1:]) / 4
 
-        idx = np.digitize(settlement_centers.flatten(), bins=grid) - 1
+        s_flat = settlement_centers.flatten()
+        pm_flat = prob_mass.flatten()
+        valid = np.isfinite(s_flat) & np.isfinite(pm_flat)
+
+        idx = np.digitize(s_flat[valid], bins=grid) - 1
         idx = np.clip(idx, 0, len(grid) - 1)
 
         settlement_prob_mass = np.zeros(len(grid))
-        np.add.at(settlement_prob_mass, idx, prob_mass.flatten())
+        np.add.at(settlement_prob_mass, idx, pm_flat[valid])
 
         ds = np.diff(grid)
         settlement_pdf = settlement_prob_mass[:-1] / ds
@@ -177,7 +181,7 @@ class ReliabilityPipeline:
     ) -> None:
 
         pf = self.performance.failure_probability(
-            x=self.end_diff_settlement,
+            x=self.settlement_residual,
             pdf=self.jpdf.get_prior() if use_prior else self.jpdf.posterior_pdf,
             CR_grid=self.jpdf.CR_grid,
             k_grid=self.jpdf.k_grid,
@@ -253,10 +257,10 @@ class ReliabilityPipeline:
 
             # End differential settlement PDFs
             diff_grid_prior, diff_pdf_prior = self.get_settlement_pdf(
-                self.end_diff_settlement, use_prior=True, grid=self.end_diff_grid
+                self.settlement_residual, use_prior=True, grid=self.end_diff_grid
             )
             diff_grid_posterior, diff_pdf_posterior = self.get_settlement_pdf(
-                self.end_diff_settlement, use_prior=False, grid=self.end_diff_grid
+                self.settlement_residual, use_prior=False, grid=self.end_diff_grid
             )
 
             # Current time results
@@ -286,7 +290,7 @@ class ReliabilityPipeline:
                     "settlement_posterior_grid": settlement_posterior_grid,
                     "settlement_forecast": settlement_forecast_posterior,
                 },
-                "end_diff_settlement": {
+                "settlement_residual": {
                     "prior_grid": diff_grid_prior.tolist(),
                     "prior_pdf": diff_pdf_prior.tolist(),
                     "posterior_grid": diff_grid_posterior.tolist(),
@@ -381,9 +385,15 @@ def main():
     output_dir = get_remote_path() / f"output/results/{username}_{timestamp}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    save_jpdf_plots(results=results, output_dir=output_dir)
-    save_settlement_forecast_plots(results=results, output_dir=output_dir, t_max=config.preload_removal_time)
-    save_end_diff_settlement_plots(results=results, output_dir=output_dir, end_settlement_req=config.end_settlement_req)
+    with open(specs_path, "r") as f:
+        specs = json.load(f)
+    variables = {v["name"]: v for v in specs.get("variables", [])}
+    CR_true = variables.get("CR", {}).get("true")
+    k_true = variables.get("k", {}).get("true")
+
+    save_jpdf_plots(results=results, output_dir=output_dir, CR_true=CR_true, k_true=k_true)
+    save_settlement_forecast_plots(results=results, output_dir=output_dir, t_max=config.preload_removal_time, obs_error=config.obs_error)
+    save_settlement_residual_plots(results=results, output_dir=output_dir, end_settlement_req=config.end_settlement_req)
 
 
 if __name__ == "__main__":

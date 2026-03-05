@@ -100,12 +100,12 @@ class JPDF:
         self.CR_pdf = self.CR_prior.copy()
         
         n_grid = self.config.n_k_grid
-        self.k_grid = np.linspace(1e-11, 1e-10, n_grid)
+        self.k_grid = np.geomspace(1e-8, 1e-4, n_grid)
         self.k_prior = self.variables["k"].pdf(self.k_grid)
         self.k_pdf = self.k_prior.copy()
 
     def get_prior(self) -> None:
-        return np.exp(np.log(self.CR_pdf)[:, np.newaxis] + np.log(self.k_prior)[np.newaxis, :])
+        return np.exp(np.log(self.CR_prior)[:, np.newaxis] + np.log(self.k_prior)[np.newaxis, :])
 
     def reset_to_priors(self) -> None:
         if self.posterior_pdf is not None:

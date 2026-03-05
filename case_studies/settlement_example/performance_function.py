@@ -30,12 +30,12 @@ class Performance(BasePerformance):
         raise NotImplementedError("Gradients not available for surrogate model.")
 
     def failure_probability(
-        self,
-        x: NDArray,
-        pdf: NDArray,
-        CR_grid: NDArray,
-        k_grid: NDArray,
-    ) -> float:
+            self,
+            x: NDArray,
+            pdf: NDArray,
+            CR_grid: NDArray,
+            k_grid: NDArray,
+        ) -> float:
         g = self.lsf(x, None)
         lsf_mask = g * pdf
         pf = np.trapezoid(lsf_mask, k_grid, axis=1)
