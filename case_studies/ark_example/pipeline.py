@@ -20,7 +20,6 @@ from numpy.typing import NDArray
 import json
 from datetime import datetime
 from case_studies.ark_example.config import CaseStudyConfig
-from case_studies.ark_example.io import get_remote_path
 from case_studies.ark_example.jpdf import JPDF
 from case_studies.ark_example.corrosion import CorrosionModel
 from case_studies.ark_example.performance_function import (

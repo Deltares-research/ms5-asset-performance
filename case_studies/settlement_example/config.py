@@ -12,13 +12,15 @@ class CaseStudyConfig:
     preload_removal_time: float = 365.0
     end_time: float = 25550.0
     sigma_0: float = 10.0
+    sigma_v: float = 20.0
     sigma_p: float = 0.0
     RR: float = 0.02
     Ca: float = 0.0
     obs_error: float = 0.1
     n_CR_grid: int = 100
-    k_CR_grid: int = 100
+    n_k_grid: int = 100
     doc_method: str = "Terzaghi"
+    end_settlement_req: float = 0.05
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CaseStudyConfig":
@@ -31,13 +33,15 @@ class CaseStudyConfig:
             preload_removal_time=params.get("preload_removal_time", None),
             end_time=params.get("end_time", None),
             sigma_0=params.get("sigma_0", None),
+            sigma_v=params.get("sigma_v", None),
             sigma_p=params.get("sigma_p", None),
             RR=params.get("RR", None),
             Ca=params.get("Ca", None),
             obs_error=params.get("obs_error", None),
             n_CR_grid=params.get("n_CR_grid", None),
-            k_CR_grid=params.get("k_CR_grid", None),
+            n_k_grid=params.get("n_k_grid", None),
             doc_method=params.get("doc_method", None),
+            end_settlement_req=params.get("end_settlement_req", None),
         )
 
     @classmethod
@@ -56,11 +60,13 @@ class CaseStudyConfig:
             "preload_removal_time": self.preload_removal_time,
             "end_time": self.end_time,
             "sigma_0": self.sigma_0,
+            "sigma_v": self.sigma_v,
             "sigma_p": self.sigma_p,
             "RR": self.RR,
             "Ca": self.Ca,
             "obs_error": self.obs_error,
             "n_CR_grid": self.n_CR_grid,
-            "k_CR_grid": self.k_CR_grid,
+            "n_k_grid": self.n_k_grid,
             "doc_method": self.doc_method,
+            "end_settlement_req": self.end_settlement_req,
         }

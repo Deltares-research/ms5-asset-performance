@@ -1,3 +1,17 @@
+import numpy as np
+from geolib.models.base_model_structure import settings
+from numpy.typing import NDArray
+from case_studies.settlement_example.io import load_json
+from jpdf import JPDF
+from performance_function import Performance
+from config import CaseStudyConfig
+from typing import Optional, List, Dict, Tuple
+from dotenv import load_dotenv
+from pathlib import Path
+import os
+import json
+from settlement_engine import get_settlement
+
 
 class ReliabilityPipeline:
 
@@ -12,10 +26,9 @@ class ReliabilityPipeline:
 
         # Components
         self.jpdf: Optional[JPDF] = None
-        self.corrosion_model: Optional[CorrosionModel] = None
         self.performance: Optional[Performance] = None
-        self.fragility: Optional[FragilityCurve] = None
-        self.fragility_surface: Optional[FragilitySurfaceIndex] = None
+        self.settlement_at_obs_times: Optional[NDArray] = None
+        self.settlement_at_eval_times: Optional[NDArray] = None
 
         # Results
         self.results: Dict[float, Dict[str, Any]] = {}
@@ -25,60 +38,81 @@ class ReliabilityPipeline:
         n_samples: int = 100_000,
         seed: int = 42,
     ) -> None:
-        """
-        Initialize JPDF, corrosion model, and performance function.
 
-        Args:
-            n_samples: Number of MC samples.
-            seed: Random seed.
-        """
         # Initialize JPDF
-        self.jpdf = JPDF(name="dsheet", config=self.config)
-
-        if self.specs_path is not None:
-            self.jpdf.set_prior_from_specs(self.specs_path)
-        else:
-            self.jpdf.init_C50_prior(C50_mu=self.config.C50_mu, C50_std=self.config.C50_std)
-
-        # Generate samples
-        self.jpdf.initiate_samples(n_samples=n_samples, seed=seed)
-        self.jpdf.add_water_level(water_lvl=-1.0)
+        self.jpdf = JPDF(name="settlement", config=self.config)
+        self.jpdf.set_prior_from_specs(self.specs_path)
 
         # Initialize corrosion model
         with open(self.specs_path, "r") as f:
             specs = json.load(f)
+
         params = specs.get("parameters", {})
-        C50_mu = params.get("C50_mu", 1.5)
-        C50_std = params.get("C50_std", 0.75)
-        self.corrosion_model = CorrosionModel(
-            C50_mu=C50_mu,
-            C50_std=C50_std,
-            corrosion_rate=self.config.corrosion_rate,
-            start_thickness=self.config.start_thickness,
-            obs_error_std=self.config.obs_error_std,
-            t_ref=self.config.t_ref,
-            n_grid=self.config.n_C50_grid,
-            n_corrosion_grid=self.config.n_grid,
+        self.performance = Performance(name="settlement", parameters=params)
+
+    def eval_settlements(self, setting: Dict[str, float], cache: bool = True) -> None:
+
+
+
+
+        obs_times = [float(key) for key in setting.keys()]
+        preload_removal_time = self.config.preload_removal_time
+        end_time = self.config.end_time
+        times = obs_times + [preload_removal_time, end_time]
+
+        settlements = get_settlement(
+            t=times,
+            CR=self.jpdf.CR_grid,
+            k=self.jpdf.k_grid,
+            RR=self.config.RR,
+            Ca=self.config.Ca,
+            h=self.config.layer_thickness,
+            sigma_0=self.config.sigma_0,
+            sigma_v=self.config.sigma_v,
+            sigma_p=self.config.sigma_p,
+            method=self.config.doc_method,
         )
 
-        # Initialize performance function
-        params = {
-            "moment_cap": self.config.moment_cap,
-            "EI_start": self.config.EI_start,
-            "ei_column_idx": -2,
-        }
-        self.performance = Performance(name="dsheet_moment", parameters=params)
+        # If settlement matrix is takes more than 10MB memory, reduce its accuracy.
+        if settlements.nbytes / 1e6 >= 10:
+            settlements = settlements.astype(float32)
+            print("Reducing accuracy to of 'settlements' to float32")
+            print(f"Current memory for 'settlements'={settlements.nbytes/1e3:.0f}KB")
+
+
+
+        pass
 
 
 def main():
     # Paths
-    load_dotenv("ark_example.env")
+    load_dotenv("settlement_example.env")
     os.environ["REMOTE_DATA_PATH"] = os.environ["REMOTE_PATH"] + r"/input"
     specs_path = Path(os.environ["REMOTE_DATA_PATH"]) / "case_study_specifications.json"
 
     # Initialize pipeline
     config = CaseStudyConfig.from_json(specs_path)
     pipeline = ReliabilityPipeline(config=config, specs_path=specs_path)
+
+    # =========================================================================
+    # STEP 1: Setup
+    # =========================================================================
+    print("=" * 60)
+    print("STEP 1: Setup")
+    print("=" * 60)
+    pipeline.setup(n_samples=1_000_000, seed=42)
+
+    # =========================================================================
+    # STEP 2: Initialize (or load) pre-evaluated settlements
+    # =========================================================================
+    print("=" * 60)
+    print("STEP 2: Settlements")
+    print("=" * 60)
+    setting = load_json("case_study_setting.json")
+    pipeline.eval_settlements(setting=setting, cache=True)
+
+
+    pass
 
 
 if __name__ == "__main__":

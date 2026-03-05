@@ -39,7 +39,6 @@ class JPDF:
 
         # Performance outputs
         self.G_samples: Optional[Dict[float, NDArray]] = None  # g values per time
-        self.Y_samples: Optional[Dict[float, Dict]] = None     # metadata per time
 
     def set_prior_from_specs(self, filepath: Path | str) -> None:
         """
@@ -95,12 +94,12 @@ class JPDF:
 
         n_grid = self.config.n_CR_grid
         self.CR_grid = np.linspace(0.5, 2.5, n_grid)
-        self.CR_prior = self.variables["CR"].pdf
+        self.CR_prior = self.variables["CR"].pdf(self.CR_grid)
         self.CR_pdf = self.CR_prior.copy()
         
         n_grid = self.config.n_k_grid
         self.k_grid = np.linspace(0.5, 2.5, n_grid)
-        self.k_prior = self.variable_names["k"].pdf
+        self.k_prior = self.variables["k"].pdf(self.k_grid)
         self.k_pdf = self.k_prior.copy()
 
     def reset_priors(self) -> None:
