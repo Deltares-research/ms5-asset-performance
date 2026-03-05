@@ -158,7 +158,7 @@ def plot_settlement_forecast(
                     zorder=5, label="Observations")
 
     ax.set_xlabel("Time [days]")
-    ax.set_ylabel("Settlement [mm]")
+    ax.set_ylabel("Settlement [m]")
     ax.set_title(f"Settlement Forecast (posterior at t = {time:.0f} days)")
     if t_max is not None:
         ax.set_xlim(0, t_max)
@@ -225,9 +225,9 @@ def plot_settlement_residual(
 
     if end_settlement_req is not None:
         ax.axvline(end_settlement_req, color="k", linestyle="--", linewidth=1.5,
-                   label=f"Requirement ({end_settlement_req})")
+                   label=f"Requirement ({end_settlement_req} m)")
 
-    ax.set_xlabel("End differential settlement [mm]")
+    ax.set_xlabel("End differential settlement [m]")
     ax.set_ylabel("Density")
 
     title = f"End Differential Settlement PDF (t = {time:.0f} days)"

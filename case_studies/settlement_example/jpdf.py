@@ -91,6 +91,9 @@ class JPDF:
 
         # Initialize priors from specs
         self.init_priors()
+        self.posterior_pdf = self.get_prior()
+        self.CR_pdf = self.CR_prior
+        self.k_pdf = self.k_prior
 
     def init_priors(self):
 

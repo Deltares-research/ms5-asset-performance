@@ -120,13 +120,13 @@ class ReliabilityPipeline:
 
         # If settlement matrix is takes more than 100MB memory, reduce its accuracy.
         if settlements_obs.nbytes / 1e6 >= 100:
-            settlements_obs = settlements_obs.astype(float32)
+            settlements_obs = settlements_obs.astype(np.float32)
             print("Reducing accuracy of 'settlements' to float32")
             print(f"Current memory for 'settlements'={settlements_obs.nbytes/1e3:.0f}KB")
 
         # If settlement matrix is takes more than 100MB memory, reduce its accuracy.
         if settlement_forecast.nbytes / 1e6 >= 100:
-            settlement_forecast = settlement_forecast.astype(float32)
+            settlement_forecast = settlement_forecast.astype(np.float32)
             print("Reducing accuracy of 'settlements' to float32")
             print(f"Current memory for 'settlements'={settlement_forecast.nbytes/1e3:.0f}KB")
 
@@ -257,10 +257,14 @@ class ReliabilityPipeline:
 
             # End differential settlement PDFs
             diff_grid_prior, diff_pdf_prior = self.get_settlement_pdf(
-                self.settlement_residual, use_prior=True, grid=self.end_diff_grid
+                settlement=self.settlement_residual,
+                use_prior=True,
+                grid=self.end_diff_grid,
             )
             diff_grid_posterior, diff_pdf_posterior = self.get_settlement_pdf(
-                self.settlement_residual, use_prior=False, grid=self.end_diff_grid
+                settlement=self.settlement_residual,
+                use_prior=False,
+                grid=self.end_diff_grid,
             )
 
             # Current time results
