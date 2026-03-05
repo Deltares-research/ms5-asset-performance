@@ -19,7 +19,7 @@ class Performance(BasePerformance):
 
     def _lsf(self, x: NDArray, t: float = 0) -> NDArray:
         x_ = np.atleast_2d(x)
-        g = x_ <= self.parameters.end_settlement_req
+        g = x_ <= self.parameters["end_settlement_req"]
         return g
 
     def lsf(self, x: NDArray, t: float = 0) -> NDArray:
@@ -32,19 +32,14 @@ class Performance(BasePerformance):
     def failure_probability(
         self,
         x: NDArray,
-        jpdf: Type[JPDF],
+        pdf: NDArray,
+        CR_grid: NDArray,
+        k_grid: NDArray,
     ) -> float:
-        CR_grid = jpdf.CR_grid
-        CR_pdf = jpdf.CR_pdf[:, np.newaxis]
-
-        k_grid = jpdf.k_grid
-        k_pdf = jpdf.k_pdf[np.newaxis, :]
-
-        g = self.lsf(x, corrosion_ratio)
-        lsf_mask = g * CR_pdf * k_pdf
+        g = self.lsf(x, None)
+        lsf_mask = g * pdf
         pf = np.trapezoid(lsf_mask, k_grid, axis=1)
         pf = np.trapezoid(pf, CR_grid, axis=0)
-
         return pf
 
 

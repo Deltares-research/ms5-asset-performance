@@ -21,6 +21,7 @@ class CaseStudyConfig:
     n_k_grid: int = 100
     doc_method: str = "Terzaghi"
     end_settlement_req: float = 0.05
+    forecast_interval: int = 10
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CaseStudyConfig":
@@ -42,6 +43,7 @@ class CaseStudyConfig:
             n_k_grid=params.get("n_k_grid", None),
             doc_method=params.get("doc_method", None),
             end_settlement_req=params.get("end_settlement_req", None),
+            forecast_interval=params.get("forecast_interval", None),
         )
 
     @classmethod
@@ -69,4 +71,5 @@ class CaseStudyConfig:
             "n_k_grid": self.n_k_grid,
             "doc_method": self.doc_method,
             "end_settlement_req": self.end_settlement_req,
+            "forecast_interval": self.forecast_interval,
         }

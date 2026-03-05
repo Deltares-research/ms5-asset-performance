@@ -37,6 +37,8 @@ class JPDF:
         self.k_prior: Optional[NDArray] = None
         self.k_pdf: Optional[NDArray] = None
 
+        self.posterior_pdf: Optional[NDArray] = None
+
         # Performance outputs
         self.G_samples: Optional[Dict[float, NDArray]] = None  # g values per time
 
@@ -89,7 +91,7 @@ class JPDF:
 
         # Initialize priors from specs
         self.init_priors()
-        
+
     def init_priors(self):
 
         n_grid = self.config.n_CR_grid
@@ -102,30 +104,36 @@ class JPDF:
         self.k_prior = self.variables["k"].pdf(self.k_grid)
         self.k_pdf = self.k_prior.copy()
 
-    def reset_priors(self) -> None:
+    def get_prior(self) -> None:
+        return np.exp(np.log(self.CR_pdf)[:, np.newaxis] + np.log(self.k_prior)[np.newaxis, :])
+
+    def reset_to_priors(self) -> None:
+        if self.posterior_pdf is not None:
+            self.posterior_pdf = self.get_prior()
         if self.CR_prior is not None:
             self.CR_pdf = self.CR_prior.copy()
         if self.k_prior is not None:
             self.k_pdf = self.k_prior.copy()
 
-    def update(self, loglikes: NDArray) -> None:
+    def update(self, obs_values: NDArray, settlements: NDArray) -> None:
 
         if self.CR_pdf is None or self.CR_grid is None or self.k_pdf is None or self.k_grid is None:
             raise ValueError("Variables not initialized. Call set_prior_from_specs first.")
 
-        def update_variable(
-                grid: NDArray,
-                prior: NDArray,
-                loglikes: NDArray,
-        ) -> NDArray:
-            log_prior = np.log(prior + 1e-10)
-            log_post = log_prior + loglikes
-            post = np.exp(log_post)
-            post /= np.trapezoid(post, grid.squeeze())
-            return post.copy()
+        obs_values_ = obs_values.reshape(obs_values.shape + (1,) * (settlements.ndim - obs_values.ndim))
+        loglikes = st.norm(loc=settlements, scale=self.config.obs_error).logpdf(obs_values_).sum(axis=-1)
 
-        self.CR_pdf = update_variable(self.CR_grid, self.CR_prior, loglikes)
-        self.k_pdf = update_variable(self.k_grid, self.k_prior, loglikes.T)
+        log_prior = np.log(self.get_prior())
+        log_post = log_prior + loglikes
+
+        post = np.exp(log_post)
+        integral = np.trapezoid(post, self.k_grid, axis=1)
+        integral = np.trapezoid(integral, self.CR_grid, axis=0)
+        post /= integral
+
+        self.posterior_pdf = post.copy()
+        self.CR_pdf = np.trapezoid(self.posterior_pdf, self.k_grid, axis=1)
+        self.k_pdf = np.trapezoid(self.posterior_pdf, self.CR_grid, axis=0)
 
     def get_stats(self) -> Dict[str, float]:
 
