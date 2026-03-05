@@ -1,12 +1,11 @@
 import numpy as np
 from scipy import stats as st
-from geolib.models.base_model_structure import settings
 from numpy.typing import NDArray
 from case_studies.settlement_example.io import load_json, get_remote_path
 from jpdf import JPDF
 from performance_function import Performance
 from config import CaseStudyConfig
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Any
 from dotenv import load_dotenv
 from pathlib import Path
 import os
@@ -135,22 +134,32 @@ class ReliabilityPipeline:
         self.end_diff_settlement = settlement_forecast[..., -1] - settlement_forecast[..., -2]
         self.settlement_forecast = settlement_forecast
 
-        self.settlement_grid = np.linspace(
-            max(self.settlement_at_obs_times.max(), self.settlement_forecast.max()),
-            max(self.settlement_at_obs_times.max(), self.settlement_forecast.max()),
-            1_000
-        )
+        settlement_min = min(self.settlement_at_obs_times.min(), self.settlement_forecast.min())
+        settlement_max = max(self.settlement_at_obs_times.max(), self.settlement_forecast.max())
+        settlement_grid = np.linspace(settlement_min, settlement_max, 1_001)
+        self.settlement_grid = np.sort(np.unique(np.append(settlement_grid, 0)))
 
-    def settlement_pdf(self, settlement: NDArray, use_prior: bool = False) -> NDArray:
+    def get_settlement_pdf(self, settlement: NDArray, use_prior: bool = False) -> Tuple[NDArray, NDArray]:
 
         pdf = self.jpdf.get_prior() if use_prior else self.jpdf.posterior_pdf
 
-        settlement_pdf = np.zeros_like(self.settlement_grid)
+        dCR = np.diff(self.jpdf.CR_grid)
+        dk = np.diff(self.jpdf.k_grid)
+        pdf_centers = (pdf[:-1, :-1] + pdf[:-1, 1:] + pdf[1:, :-1] + pdf[1:, 1:]) / 4
+        prob_mass = pdf_centers * dCR[:, np.newaxis] * dk[np.newaxis, :]
 
-        settlement_pdf /= np.trapezoid(settlement_pdf, self.settlement_grid)
+        settlement_prob_mass = np.zeros_like(self.settlement_grid)
+        for (s, pm) in zip(settlement.flatten(), prob_mass.flatten()):
+            idx = np.digitize(s, bins=self.settlement_grid) - 1
+            settlement_prob_mass[idx] += pm
 
+        ds = np.diff(self.settlement_grid)
+        settlement_pdf = settlement_prob_mass[:-1] / ds
 
-        return settlement_pdf
+        settlement_grid_centers = (self.settlement_grid[:-1] + self.settlement_grid[1:]) / 2
+        settlement_pdf /= np.trapezoid(settlement_pdf, settlement_grid_centers)
+
+        return settlement_grid_centers, settlement_pdf
 
     def compute_pf_at_time(
             self,
@@ -158,32 +167,30 @@ class ReliabilityPipeline:
             use_prior: bool = False,
     ) -> None:
 
-        settlement_at_forecast_time = self.settlement_forecast[..., self.forecast_times==forecast_time].squeeze()
-
         pf = self.performance.failure_probability(
-            x=settlement_at_forecast_time,
+            x=self.end_diff_settlement,
             pdf=self.jpdf.get_prior() if use_prior else self.jpdf.posterior_pdf,
             CR_grid=self.jpdf.CR_grid,
             k_grid=self.jpdf.k_grid,
         )
 
-        beta = st.norm.ppf(1-pf)
-
-        self.get_settlement_pdf(
-            settleent=settlement_at_forecast_time,
+        settlement_at_forecast_time = self.settlement_forecast[..., self.forecast_times==forecast_time].squeeze()
+        settlement_grid, settlement_pdf = self.get_settlement_pdf(
+            settlement=settlement_at_forecast_time,
             use_prior=use_prior
         )
 
         return {
-            "pf": pf,
-            "beta": beta,
-
+            "pf": pf.item(),
+            "beta": st.norm.ppf(1-pf).item(),
+            "settlement_grid": settlement_grid.tolist(),
+            "settlement_pdf": settlement_pdf.tolist(),
         }
 
 
-    def run_timeline(self, setting: Dict[str, float], verbose=True) -> None:
+    def run_timeline(self, setting: Dict[str, float], verbose=True) -> Dict[str, Any]:
 
-        self.results = {}
+        results = {}
 
         # Collect settlement observations
         def get_observations_up_to(t: float):
@@ -209,10 +216,12 @@ class ReliabilityPipeline:
                 self.jpdf.update(obs_values=obs_values, settlements=settlement_at_obs_time)
 
             # Compute Pf FORECAST for all future times (from t to t_end)
-            future_times = [ft for ft in self.forecast_times if ft >= t]
+            future_times = [ft for ft in self.forecast_times.tolist() if ft >= t]
             beta_forecast_prior = {}
             beta_forecast_posterior = {}
+            settlement_prior_grid = {}
             settlement_forecast_prior = {}
+            settlement_posterior_grid = {}
             settlement_forecast_posterior = {}
 
             for ft in future_times:
@@ -220,33 +229,33 @@ class ReliabilityPipeline:
                 # Prior forecast
                 result_prior = self.compute_pf_at_time(forecast_time=ft, use_prior=True)
                 beta_forecast_prior[ft] = result_prior["beta"]
+                settlement_prior_grid[ft] = result_prior["settlement_grid"]
+                settlement_forecast_prior[ft] = result_prior["settlement_pdf"]
 
                 # Posterior forecast
                 result_posterior = self.compute_pf_at_time(forecast_time=ft, use_prior=False)
                 beta_forecast_posterior[ft] = result_posterior["beta"]
-
-                # Store corrosion ratio PDFs for forecast times
-                settlement_forecast_prior[ft] = result_prior["settlement"]
-                settlement_forecast_posterior[ft] = result_posterior["settlement"]
+                settlement_posterior_grid[ft] = result_posterior["settlement_grid"]
+                settlement_forecast_posterior[ft] = result_posterior["settlement_pdf"]
 
             # Current time results
-            beta_current_prior = beta_forecast_prior[max(beta_forecast_prior)]
-            beta_current_posterior = beta_forecast_posterior[max(beta_forecast_posterior)]
-            beta_current_posterior_proven_strength = beta_forecast_posterior_proven_strength[max(beta_forecast_posterior_proven_strength)]
+            beta_current_prior = beta_forecast_prior[min(beta_forecast_prior)]
+            beta_current_posterior = beta_forecast_posterior[min(beta_forecast_posterior)]
 
-            cr_grid_prior, _ = self.get_corrosion_ratio_pdf(t, self.jpdf.C50_prior)
-
-            self.results[t] = {
+            results[t] = {
                 "time": t,
-                "settlement_obs": settlement_obs,
+                "obs_times": obs_times.tolist(),
+                "settlement_obs": obs_values.tolist(),
                 "prior": {
                     "beta": beta_current_prior,
                     "beta_forecast": beta_forecast_prior,
+                    "settlement_prior_grid": settlement_forecast_prior,
                     "settlement_forecast": settlement_forecast_prior,
                 },
                 "posterior": {
                     "beta": beta_current_posterior,
                     "beta_forecast": beta_forecast_posterior,
+                    "settlement_posterior_grid": settlement_posterior_grid,
                     "settlement_forecast": settlement_forecast_posterior,
                 },
                 # Store JPDF state for snapshot generation
@@ -266,7 +275,7 @@ class ReliabilityPipeline:
                 print(f"  Prior:     Pf={result_prior['pf']:.2e}, beta={result_prior['beta']:.2f}")
                 print(f"  Posterior: Pf={result_posterior['pf']:.2e}, beta={result_posterior['beta']:.2f}")
 
-        return self.results
+        return results
 
 
 def main():

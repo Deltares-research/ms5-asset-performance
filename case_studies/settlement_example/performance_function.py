@@ -39,7 +39,7 @@ class Performance(BasePerformance):
         g = self.lsf(x, None)
         lsf_mask = g * pdf
         pf = np.trapezoid(lsf_mask, k_grid, axis=1)
-        pf = np.trapezoid(pf, CR_grid, axis=0)
+        pf = np.trapezoid(pf, CR_grid)
         return pf
 
 

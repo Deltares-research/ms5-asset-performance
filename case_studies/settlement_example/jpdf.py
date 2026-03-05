@@ -120,7 +120,7 @@ class JPDF:
         if self.CR_pdf is None or self.CR_grid is None or self.k_pdf is None or self.k_grid is None:
             raise ValueError("Variables not initialized. Call set_prior_from_specs first.")
 
-        obs_values_ = obs_values.reshape(obs_values.shape + (1,) * (settlements.ndim - obs_values.ndim))
+        obs_values_ = obs_values.reshape(1, 1, -1)
         loglikes = st.norm(loc=settlements, scale=self.config.obs_error).logpdf(obs_values_).sum(axis=-1)
 
         log_prior = np.log(self.get_prior())
