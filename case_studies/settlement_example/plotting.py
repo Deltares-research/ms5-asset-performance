@@ -94,3 +94,160 @@ def save_jpdf_plots(
 
     print(f"JPDF PNGs saved to {png_dir}")
     print(f"JPDF PDF  saved to {pdf_path}")
+
+
+def _pdf_stats(grid: NDArray, pdf: NDArray):
+    dx = np.diff(grid)
+    cdf = np.concatenate([[0], np.cumsum((pdf[:-1] + pdf[1:]) / 2 * dx)])
+    cdf /= cdf[-1]
+    mean = np.trapezoid(grid * pdf, grid)
+    q025 = np.interp(0.025, cdf, grid)
+    q975 = np.interp(0.975, cdf, grid)
+    return mean, q025, q975
+
+
+def plot_settlement_forecast(
+    time: float,
+    forecast_times: NDArray,
+    settlement_grids: Dict[float, list],
+    settlement_pdfs: Dict[float, list],
+    obs_times: NDArray = None,
+    obs_values: NDArray = None,
+    t_max: float = None,
+) -> plt.Figure:
+
+    ft_sorted = sorted(forecast_times)
+    if t_max is not None:
+        ft_sorted = [ft for ft in ft_sorted if ft <= t_max]
+    means, lo, hi = [], [], []
+
+    for ft in ft_sorted:
+        grid = np.array(settlement_grids[ft])
+        pdf = np.array(settlement_pdfs[ft])
+        m, q025, q975 = _pdf_stats(grid, pdf)
+        means.append(m)
+        lo.append(q025)
+        hi.append(q975)
+
+    means, lo, hi = np.array(means), np.array(lo), np.array(hi)
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(ft_sorted, means, "r-", linewidth=2, label="Mean")
+    ax.fill_between(ft_sorted, lo, hi, alpha=0.2, color="r", label="95% CI")
+
+    if obs_times is not None and obs_values is not None:
+        ax.scatter(obs_times, obs_values, color="k", zorder=5, label="Observations")
+
+    ax.set_xlabel("Time [days]")
+    ax.set_ylabel("Settlement [mm]")
+    ax.set_title(f"Settlement Forecast (posterior at t = {time:.0f} days)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.close()
+
+    return fig
+
+
+def save_settlement_forecast_plots(
+    results: Dict[float, Dict[str, Any]],
+    output_dir: Path,
+    t_max: float = None,
+) -> None:
+
+    png_dir = output_dir / "settlement_forecast"
+    png_dir.mkdir(parents=True, exist_ok=True)
+
+    pdf_path = output_dir / "settlement_forecast.pdf"
+
+    with PdfPages(pdf_path) as pdf:
+        for t, data in results.items():
+            post = data["posterior"]
+            fig = plot_settlement_forecast(
+                time=t,
+                forecast_times=list(post["settlement_posterior_grid"].keys()),
+                settlement_grids=post["settlement_posterior_grid"],
+                settlement_pdfs=post["settlement_forecast"],
+                obs_times=np.array(data["obs_times"]),
+                obs_values=np.array(data["settlement_obs"]),
+                t_max=t_max,
+            )
+            fig.savefig(png_dir / f"settlement_forecast_t{t:.0f}.png", dpi=150, bbox_inches="tight")
+            pdf.savefig(fig)
+
+    print(f"Settlement forecast PNGs saved to {png_dir}")
+    print(f"Settlement forecast PDF  saved to {pdf_path}")
+
+
+def plot_end_diff_settlement(
+    time: float,
+    prior_grid: NDArray,
+    prior_pdf: NDArray,
+    posterior_grid: NDArray,
+    posterior_pdf: NDArray,
+    end_settlement_req: float = None,
+    pf_prior: float = None,
+    pf_posterior: float = None,
+    beta_prior: float = None,
+    beta_posterior: float = None,
+) -> plt.Figure:
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    ax.fill_between(prior_grid, prior_pdf, alpha=0.3, color="b", label="Prior")
+    ax.plot(prior_grid, prior_pdf, "b-", linewidth=1.5)
+    ax.fill_between(posterior_grid, posterior_pdf, alpha=0.3, color="r", label="Posterior")
+    ax.plot(posterior_grid, posterior_pdf, "r-", linewidth=1.5)
+
+    if end_settlement_req is not None:
+        ax.axvline(end_settlement_req, color="k", linestyle="--", linewidth=1.5,
+                   label=f"Requirement ({end_settlement_req})")
+
+    ax.set_xlabel("End differential settlement [mm]")
+    ax.set_ylabel("Density")
+
+    title = f"End Differential Settlement PDF (t = {time:.0f} days)"
+    if pf_prior is not None and pf_posterior is not None:
+        title += f"\nPrior: Pf={pf_prior:.2e}, \u03b2={beta_prior:.2f}  |  Posterior: Pf={pf_posterior:.2e}, \u03b2={beta_posterior:.2f}"
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.close()
+
+    return fig
+
+
+def save_end_diff_settlement_plots(
+    results: Dict[float, Dict[str, Any]],
+    output_dir: Path,
+    end_settlement_req: float = None,
+) -> None:
+
+    png_dir = output_dir / "end_diff_settlement"
+    png_dir.mkdir(parents=True, exist_ok=True)
+
+    pdf_path = output_dir / "end_diff_settlement.pdf"
+
+    with PdfPages(pdf_path) as pdf:
+        for t, data in results.items():
+            diff = data["end_diff_settlement"]
+            fig = plot_end_diff_settlement(
+                time=t,
+                prior_grid=np.array(diff["prior_grid"]),
+                prior_pdf=np.array(diff["prior_pdf"]),
+                posterior_grid=np.array(diff["posterior_grid"]),
+                posterior_pdf=np.array(diff["posterior_pdf"]),
+                end_settlement_req=end_settlement_req,
+                pf_prior=data["prior"]["pf"],
+                pf_posterior=data["posterior"]["pf"],
+                beta_prior=data["prior"]["beta"],
+                beta_posterior=data["posterior"]["beta"],
+            )
+            fig.savefig(png_dir / f"end_diff_settlement_t{t:.0f}.png", dpi=150, bbox_inches="tight")
+            pdf.savefig(fig)
+
+    print(f"End diff settlement PNGs saved to {png_dir}")
+    print(f"End diff settlement PDF  saved to {pdf_path}")

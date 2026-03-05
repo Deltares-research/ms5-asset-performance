@@ -12,7 +12,7 @@ import os
 import json
 from datetime import datetime
 from settlement_engine import get_settlement
-from plotting import save_jpdf_plots
+from plotting import save_jpdf_plots, save_settlement_forecast_plots, save_end_diff_settlement_plots
 
 
 class ReliabilityPipeline:
@@ -141,27 +141,36 @@ class ReliabilityPipeline:
         settlement_grid = np.linspace(settlement_min, settlement_max, 1_001)
         self.settlement_grid = np.sort(np.unique(np.append(settlement_grid, 0)))
 
-    def get_settlement_pdf(self, settlement: NDArray, use_prior: bool = False) -> Tuple[NDArray, NDArray]:
+        diff_min = self.end_diff_settlement.min()
+        diff_max = self.end_diff_settlement.max()
+        diff_grid = np.linspace(diff_min, diff_max, 1_001)
+        self.end_diff_grid = np.sort(np.unique(np.append(diff_grid, 0)))
+
+    def get_settlement_pdf(self, settlement: NDArray, use_prior: bool = False, grid: NDArray = None) -> Tuple[NDArray, NDArray]:
 
         pdf = self.jpdf.get_prior() if use_prior else self.jpdf.posterior_pdf
+        grid = grid if grid is not None else self.settlement_grid
 
         dCR = np.diff(self.jpdf.CR_grid)
         dk = np.diff(self.jpdf.k_grid)
         pdf_centers = (pdf[:-1, :-1] + pdf[:-1, 1:] + pdf[1:, :-1] + pdf[1:, 1:]) / 4
         prob_mass = pdf_centers * dCR[:, np.newaxis] * dk[np.newaxis, :]
 
-        settlement_prob_mass = np.zeros_like(self.settlement_grid)
-        for (s, pm) in zip(settlement.flatten(), prob_mass.flatten()):
-            idx = np.digitize(s, bins=self.settlement_grid) - 1
-            settlement_prob_mass[idx] += pm
+        settlement_centers = (settlement[:-1, :-1] + settlement[:-1, 1:] + settlement[1:, :-1] + settlement[1:, 1:]) / 4
 
-        ds = np.diff(self.settlement_grid)
+        idx = np.digitize(settlement_centers.flatten(), bins=grid) - 1
+        idx = np.clip(idx, 0, len(grid) - 1)
+
+        settlement_prob_mass = np.zeros(len(grid))
+        np.add.at(settlement_prob_mass, idx, prob_mass.flatten())
+
+        ds = np.diff(grid)
         settlement_pdf = settlement_prob_mass[:-1] / ds
 
-        settlement_grid_centers = (self.settlement_grid[:-1] + self.settlement_grid[1:]) / 2
-        settlement_pdf /= np.trapezoid(settlement_pdf, settlement_grid_centers)
+        grid_centers = (grid[:-1] + grid[1:]) / 2
+        settlement_pdf /= np.trapezoid(settlement_pdf, grid_centers)
 
-        return settlement_grid_centers, settlement_pdf
+        return grid_centers, settlement_pdf
 
     def compute_pf_at_time(
             self,
@@ -219,6 +228,8 @@ class ReliabilityPipeline:
 
             # Compute Pf FORECAST for all future times (from t to t_end)
             future_times = [ft for ft in self.forecast_times.tolist() if ft >= t]
+            pf_forecast_prior = {}
+            pf_forecast_posterior = {}
             beta_forecast_prior = {}
             beta_forecast_posterior = {}
             settlement_prior_grid = {}
@@ -230,35 +241,58 @@ class ReliabilityPipeline:
 
                 # Prior forecast
                 result_prior = self.compute_pf_at_time(forecast_time=ft, use_prior=True)
+                pf_forecast_prior[ft] = result_prior["pf"]
                 beta_forecast_prior[ft] = result_prior["beta"]
                 settlement_prior_grid[ft] = result_prior["settlement_grid"]
                 settlement_forecast_prior[ft] = result_prior["settlement_pdf"]
 
                 # Posterior forecast
                 result_posterior = self.compute_pf_at_time(forecast_time=ft, use_prior=False)
+                pf_forecast_posterior[ft] = result_posterior["pf"]
                 beta_forecast_posterior[ft] = result_posterior["beta"]
                 settlement_posterior_grid[ft] = result_posterior["settlement_grid"]
                 settlement_forecast_posterior[ft] = result_posterior["settlement_pdf"]
 
+            # End differential settlement PDFs
+            diff_grid_prior, diff_pdf_prior = self.get_settlement_pdf(
+                self.end_diff_settlement, use_prior=True, grid=self.end_diff_grid
+            )
+            diff_grid_posterior, diff_pdf_posterior = self.get_settlement_pdf(
+                self.end_diff_settlement, use_prior=False, grid=self.end_diff_grid
+            )
+
             # Current time results
-            beta_current_prior = beta_forecast_prior[min(beta_forecast_prior)]
-            beta_current_posterior = beta_forecast_posterior[min(beta_forecast_posterior)]
+            t_min = min(beta_forecast_prior)
+            pf_current_prior = pf_forecast_prior[t_min]
+            pf_current_posterior = pf_forecast_posterior[t_min]
+            beta_current_prior = beta_forecast_prior[t_min]
+            beta_current_posterior = beta_forecast_posterior[t_min]
 
             results[t] = {
                 "time": t,
                 "obs_times": obs_times.tolist(),
                 "settlement_obs": obs_values.tolist(),
                 "prior": {
+                    "pf": pf_current_prior,
                     "beta": beta_current_prior,
+                    "pf_forecast": pf_forecast_prior,
                     "beta_forecast": beta_forecast_prior,
                     "settlement_prior_grid": settlement_forecast_prior,
                     "settlement_forecast": settlement_forecast_prior,
                 },
                 "posterior": {
+                    "pf": pf_current_posterior,
                     "beta": beta_current_posterior,
+                    "pf_forecast": pf_forecast_posterior,
                     "beta_forecast": beta_forecast_posterior,
                     "settlement_posterior_grid": settlement_posterior_grid,
                     "settlement_forecast": settlement_forecast_posterior,
+                },
+                "end_diff_settlement": {
+                    "prior_grid": diff_grid_prior.tolist(),
+                    "prior_pdf": diff_pdf_prior.tolist(),
+                    "posterior_grid": diff_grid_posterior.tolist(),
+                    "posterior_pdf": diff_pdf_posterior.tolist(),
                 },
                 # Store JPDF state for snapshot generation
                 "jpdf_state": {
@@ -350,6 +384,8 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     save_jpdf_plots(results=results, output_dir=output_dir)
+    save_settlement_forecast_plots(results=results, output_dir=output_dir, t_max=config.preload_removal_time)
+    save_end_diff_settlement_plots(results=results, output_dir=output_dir, end_settlement_req=config.end_settlement_req)
 
 
 if __name__ == "__main__":
