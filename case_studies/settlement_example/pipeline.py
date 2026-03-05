@@ -12,6 +12,7 @@ import os
 import json
 from datetime import datetime
 from settlement_engine import get_settlement
+from plotting import save_jpdf_plots
 
 
 class ReliabilityPipeline:
@@ -342,8 +343,13 @@ def main():
     print("\n" + "=" * 60)
     print("STEP 4: Plots")
     print("=" * 60)
-    
-    pass
+
+    username = os.environ.get("USER", "unknown").lower()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    output_dir = get_remote_path() / f"output/results/{username}_{timestamp}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    save_jpdf_plots(results=results, output_dir=output_dir)
 
 
 if __name__ == "__main__":
