@@ -95,12 +95,12 @@ class JPDF:
     def init_priors(self):
 
         n_grid = self.config.n_CR_grid
-        self.CR_grid = np.linspace(0.5, 2.5, n_grid)
+        self.CR_grid = np.linspace(0.01, 4.01, n_grid)
         self.CR_prior = self.variables["CR"].pdf(self.CR_grid)
         self.CR_pdf = self.CR_prior.copy()
         
         n_grid = self.config.n_k_grid
-        self.k_grid = np.linspace(0.5, 2.5, n_grid)
+        self.k_grid = np.linspace(1e-11, 1e-10, n_grid)
         self.k_prior = self.variables["k"].pdf(self.k_grid)
         self.k_pdf = self.k_prior.copy()
 

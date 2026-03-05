@@ -33,9 +33,7 @@ class ReliabilityPipeline:
         self.end_diff_settlement: Optional[NDArray] = None
         self.settlement_forecast: Optional[NDArray] = None
         self.settlement_grid: Optional[NDArray] = None
-
-        # Results
-        self.results: Dict[float, Dict[str, Any]] = {}
+        self.results: Dict[str, Any] = {}
 
     def setup(
         self,
@@ -136,13 +134,13 @@ class ReliabilityPipeline:
         self.end_diff_settlement = settlement_forecast[..., -1] - settlement_forecast[..., -2]
         self.settlement_forecast = settlement_forecast
 
-        settlement_min = min(self.settlement_at_obs_times.min(), self.settlement_forecast.min())
-        settlement_max = max(self.settlement_at_obs_times.max(), self.settlement_forecast.max())
+        settlement_min = min(np.nanmin(self.settlement_at_obs_times), np.nanmin(self.settlement_forecast))
+        settlement_max = max(np.nanmax(self.settlement_at_obs_times), np.nanmax(self.settlement_forecast))
         settlement_grid = np.linspace(settlement_min, settlement_max, 1_001)
         self.settlement_grid = np.sort(np.unique(np.append(settlement_grid, 0)))
 
-        diff_min = self.end_diff_settlement.min()
-        diff_max = self.end_diff_settlement.max()
+        diff_min = np.nanmin(self.end_diff_settlement)
+        diff_max = np.nanmax(self.end_diff_settlement)
         diff_grid = np.linspace(diff_min, diff_max, 1_001)
         self.end_diff_grid = np.sort(np.unique(np.append(diff_grid, 0)))
 
@@ -201,7 +199,7 @@ class ReliabilityPipeline:
 
     def run_timeline(self, setting: Dict[str, float], verbose=True) -> Dict[str, Any]:
 
-        results = {}
+        self.results = {}
 
         # Collect settlement observations
         def get_observations_up_to(t: float):
@@ -268,7 +266,7 @@ class ReliabilityPipeline:
             beta_current_prior = beta_forecast_prior[t_min]
             beta_current_posterior = beta_forecast_posterior[t_min]
 
-            results[t] = {
+            self.results[t] = {
                 "time": t,
                 "obs_times": obs_times.tolist(),
                 "settlement_obs": obs_values.tolist(),
@@ -302,8 +300,8 @@ class ReliabilityPipeline:
                     "k_grid": self.jpdf.k_grid.tolist(),
                     "k_prior": self.jpdf.k_prior.tolist(),
                     "k_posterior": self.jpdf.k_pdf.tolist(),
-                    "prior": self.jpdf.get_prior(),
-                    "posterior": self.jpdf.posterior_pdf,
+                    "prior": self.jpdf.get_prior().tolist(),
+                    "posterior": self.jpdf.posterior_pdf.tolist(),
                 },
             }
 
@@ -311,7 +309,7 @@ class ReliabilityPipeline:
                 print(f"  Prior:     Pf={result_prior['pf']:.2e}, beta={result_prior['beta']:.2f}")
                 print(f"  Posterior: Pf={result_posterior['pf']:.2e}, beta={result_posterior['beta']:.2f}")
 
-        return results
+        return self.results
 
     def save_results(self, filename: str = "reliability_results.json") -> None:
         """Save results to file."""
@@ -355,7 +353,7 @@ def main():
     setting = load_json("case_study_setting.json")
     cache_dir = get_remote_path() / "output/cache"
     cache_dir.mkdir(exist_ok=True, parents=True)
-    pipeline.init_settlements(setting=setting, force_rebuild=False, cache_dir=cache_dir)
+    pipeline.init_settlements(setting=setting, force_rebuild=True, cache_dir=cache_dir)
 
     # =========================================================================
     # STEP 3: Run timeline analysis
