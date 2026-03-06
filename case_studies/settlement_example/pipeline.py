@@ -479,6 +479,11 @@ def main():
     os.environ["REMOTE_DATA_PATH"] = str(get_remote_path()/"input")
     specs_path = Path(os.environ["REMOTE_DATA_PATH"]) / "case_study_specifications.json"
 
+    username = os.environ.get("USER", "unknown").lower()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    output_dir = get_remote_path() / f"output/results/{username}_{timestamp}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     # Initialize pipeline
     config = CaseStudyConfig.from_json(specs_path)
     pipeline = ReliabilityPipeline(config=config, specs_path=specs_path)
@@ -522,11 +527,6 @@ def main():
     print("\n" + "=" * 60)
     print("STEP 4: Plots")
     print("=" * 60)
-
-    username = os.environ.get("USER", "unknown").lower()
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    output_dir = get_remote_path() / f"output/results/{username}_{timestamp}"
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     with open(specs_path, "r") as f:
         specs = json.load(f)
