@@ -142,14 +142,14 @@ class ReliabilityPipeline:
         settlement_grid = np.linspace(settlement_min, settlement_max, n_settlement_grid)
         self.settlement_grid = np.sort(np.unique(np.append(settlement_grid, 0)))
 
-        diff_min = np.nanmin(self.settlement_residual)
-        diff_max = np.nanmax(self.settlement_residual)
-        diff_grid = np.linspace(diff_min, diff_max, n_settlement_grid)
-        self.end_diff_grid = np.sort(np.unique(np.append(diff_grid, 0)))
+        residual_settlement_min = np.nanmin(self.settlement_residual)
+        residual_settlement_max = np.nanmax(self.settlement_residual)
+        residual_settlement_grid = np.linspace(residual_settlement_min, residual_settlement_max, n_settlement_grid)
+        self.residual_settlement_grid = np.sort(np.unique(np.append(residual_settlement_grid, 0)))
 
     def get_settlement_pdf(self, settlement: NDArray, use_prior: bool = False, grid: NDArray = None) -> Tuple[NDArray, NDArray]:
 
-        pdf = self.jpdf.get_prior() if use_prior else self.jpdf.posterior_pdf
+        pdf = self.jpdf.get_prior() if use_prior else self.jpdf.pdf
         grid = grid if grid is not None else self.settlement_grid
 
         dCR = np.diff(self.jpdf.CR_grid)
@@ -181,7 +181,7 @@ class ReliabilityPipeline:
 
         pf = self.performance.failure_probability(
             x=self.settlement_residual,
-            pdf=self.jpdf.get_prior() if use_prior else self.jpdf.posterior_pdf,
+            pdf=self.jpdf.get_prior() if use_prior else self.jpdf.pdf,
             CR_grid=self.jpdf.CR_grid,
             k_grid=self.jpdf.k_grid,
         )
@@ -257,16 +257,16 @@ class ReliabilityPipeline:
                 settlement_posterior_grid[pt] = result_posterior["settlement_grid"]
                 settlement_forecast_posterior[pt] = result_posterior["settlement_pdf"]
 
-            # End differential settlement PDFs
-            diff_grid_prior, diff_pdf_prior = self.get_settlement_pdf(
+            # Residual settlement PDFs
+            residual_settlement_grid_prior, residual_settlement_pdf_prior = self.get_settlement_pdf(
                 settlement=self.settlement_residual,
                 use_prior=True,
-                grid=self.end_diff_grid,
+                grid=self.residual_settlement_grid,
             )
-            diff_grid_posterior, diff_pdf_posterior = self.get_settlement_pdf(
+            residual_settlement_grid_posterior, residual_settlement_pdf_posterior = self.get_settlement_pdf(
                 settlement=self.settlement_residual,
                 use_prior=False,
-                grid=self.end_diff_grid,
+                grid=self.residual_settlement_grid,
             )
 
             # Current time results
@@ -297,10 +297,10 @@ class ReliabilityPipeline:
                     "settlement_forecast": settlement_forecast_posterior,
                 },
                 "settlement_residual": {
-                    "prior_grid": diff_grid_prior.tolist(),
-                    "prior_pdf": diff_pdf_prior.tolist(),
-                    "posterior_grid": diff_grid_posterior.tolist(),
-                    "posterior_pdf": diff_pdf_posterior.tolist(),
+                    "prior_grid": residual_settlement_grid_prior.tolist(),
+                    "prior_pdf": residual_settlement_pdf_prior.tolist(),
+                    "posterior_grid": residual_settlement_grid_posterior.tolist(),
+                    "posterior_pdf": residual_settlement_pdf_posterior.tolist(),
                 },
                 # Store JPDF state for snapshot generation
                 "jpdf_state": {
@@ -311,7 +311,7 @@ class ReliabilityPipeline:
                     "k_prior": self.jpdf.k_prior.tolist(),
                     "k_posterior": self.jpdf.k_pdf.tolist(),
                     "prior": self.jpdf.get_prior().tolist(),
-                    "posterior": self.jpdf.posterior_pdf.tolist(),
+                    "posterior": self.jpdf.pdf.tolist(),
                 },
             }
 

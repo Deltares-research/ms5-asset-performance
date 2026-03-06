@@ -44,7 +44,7 @@ def plot_jpdf_snapshot(
     if k_true is not None:
         ax_main.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
     if CR_true is not None and k_true is not None:
-        ax_main.plot(CR_true, k_true, "r+", markersize=15, markeredgewidth=2.5, zorder=5)
+        ax_main.plot(CR_true, k_true, "rx", markersize=15, markeredgewidth=2.5, zorder=5)
     ax_main.set_xlabel("CR [-]")
     ax_main.set_ylabel("k [-]")
     ax_main.grid(True, alpha=0.3)
@@ -55,7 +55,7 @@ def plot_jpdf_snapshot(
     ax_top.fill_between(CR_grid, CR_posterior, alpha=0.3, color="r", label="Posterior")
     ax_top.plot(CR_grid, CR_posterior, "r-", linewidth=1.5)
     if CR_true is not None:
-        ax_top.axvline(CR_true, color="red", linestyle="--", linewidth=1.5, label=f"True ({CR_true})")
+        ax_top.axvline(CR_true, color="red", linestyle="--", linewidth=1.5, label=f"True")
     ax_top.set_ylabel("Density")
     ax_top.legend(fontsize=8)
     ax_top.grid(True, alpha=0.3)
@@ -172,14 +172,14 @@ def plot_settlement_forecast(
     fore = np.arange(len(ft_arr)) >= t_split_idx
 
     if prior_grids is not None and prior_pdfs is not None:
-        ax.plot(ft_arr[hind], means_pr[hind], "b-", linewidth=2, label="Prior hindcast")
+        ax.plot(ft_arr[hind], means_pr[hind], "b", linewidth=2, label="Prior hindcast")
         ax.plot(ft_arr[fore], means_pr[fore], "b--", linewidth=2, label="Prior forecast")
         ax.fill_between(ft_arr[hind], lo_pr[hind], hi_pr[hind], alpha=0.15, color="b")
         ax.fill_between(ft_arr[fore], lo_pr[fore], hi_pr[fore], alpha=0.08, color="b")
         ax.plot(ft_arr[fore], lo_pr[fore], "b--", linewidth=0.8, alpha=0.5)
         ax.plot(ft_arr[fore], hi_pr[fore], "b--", linewidth=0.8, alpha=0.5)
 
-    ax.plot(ft_arr[hind], means[hind], "r-", linewidth=2, label="Posterior hindcast")
+    ax.plot(ft_arr[hind], means[hind], "r", linewidth=2, label="Posterior hindcast")
     ax.plot(ft_arr[fore], means[fore], "r--", linewidth=2, label="Posterior forecast")
     ax.fill_between(ft_arr[hind], lo[hind], hi[hind], alpha=0.2, color="r")
     ax.fill_between(ft_arr[fore], lo[fore], hi[fore], alpha=0.1, color="r")

@@ -37,7 +37,7 @@ class JPDF:
         self.k_prior: Optional[NDArray] = None
         self.k_pdf: Optional[NDArray] = None
 
-        self.posterior_pdf: Optional[NDArray] = None
+        self.pdf: Optional[NDArray] = None
 
         # Performance outputs
         self.G_samples: Optional[Dict[float, NDArray]] = None  # g values per time
@@ -91,7 +91,7 @@ class JPDF:
 
         # Initialize priors from specs
         self.init_priors()
-        self.posterior_pdf = self.get_prior()
+        self.pdf = self.get_prior()
         self.CR_pdf = self.CR_prior
         self.k_pdf = self.k_prior
 
@@ -117,8 +117,8 @@ class JPDF:
         return prior
 
     def reset_to_priors(self) -> None:
-        if self.posterior_pdf is not None:
-            self.posterior_pdf = self.get_prior()
+        if self.pdf is not None:
+            self.pdf = self.get_prior()
         if self.CR_prior is not None:
             self.CR_pdf = self.CR_prior.copy()
         if self.k_prior is not None:
@@ -140,9 +140,9 @@ class JPDF:
         integral = np.trapezoid(integral, self.CR_grid, axis=0)
         post /= integral
 
-        self.posterior_pdf = post.copy()
-        self.CR_pdf = np.trapezoid(self.posterior_pdf, self.k_grid, axis=1)
-        self.k_pdf = np.trapezoid(self.posterior_pdf, self.CR_grid, axis=0)
+        self.pdf = post.copy()
+        self.CR_pdf = np.trapezoid(self.pdf, self.k_grid, axis=1)
+        self.k_pdf = np.trapezoid(self.pdf, self.CR_grid, axis=0)
 
     def get_stats(self) -> Dict[str, float]:
 
