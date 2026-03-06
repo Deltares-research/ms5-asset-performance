@@ -19,7 +19,7 @@ if __name__ == "__main__":
 
     true_vars = {row["name"]: row["true"] for row in specs["variables"]}
 
-    times = np.linspace(30, specs["parameters"]["preload_removal_time"], 12)
+    times = np.linspace(30, specs["parameters"]["preload_removal_time"], 36)
 
     settlements = get_settlement(
         t=times,

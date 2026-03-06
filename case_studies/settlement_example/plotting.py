@@ -127,6 +127,8 @@ def plot_settlement_forecast(
     forecast_times: NDArray,
     settlement_grids: Dict[float, list],
     settlement_pdfs: Dict[float, list],
+    prior_grids: Dict[float, list] = None,
+    prior_pdfs: Dict[float, list] = None,
     obs_times: NDArray = None,
     obs_values: NDArray = None,
     obs_error: float = None,
@@ -136,8 +138,21 @@ def plot_settlement_forecast(
     ft_sorted = sorted(forecast_times)
     if t_max is not None:
         ft_sorted = [ft for ft in ft_sorted if ft <= t_max]
-    means, lo, hi = [], [], []
 
+    # Prior
+    if prior_grids is not None and prior_pdfs is not None:
+        means_pr, lo_pr, hi_pr = [], [], []
+        for ft in ft_sorted:
+            grid = np.array(prior_grids[ft])
+            pdf = np.array(prior_pdfs[ft])
+            m, q025, q975 = _pdf_stats(grid, pdf)
+            means_pr.append(m)
+            lo_pr.append(q025)
+            hi_pr.append(q975)
+        means_pr, lo_pr, hi_pr = np.array(means_pr), np.array(lo_pr), np.array(hi_pr)
+
+    # Posterior
+    means, lo, hi = [], [], []
     for ft in ft_sorted:
         grid = np.array(settlement_grids[ft])
         pdf = np.array(settlement_pdfs[ft])
@@ -145,12 +160,16 @@ def plot_settlement_forecast(
         means.append(m)
         lo.append(q025)
         hi.append(q975)
-
     means, lo, hi = np.array(means), np.array(lo), np.array(hi)
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(ft_sorted, means, "r-", linewidth=2, label="Mean")
-    ax.fill_between(ft_sorted, lo, hi, alpha=0.2, color="r", label="95% CI")
+
+    if prior_grids is not None and prior_pdfs is not None:
+        ax.plot(ft_sorted, means_pr, "b-", linewidth=2, label="Prior mean")
+        ax.fill_between(ft_sorted, lo_pr, hi_pr, alpha=0.15, color="b", label="Prior 95% CI")
+
+    ax.plot(ft_sorted, means, "r-", linewidth=2, label="Posterior mean")
+    ax.fill_between(ft_sorted, lo, hi, alpha=0.2, color="r", label="Posterior 95% CI")
 
     if obs_times is not None and obs_values is not None:
         ci = 1.96 * obs_error if obs_error is not None else None
@@ -185,12 +204,15 @@ def save_settlement_forecast_plots(
 
     with PdfPages(pdf_path) as pdf:
         for t, data in results.items():
+            prior = data["prior"]
             post = data["posterior"]
             fig = plot_settlement_forecast(
                 time=t,
                 forecast_times=list(post["settlement_posterior_grid"].keys()),
                 settlement_grids=post["settlement_posterior_grid"],
                 settlement_pdfs=post["settlement_forecast"],
+                prior_grids=prior["settlement_prior_grid"],
+                prior_pdfs=prior["settlement_forecast"],
                 obs_times=np.array(data["obs_times"]),
                 obs_values=np.array(data["settlement_obs"]),
                 obs_error=obs_error,

@@ -136,12 +136,12 @@ class ReliabilityPipeline:
 
         settlement_min = min(np.nanmin(self.settlement_at_obs_times), np.nanmin(self.settlement_forecast))
         settlement_max = max(np.nanmax(self.settlement_at_obs_times), np.nanmax(self.settlement_forecast))
-        settlement_grid = np.linspace(settlement_min, settlement_max, 1_001)
+        settlement_grid = np.linspace(settlement_min, settlement_max, 201)
         self.settlement_grid = np.sort(np.unique(np.append(settlement_grid, 0)))
 
         diff_min = np.nanmin(self.settlement_residual)
         diff_max = np.nanmax(self.settlement_residual)
-        diff_grid = np.linspace(diff_min, diff_max, 1_001)
+        diff_grid = np.linspace(diff_min, diff_max, 201)
         self.end_diff_grid = np.sort(np.unique(np.append(diff_grid, 0)))
 
     def get_settlement_pdf(self, settlement: NDArray, use_prior: bool = False, grid: NDArray = None) -> Tuple[NDArray, NDArray]:
@@ -283,7 +283,7 @@ class ReliabilityPipeline:
                     "beta": beta_current_prior,
                     "pf_forecast": pf_forecast_prior,
                     "beta_forecast": beta_forecast_prior,
-                    "settlement_prior_grid": settlement_forecast_prior,
+                    "settlement_prior_grid": settlement_prior_grid,
                     "settlement_forecast": settlement_forecast_prior,
                 },
                 "posterior": {
