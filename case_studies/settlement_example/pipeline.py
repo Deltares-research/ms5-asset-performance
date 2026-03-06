@@ -12,7 +12,7 @@ import os
 import json
 from datetime import datetime
 from settlement_engine import get_settlement
-from plotting import save_jpdf_plots, save_settlement_forecast_plots, save_settlement_residual_plots
+from plotting import save_jpdf_plots, save_settlement_forecast_plots, save_settlement_residual_plots, make_gifs
 
 
 class ReliabilityPipeline:
@@ -397,10 +397,21 @@ def main():
     CR_true = variables.get("CR", {}).get("true")
     k_true = variables.get("k", {}).get("true")
 
-    save_jpdf_plots(results=results, output_dir=output_dir, CR_true=CR_true, k_true=k_true)
     obs_values = np.array([float(v) for v in setting.values()])
-    save_settlement_forecast_plots(results=results, output_dir=output_dir, t_max=config.preload_removal_time + 5, obs_error=config.obs_error, y_max=obs_values.max())
-    save_settlement_residual_plots(results=results, output_dir=output_dir, end_settlement_req=config.end_settlement_req)
+    save_jpdf_plots(results=results, output_dir=output_dir, CR_true=CR_true, k_true=k_true)
+    save_settlement_forecast_plots(
+        results=results,
+        output_dir=output_dir,
+        t_max=config.preload_removal_time+5,
+        obs_error=config.obs_error,
+        y_max=obs_values.max()
+    )
+    save_settlement_residual_plots(
+        results=results,
+        output_dir=output_dir,
+        end_settlement_req=config.end_settlement_req
+    )
+    make_gifs(output_dir)
 
 
 if __name__ == "__main__":

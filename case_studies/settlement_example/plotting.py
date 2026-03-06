@@ -202,7 +202,7 @@ def plot_settlement_forecast(
         ax.set_ylim(0, y_max * 1.05)
     else:
         ax.set_ylim(bottom=0)
-    ax.legend()
+    ax.legend(loc="upper left", fontsize=8)
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
@@ -336,3 +336,26 @@ def save_settlement_residual_plots(
 
     print(f"End diff settlement PNGs saved to {png_dir}")
     print(f"End diff settlement PDF  saved to {pdf_path}")
+
+
+def make_gifs(output_dir: Path, duration: int = 500) -> None:
+    from PIL import Image
+
+    for png_dir in output_dir.iterdir():
+        if not png_dir.is_dir():
+            continue
+        import re
+        pngs = sorted(png_dir.glob("*.png"), key=lambda p: float(re.search(r'(\d+\.?\d*)', p.stem).group(1)))
+        if len(pngs) < 2:
+            continue
+
+        frames = [Image.open(p) for p in pngs]
+        gif_path = output_dir / f"{png_dir.name}.gif"
+        frames[0].save(
+            gif_path,
+            save_all=True,
+            append_images=frames[1:],
+            duration=duration,
+            loop=0,
+        )
+        print(f"GIF saved to {gif_path}")
