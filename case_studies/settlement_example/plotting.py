@@ -1,3 +1,11 @@
+"""
+Plotting functions for the settlement reliability analysis.
+
+Generates corner plots of the joint (CR, k) PDF, settlement forecast plots
+with prior/posterior comparison and hindcast/forecast distinction, residual
+settlement PDF plots, reliability index evolution, and animated GIFs.
+"""
+
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -19,6 +27,21 @@ def plot_jpdf_snapshot(
     CR_true: float = None,
     k_true: float = None,
 ) -> plt.Figure:
+    """Corner plot of the posterior JPDF with prior overlay.
+
+    Layout: center contour plot (posterior filled + prior dashed white),
+    top marginal for CR, right marginal for k. True values shown as
+    red dashed lines with an x at their intersection.
+
+    Args:
+        time: Current observation time [days] (shown in title).
+        CR_grid, CR_prior, CR_posterior: Grid and marginal PDFs for CR.
+        k_grid, k_prior, k_posterior: Grid and marginal PDFs for k.
+        CR_true, k_true: True parameter values for reference markers.
+
+    Returns:
+        Matplotlib Figure.
+    """
 
     fig = plt.figure(figsize=(8, 8))
     fig.suptitle(f"JPDF at t = {time:.0f} days", fontsize=13, fontweight="bold")
@@ -90,6 +113,18 @@ def plot_jpdf_prior(
     CR_true: float = None,
     k_true: float = None,
 ) -> plt.Figure:
+    """Corner plot of the prior JPDF (no posterior overlay).
+
+    Same layout as plot_jpdf_snapshot but only shows the prior distribution.
+
+    Args:
+        CR_grid, CR_prior: Grid and marginal prior PDF for CR.
+        k_grid, k_prior: Grid and marginal prior PDF for k.
+        CR_true, k_true: True parameter values for reference markers.
+
+    Returns:
+        Matplotlib Figure.
+    """
 
     fig = plt.figure(figsize=(8, 8))
     fig.suptitle("JPDF Prior", fontsize=13, fontweight="bold")
@@ -152,6 +187,15 @@ def save_jpdf_plots(
     CR_true: float = None,
     k_true: float = None,
 ) -> None:
+    """Save JPDF corner plots: one prior-only plot + one per observation time.
+
+    Outputs PNGs to a subdirectory and a collected multi-page PDF.
+
+    Args:
+        results: Pipeline results dict (keyed by observation time).
+        output_dir: Directory for output files.
+        CR_true, k_true: True parameter values for reference markers.
+    """
 
     png_dir = output_dir / "pdfs"
     png_dir.mkdir(parents=True, exist_ok=True)
@@ -193,6 +237,15 @@ def save_jpdf_plots(
 
 
 def _pdf_stats(grid: NDArray, pdf: NDArray):
+    """Compute mean, 2.5th and 97.5th percentiles from a discrete PDF.
+
+    Args:
+        grid: 1D array of grid values.
+        pdf: 1D array of PDF values at grid points.
+
+    Returns:
+        Tuple of (mean, q025, q975).
+    """
     dx = np.diff(grid)
     cdf = np.concatenate([[0], np.cumsum((pdf[:-1] + pdf[1:]) / 2 * dx)])
     cdf /= cdf[-1]
@@ -215,6 +268,26 @@ def plot_settlement_forecast(
     t_max: float = None,
     y_max: float = None,
 ) -> plt.Figure:
+    """Plot settlement forecast with prior (blue) and posterior (red).
+
+    Distinguishes hindcast (solid lines, up to current time) from forecast
+    (dashed lines, after current time). Shows 95% confidence intervals as
+    shaded bands and observations as black dots with error bars.
+
+    Args:
+        time: Current observation time [days].
+        forecast_times: List of all forecast evaluation times.
+        settlement_grids: Dict mapping forecast time to settlement grid.
+        settlement_pdfs: Dict mapping forecast time to settlement PDF.
+        prior_grids, prior_pdfs: Same as above but for the prior.
+        obs_times, obs_values: Observation data.
+        obs_error: Standard deviation of measurement error [m].
+        t_max: Maximum time to display on x-axis.
+        y_max: Maximum settlement for y-axis scaling.
+
+    Returns:
+        Matplotlib Figure.
+    """
 
     ft_sorted = sorted(forecast_times)
     if t_max is not None:
@@ -297,6 +370,15 @@ def save_settlement_forecast_plots(
     obs_error: float = None,
     y_max: float = None,
 ) -> None:
+    """Save settlement forecast plots: one per observation time.
+
+    Args:
+        results: Pipeline results dict.
+        output_dir: Directory for output files.
+        t_max: Maximum time for x-axis.
+        obs_error: Observation measurement error for error bars.
+        y_max: Maximum settlement for consistent y-axis scaling.
+    """
 
     png_dir = output_dir / "settlement_forecast"
     png_dir.mkdir(parents=True, exist_ok=True)
@@ -340,6 +422,23 @@ def plot_settlement_residual(
     beta_posterior: float = None,
     y_max: float = None,
 ) -> plt.Figure:
+    """Plot prior and posterior PDFs of residual settlement.
+
+    Shows Gaussian-smoothed PDFs, the allowable settlement requirement line,
+    and prior/posterior failure probabilities and reliability indices in the title.
+
+    Args:
+        time: Current observation time [days].
+        prior_grid, prior_pdf: Prior residual settlement PDF.
+        posterior_grid, posterior_pdf: Posterior residual settlement PDF.
+        end_settlement_req: Allowable residual settlement [m].
+        pf_prior, pf_posterior: Failure probabilities.
+        beta_prior, beta_posterior: Reliability indices.
+        y_max: Maximum density for consistent y-axis across time steps.
+
+    Returns:
+        Matplotlib Figure.
+    """
 
     fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -382,6 +481,16 @@ def save_settlement_residual_plots(
     output_dir: Path,
     end_settlement_req: float = None,
 ) -> None:
+    """Save residual settlement PDF plots with consistent y-axis scaling.
+
+    Computes a global y-max across all time steps (after smoothing) so
+    that all frames share the same y-axis range for GIF animation.
+
+    Args:
+        results: Pipeline results dict.
+        output_dir: Directory for output files.
+        end_settlement_req: Allowable residual settlement [m].
+    """
 
     png_dir = output_dir / "settlement_residual"
     png_dir.mkdir(parents=True, exist_ok=True)
@@ -423,6 +532,18 @@ def plot_beta_over_time(
     results: Dict[float, Dict[str, Any]],
     beta_req: float = None,
 ) -> plt.Figure:
+    """Plot the reliability index (beta) over observation time.
+
+    Shows the prior beta as a horizontal blue line and the posterior beta
+    as a red line with dots. Optionally shows the beta requirement.
+
+    Args:
+        results: Pipeline results dict.
+        beta_req: Required reliability index (shown as dashed black line).
+
+    Returns:
+        Matplotlib Figure.
+    """
 
     times = sorted(results.keys())
     beta_prior = results[times[0]]["prior"]["beta"]
@@ -454,6 +575,13 @@ def save_beta_over_time_plot(
     output_dir: Path,
     beta_req: float = None,
 ) -> None:
+    """Save the beta-over-time plot as a single PNG.
+
+    Args:
+        results: Pipeline results dict.
+        output_dir: Directory for output file.
+        beta_req: Required reliability index.
+    """
 
     fig = plot_beta_over_time(results=results, beta_req=beta_req)
     fig.savefig(output_dir / "beta_over_time.png", dpi=150, bbox_inches="tight")
@@ -462,6 +590,16 @@ def save_beta_over_time_plot(
 
 
 def make_gifs(output_dir: Path, duration: int = 500) -> None:
+    """Create animated GIFs from PNG sequences in subdirectories.
+
+    Scans each subdirectory of output_dir for PNG files, sorts them by the
+    numeric value in the filename (e.g. "t30", "t39"), and assembles them
+    into a looping GIF.
+
+    Args:
+        output_dir: Parent directory containing PNG subdirectories.
+        duration: Frame duration in milliseconds.
+    """
     from PIL import Image
 
     for png_dir in output_dir.iterdir():

@@ -1,3 +1,15 @@
+"""
+Reliability pipeline for settlement analysis with Bayesian updating.
+
+Orchestrates the full analysis workflow:
+1. Setup — load prior distributions and performance function from specs.
+2. Settlements — pre-evaluate settlement on the (CR, k) grid for all times.
+3. Timeline — iterate over observation times, update the posterior via Bayes,
+   compute failure probability and settlement PDFs at each step.
+4. Plots — generate JPDF snapshots, settlement forecasts, residual PDFs,
+   and reliability index over time.
+"""
+
 import numpy as np
 from scipy import stats as st
 from numpy.typing import NDArray
@@ -17,11 +29,26 @@ from plotting import save_jpdf_plots, save_settlement_forecast_plots, save_settl
 
 class ReliabilityPipeline:
 
+    """Bayesian reliability analysis pipeline for settlement prediction.
+
+    Manages the joint PDF of soil parameters (CR, k), pre-evaluates
+    settlements on the parameter grid, performs sequential Bayesian updating
+    as observations arrive, and computes failure probabilities and
+    settlement PDFs at each time step.
+    """
+
     def __init__(
         self,
         config: Optional[CaseStudyConfig] = None,
         specs_path: Optional[Path | str] = None,
     ) -> None:
+        """Initialize the pipeline.
+
+        Args:
+            config: Case study configuration. Uses defaults if None.
+            specs_path: Path to the JSON specifications file containing
+                variable distributions and analysis parameters.
+        """
 
         self.config = config or CaseStudyConfig()
         self.specs_path = specs_path
@@ -40,6 +67,12 @@ class ReliabilityPipeline:
         n_samples: int = 100_000,
         seed: int = 42,
     ) -> None:
+        """Load prior distributions and initialize the performance function.
+
+        Args:
+            n_samples: Number of Monte Carlo samples (reserved for future use).
+            seed: Random seed (reserved for future use).
+        """
 
         # Initialize JPDF
         self.jpdf = JPDF(name="settlement", config=self.config)
@@ -52,7 +85,15 @@ class ReliabilityPipeline:
         params = specs.get("parameters", {})
         self.performance = Performance(name="settlement", parameters=params)
 
-    def init_times(self, setting) -> None:
+    def init_times(self, setting: Dict[str, float]) -> None:
+        """Build observation and forecast time arrays from the setting.
+
+        Forecast times include: regular intervals from 0 to preload removal,
+        the preload removal time, the end time, and all observation times.
+
+        Args:
+            setting: Dict mapping observation time strings to settlement values.
+        """
 
         self.obs_times = np.array([float(key) for key in setting.keys()])
 
@@ -71,6 +112,20 @@ class ReliabilityPipeline:
             cache_dir: Optional[Path] = None,
             force_rebuild: bool = False
     ) -> None:
+        """Pre-evaluate settlements on the (CR, k) grid for all time steps.
+
+        Computes settlement arrays at observation times and forecast times
+        using the settlement engine. Results are cached to disk as .npy files
+        to avoid recomputation on subsequent runs.
+
+        Also computes the residual settlement (end_time - preload_removal_time)
+        and builds the 1D grids used for settlement PDF computation.
+
+        Args:
+            setting: Dict mapping observation time strings to settlement values.
+            cache_dir: Directory for caching settlement arrays.
+            force_rebuild: If True, recompute even if cache exists.
+        """
 
         self.init_times(setting)
 
@@ -148,6 +203,59 @@ class ReliabilityPipeline:
         self.residual_settlement_grid = np.sort(np.unique(np.append(residual_settlement_grid, 0)))
 
     def get_settlement_pdf(self, settlement: NDArray, use_prior: bool = False, grid: NDArray = None) -> Tuple[NDArray, NDArray]:
+        """Transform the 2D joint (CR, k) PDF into a 1D settlement PDF.
+
+        This method performs a change of variables from the parameter space
+        (CR, k) to the settlement space. Because the mapping from (CR, k) to
+        settlement is nonlinear and not analytically invertible, a numerical
+        binning approach is used instead of the Jacobian method to preserve
+        the PDF without distortion.
+
+        Algorithm — step by step:
+
+        1. **Cell-center averaging**: Both the joint PDF and the settlement
+           array live on a (n_CR, n_k) grid of *edge* values. To compute
+           probability *mass* per cell, we need values at cell centers. The
+           2D arrays are averaged over their four corner nodes:
+
+               pdf_centers[i,j] = mean(pdf[i,j], pdf[i,j+1], pdf[i+1,j], pdf[i+1,j+1])
+
+           This produces arrays of shape (n_CR-1, n_k-1).
+
+        2. **Probability mass**: Each cell's probability mass is:
+
+               prob_mass[i,j] = pdf_centers[i,j] * dCR[i] * dk[j]
+
+           where dCR and dk are the spacings between adjacent grid points.
+           The total of all prob_mass entries sums to ~1.0 (up to
+           discretization error).
+
+        3. **Binning into settlement space**: Each cell has a settlement
+           value (settlement_centers[i,j]) and a probability mass. We assign
+           each cell to a bin of the 1D settlement grid using np.digitize.
+           All probability mass landing in the same settlement bin is summed
+           via np.add.at (unbuffered addition to handle duplicate indices).
+
+        4. **Mass → density**: The accumulated probability mass per bin is
+           divided by the bin width (ds) to convert to probability density.
+           This yields a histogram-like PDF on the settlement grid centers.
+
+        5. **Normalization**: The resulting PDF is normalized so that its
+           integral (via trapezoidal rule) equals 1.
+
+        Args:
+            settlement: 2D array of shape (n_CR, n_k) with settlement values
+                for each parameter combination (e.g. at a specific time).
+            use_prior: If True, use the prior joint PDF. Otherwise use the
+                current (posterior) joint PDF.
+            grid: 1D array of settlement bin edges. If None, uses
+                self.settlement_grid.
+
+        Returns:
+            Tuple of (grid_centers, settlement_pdf):
+                - grid_centers: 1D array of bin center values, length len(grid)-1.
+                - settlement_pdf: 1D array of PDF values at those centers.
+        """
 
         pdf = self.jpdf.get_prior() if use_prior else self.jpdf.pdf
         grid = grid if grid is not None else self.settlement_grid
@@ -177,7 +285,16 @@ class ReliabilityPipeline:
 
         return grid_centers, settlement_pdf
 
-    def compute_pf_at_time(self, forecast_time: float, use_prior: bool = False) -> None:
+    def compute_pf_at_time(self, forecast_time: float, use_prior: bool = False) -> Dict[str, Any]:
+        """Compute failure probability, reliability index, and settlement PDF at a forecast time.
+
+        Args:
+            forecast_time: The time at which to evaluate [days].
+            use_prior: If True, use the prior PDF. Otherwise use the posterior.
+
+        Returns:
+            Dict with keys "pf", "beta", "settlement_grid", "settlement_pdf".
+        """
 
         pf = self.performance.failure_probability(
             x=self.settlement_residual,
@@ -203,7 +320,27 @@ class ReliabilityPipeline:
         }
 
 
-    def run_timeline(self, setting: Dict[str, float], verbose=True) -> Dict[str, Any]:
+    def run_timeline(self, setting: Dict[str, float], verbose: bool = True) -> Dict[str, Any]:
+        """Run the sequential Bayesian analysis over all observation times.
+
+        For each observation time:
+        1. Collects all observations up to that time.
+        2. Resets the JPDF to the prior and performs a full Bayesian update
+           with all available observations (batch update, not incremental).
+        3. Computes prior and posterior failure probabilities and settlement
+           PDFs at all forecast times.
+        4. Stores the JPDF state (grids, marginals, joint PDF) for later
+           visualization.
+
+        Args:
+            setting: Dict mapping observation time strings to settlement
+                value strings.
+            verbose: If True, print progress and results.
+
+        Returns:
+            Dict mapping observation times to result dicts containing prior,
+            posterior, settlement residual PDFs, and JPDF state.
+        """
 
         self.results = {}
 
@@ -322,7 +459,7 @@ class ReliabilityPipeline:
         return self.results
 
     def save_results(self, filename: str = "reliability_results.json") -> None:
-        """Save results to file."""
+        """Save analysis results to a JSON file in the remote output folder."""
         # Convert to JSON-serializable format
         results_json = {}
         for t, data in self.results.items():

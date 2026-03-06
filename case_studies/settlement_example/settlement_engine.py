@@ -1,3 +1,13 @@
+"""
+Settlement computation engine using Terzaghi consolidation theory and
+the NEN-Bjerrum settlement model.
+
+Computes time-dependent primary consolidation settlement for a soil layer
+under a given stress history, parameterized by compression ratio (CR) and
+permeability (k). Supports vectorized evaluation over grids of CR and k
+for use in probabilistic analyses.
+"""
+
 import numpy as np
 from numpy.typing import NDArray, ArrayLike
 import scipy.stats as st
@@ -8,7 +18,15 @@ FloatArray: TypeAlias = NDArray[np.floating]
 
 
 def ensure_2d(x, axis=0):
-    """axis=0 for row (1,n), axis=1 for column (n,1)"""
+    """Reshape a 1D array to 2D for broadcasting.
+
+    Args:
+        x: Input array.
+        axis: If 0, returns shape (1, n). If 1, returns shape (n, 1).
+
+    Returns:
+        2D array suitable for broadcasting.
+    """
     x = np.atleast_1d(np.asarray(x, dtype=float))
     return x[np.newaxis, :] if axis == 0 else x[:, np.newaxis]
 
@@ -116,6 +134,44 @@ def get_settlement(
         sigma_p: float = 0.,
         method: str = "Terzaghi",
 ) -> FloatArray:
+    """Compute time-dependent settlement on a (CR, k, t) grid.
+
+    Combines the degree of consolidation (DoC) with the end-of-primary
+    settlement to produce settlement = DoC * end_settlement.
+
+    The inputs CR and k are broadcast into a 3D array of shape
+    (n_CR, n_k, n_t), enabling vectorized evaluation over the full
+    parameter grid at all time steps simultaneously.
+
+    Parameters
+    ----------
+    t : array_like
+        Time points [days].
+    CR : array_like
+        Compression ratio [-]. Broadcast along axis 0.
+    k : array_like
+        Permeability [m/day]. Broadcast along axis 1.
+    RR : float
+        Recompression ratio [-].
+    Ca : float
+        Secondary compression coefficient [-].
+    h : float
+        Layer thickness [m].
+    sigma_0 : float
+        Initial effective vertical stress [kPa].
+    sigma_v : float
+        Applied vertical stress [kPa].
+    sigma_p : float
+        Preconsolidation stress [kPa].
+    method : str
+        Consolidation method (default "Terzaghi").
+
+    Returns
+    -------
+    NDArray
+        Settlement array of shape (n_CR, n_k, n_t) [m].
+        Squeezed if any dimension is 1.
+    """
 
     CR = ensure_2d(CR, axis=1)[..., np.newaxis]
     k = ensure_2d(k, axis=0)[..., np.newaxis]

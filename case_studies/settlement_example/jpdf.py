@@ -1,3 +1,11 @@
+"""
+Joint probability density function (JPDF) for soil parameters CR and k.
+
+Manages the prior and posterior distributions on a 2D grid of compression
+ratio (CR) and permeability (k). Supports Bayesian updating given settlement
+observations with measurement error.
+"""
+
 import json
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -8,6 +16,23 @@ from case_studies.settlement_example.config import CaseStudyConfig
 
 
 class JPDF:
+
+    """Joint PDF of CR (compression ratio) and k (permeability) on a discrete grid.
+
+    The joint distribution is stored as a 2D array of shape (n_CR, n_k).
+    The prior is constructed from marginal distributions loaded from a JSON
+    specs file, and the posterior is updated via Bayesian inference using
+    settlement observations.
+
+    Attributes:
+        CR_grid: 1D array of CR grid values.
+        CR_prior: 1D array of prior marginal PDF of CR.
+        CR_pdf: 1D array of current (posterior) marginal PDF of CR.
+        k_grid: 1D array of k grid values.
+        k_prior: 1D array of prior marginal PDF of k.
+        k_pdf: 1D array of current (posterior) marginal PDF of k.
+        pdf: 2D array (n_CR, n_k) of current joint PDF.
+    """
 
     def __init__(
             self,
@@ -43,11 +68,15 @@ class JPDF:
         self.G_samples: Optional[Dict[float, NDArray]] = None  # g values per time
 
     def set_prior_from_specs(self, filepath: Path | str) -> None:
-        """
-        Load variable definitions from case study specifications JSON.
+        """Load variable definitions from a JSON specs file and initialize priors.
+
+        Reads distribution type, mean, and standard deviation for each variable
+        (CR, k) from the specs file. Supported distributions: normal, lognormal,
+        uniform. After loading, calls init_priors() to build the discrete grids
+        and marginal PDFs.
 
         Args:
-            filepath: Path to specifications JSON file.
+            filepath: Path to the case study specifications JSON file.
         """
         with open(filepath, "r") as f:
             specs = json.load(f)
@@ -95,7 +124,14 @@ class JPDF:
         self.CR_pdf = self.CR_prior
         self.k_pdf = self.k_prior
 
-    def init_priors(self):
+    def init_priors(self) -> None:
+        """Initialize discrete grids and marginal prior PDFs for CR and k.
+
+        CR grid: uniform spacing from 0.01 to 4.01.
+        k grid: geometric spacing from the 0.1th to 99.9th percentile of the
+        prior distribution, capturing the bulk of the lognormal mass while
+        providing finer resolution at small k values.
+        """
 
         n_grid = self.config.n_CR_grid
         self.CR_grid = np.linspace(0.01, 4.01, n_grid)
@@ -109,7 +145,16 @@ class JPDF:
         self.k_prior = self.variables["k"].pdf(self.k_grid)
         self.k_pdf = self.k_prior.copy()
 
-    def get_prior(self) -> None:
+    def get_prior(self) -> NDArray:
+        """Compute the normalized joint prior PDF from marginal priors.
+
+        Assumes independence: f(CR, k) = f(CR) * f(k). The product is computed
+        in log-space for numerical stability, then normalized by double
+        integration over the (CR, k) grid.
+
+        Returns:
+            2D array of shape (n_CR, n_k) representing the normalized joint prior.
+        """
         prior = np.exp(np.log(self.CR_prior)[:, np.newaxis] + np.log(self.k_prior)[np.newaxis, :])
         integral = np.trapezoid(prior, self.k_grid, axis=1)
         integral = np.trapezoid(integral, self.CR_grid)
@@ -117,6 +162,7 @@ class JPDF:
         return prior
 
     def reset_to_priors(self) -> None:
+        """Reset the joint and marginal PDFs back to their prior state."""
         if self.pdf is not None:
             self.pdf = self.get_prior()
         if self.CR_prior is not None:
@@ -125,6 +171,28 @@ class JPDF:
             self.k_pdf = self.k_prior.copy()
 
     def update(self, obs_values: NDArray, settlements: NDArray) -> None:
+        """Bayesian update of the joint PDF given settlement observations.
+
+        Computes the posterior using Bayes' theorem on the discrete grid:
+
+            log_posterior = log_prior + sum(log_likelihood)
+
+        where the likelihood for each observation is a normal distribution
+        centered on the predicted settlement with standard deviation equal
+        to the configured observation error.
+
+        A log-sum-exp trick is applied (subtracting the maximum log-posterior)
+        before exponentiation to prevent numerical underflow when many
+        observations are used simultaneously.
+
+        After updating, the marginal PDFs (CR_pdf, k_pdf) are recomputed
+        by integrating the joint posterior over the other axis.
+
+        Args:
+            obs_values: 1D array of observed settlement values [m].
+            settlements: 3D array of shape (n_CR, n_k, n_obs) with predicted
+                settlements at the observation times for each (CR, k) pair.
+        """
 
         if self.CR_pdf is None or self.CR_grid is None or self.k_pdf is None or self.k_grid is None:
             raise ValueError("Variables not initialized. Call set_prior_from_specs first.")
@@ -146,6 +214,7 @@ class JPDF:
         self.k_pdf = np.trapezoid(self.pdf, self.CR_grid, axis=0)
 
     def get_stats(self) -> Dict[str, float]:
+        """Compute summary statistics (mean, std, quantiles) for CR and k."""
 
         if self.CR_pdf is None or self.CR_grid is None or self.k_pdf is None or self.k_grid is None:
             return {}

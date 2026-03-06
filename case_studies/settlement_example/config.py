@@ -1,3 +1,10 @@
+"""
+Configuration for the settlement reliability case study.
+
+Stores all physical, numerical, and analysis parameters as a dataclass.
+Parameters can be loaded from a JSON specifications file or set directly.
+"""
+
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,6 +13,27 @@ from typing import Dict, Any
 
 @dataclass
 class CaseStudyConfig:
+    """Configuration parameters for the settlement reliability analysis.
+
+    Attributes:
+        layer_thickness: Compressible layer thickness [m].
+        preload: Preload stress applied during construction [kPa].
+        permanent_load: Permanent load after preload removal [kPa].
+        preload_removal_time: Time at which preload is removed [days].
+        end_time: End time of the analysis [days].
+        sigma_0: Initial effective vertical stress [kPa].
+        sigma_v: Current effective vertical stress [kPa].
+        sigma_p: Preconsolidation stress [kPa]. 0 means normally consolidated.
+        RR: Recompression ratio [-].
+        Ca: Secondary compression coefficient [-].
+        obs_error: Standard deviation of observation measurement error [m].
+        n_CR_grid: Number of grid points for the CR (compression ratio) axis.
+        n_k_grid: Number of grid points for the k (permeability) axis.
+        doc_method: Method to compute degree of consolidation (e.g. "Terzaghi").
+        end_settlement_req: Allowable residual settlement after preload removal [m].
+        forecast_interval: Time interval between forecast evaluation points [days].
+    """
+
     layer_thickness: float = 5.0
     preload: float = 50.0
     permanent_load: float = 50.0
