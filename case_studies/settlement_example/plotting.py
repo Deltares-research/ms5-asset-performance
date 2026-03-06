@@ -16,6 +16,42 @@ from numpy.typing import NDArray
 from scipy.ndimage import gaussian_filter1d
 
 
+def _hdr_level(pdf_2d: NDArray, x_grid: NDArray, y_grid: NDArray, alpha: float = 0.95) -> float:
+    """Compute the PDF level that encloses `alpha` fraction of probability mass.
+
+    Sorts all PDF values from highest to lowest, accumulates probability mass
+    (using cell areas), and returns the threshold where the cumulative mass
+    first reaches `alpha`.
+
+    Args:
+        pdf_2d: 2D array of joint PDF values on the (x, y) grid.
+        x_grid: 1D array of x grid values.
+        y_grid: 1D array of y grid values.
+        alpha: Probability mass to enclose (default 0.95).
+
+    Returns:
+        PDF threshold level for the HDR contour.
+    """
+    dx = np.diff(x_grid)
+    dy = np.diff(y_grid)
+    # Cell areas on the interior grid
+    cell_area = dx[:, np.newaxis] * dy[np.newaxis, :]
+    # Average PDF to cell centers
+    pdf_centers = (pdf_2d[:-1, :-1] + pdf_2d[:-1, 1:] + pdf_2d[1:, :-1] + pdf_2d[1:, 1:]) / 4
+    mass = pdf_centers * cell_area
+
+    # Sort descending by PDF value, accumulate mass
+    flat_pdf = pdf_centers.flatten()
+    flat_mass = mass.flatten()
+    order = np.argsort(-flat_pdf)
+    cumulative = np.cumsum(flat_mass[order])
+    cumulative /= cumulative[-1]
+
+    idx = np.searchsorted(cumulative, alpha)
+    idx = min(idx, len(order) - 1)
+    return flat_pdf[order[idx]]
+
+
 def plot_jpdf_snapshot(
     time: float,
     CR_grid: NDArray,
@@ -64,12 +100,23 @@ def plot_jpdf_snapshot(
     posterior_2d = CR_posterior[:, np.newaxis] * k_posterior[np.newaxis, :]
     ax_main.contourf(CR_mesh, k_mesh, posterior_2d, levels=20, cmap="viridis")
     ax_main.contour(CR_mesh, k_mesh, prior_2d, levels=5, colors="white", linewidths=0.8, linestyles="--", alpha=0.6)
+    # 95% HDR contour for posterior
+    level_95 = _hdr_level(posterior_2d, CR_grid, k_grid, alpha=0.95)
+    ax_main.contour(CR_mesh, k_mesh, posterior_2d, levels=[level_95], colors="yellow", linewidths=2, linestyles="-")
+    # Legend
+    from matplotlib.lines import Line2D
+    legend_handles = [
+        Line2D([], [], color="yellow", linewidth=2, linestyle="-", label="95% HDR"),
+        Line2D([], [], color="white", linewidth=0.8, linestyle="--", label="Prior"),
+    ]
     if CR_true is not None:
         ax_main.axvline(CR_true, color="red", linestyle="--", linewidth=1.5)
     if k_true is not None:
         ax_main.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
     if CR_true is not None and k_true is not None:
         ax_main.plot(CR_true, k_true, "rx", markersize=15, markeredgewidth=2.5, zorder=5)
+        legend_handles.append(Line2D([], [], color="red", marker="x", linestyle="--", linewidth=1.5, markersize=10, label="True"))
+    ax_main.legend(handles=legend_handles, loc="upper right", fontsize=8, facecolor="black", framealpha=0.4, labelcolor="white")
     ax_main.set_xlabel("CR [-]")
     ax_main.set_ylabel("k [m/d]")
     ax_main.grid(True, alpha=0.3)
@@ -79,6 +126,11 @@ def plot_jpdf_snapshot(
     ax_top.plot(CR_grid, CR_prior, "b-", linewidth=1.5)
     ax_top.fill_between(CR_grid, CR_posterior, alpha=0.3, color="r", label="Posterior")
     ax_top.plot(CR_grid, CR_posterior, "r-", linewidth=1.5)
+    # 95% CI errorbar on CR posterior marginal
+    cr_mean, cr_q025, cr_q975 = _pdf_stats(CR_grid, CR_posterior)
+    cr_pdf_at_mean = np.interp(cr_mean, CR_grid, CR_posterior)
+    ax_top.errorbar(cr_mean, cr_pdf_at_mean * 0.5, xerr=[[cr_mean - cr_q025], [cr_q975 - cr_mean]],
+                    fmt="none", ecolor="r", elinewidth=1.5, capsize=4, capthick=1.5, label="95% CI")
     if CR_true is not None:
         ax_top.axvline(CR_true, color="red", linestyle="--", linewidth=1.5, label=f"True")
     ax_top.set_ylabel("Density")
@@ -91,6 +143,11 @@ def plot_jpdf_snapshot(
     ax_right.plot(k_prior, k_grid, "b-", linewidth=1.5)
     ax_right.fill_betweenx(k_grid, k_posterior, alpha=0.3, color="r")
     ax_right.plot(k_posterior, k_grid, "r-", linewidth=1.5)
+    # 95% CI errorbar on k posterior marginal
+    k_mean, k_q025, k_q975 = _pdf_stats(k_grid, k_posterior)
+    k_pdf_at_mean = np.interp(k_mean, k_grid, k_posterior)
+    ax_right.errorbar(k_pdf_at_mean * 0.5, k_mean, yerr=[[k_mean - k_q025], [k_q975 - k_mean]],
+                      fmt="none", ecolor="r", elinewidth=1.5, capsize=4, capthick=1.5)
     if k_true is not None:
         ax_right.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
     ax_right.set_xlabel("Density")
@@ -145,12 +202,22 @@ def plot_jpdf_prior(
     CR_mesh, k_mesh = np.meshgrid(CR_grid, k_grid, indexing="ij")
     prior_2d = CR_prior[:, np.newaxis] * k_prior[np.newaxis, :]
     ax_main.contourf(CR_mesh, k_mesh, prior_2d, levels=20, cmap="viridis")
+    # 95% HDR contour for prior
+    level_95 = _hdr_level(prior_2d, CR_grid, k_grid, alpha=0.95)
+    ax_main.contour(CR_mesh, k_mesh, prior_2d, levels=[level_95], colors="yellow", linewidths=2, linestyles="-")
+    # Legend
+    from matplotlib.lines import Line2D
+    legend_handles = [
+        Line2D([], [], color="yellow", linewidth=2, linestyle="-", label="95% HDR"),
+    ]
     if CR_true is not None:
         ax_main.axvline(CR_true, color="red", linestyle="--", linewidth=1.5)
     if k_true is not None:
         ax_main.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
     if CR_true is not None and k_true is not None:
         ax_main.plot(CR_true, k_true, "rx", markersize=15, markeredgewidth=2.5, zorder=5)
+        legend_handles.append(Line2D([], [], color="red", marker="x", linestyle="--", linewidth=1.5, markersize=10, label="True"))
+    ax_main.legend(handles=legend_handles, loc="upper right", fontsize=8, facecolor="black", framealpha=0.4, labelcolor="white")
     ax_main.set_xlabel("CR [-]")
     ax_main.set_ylabel("k [m/d]")
     ax_main.grid(True, alpha=0.3)
@@ -453,15 +520,12 @@ def plot_settlement_residual(
     if end_settlement_req is not None:
         ax.axvline(end_settlement_req, color="k", linestyle="--", linewidth=1.5, label=f"Requirement")
 
-    ax.set_xlabel("End differential settlement [m]")
+    ax.set_xlabel("Residual settlement [m]")
     ax.set_ylabel("Density")
 
-    title = f"End Differential Settlement PDF (t = {time:.0f} days)"
+    title = f"Residual Settlement PDF (t = {time:.0f} days)"
     if pf_prior is not None and pf_posterior is not None:
-        title += f"""
-        \nPrior: Pf={pf_prior:.2e}, \u03b2={beta_prior:.2f}  |  
-        Posterior: Pf={pf_posterior:.2e}, \u03b2={beta_posterior:.2f}
-        """
+        title += f"\nPrior: Pf={pf_prior:.2e}, \u03b2={beta_prior:.2f}\nPosterior: Pf={pf_posterior:.2e}, \u03b2={beta_posterior:.2f}"
     ax.set_title(title)
     if y_max is not None:
         ax.set_ylim(0, y_max * 1.05)
