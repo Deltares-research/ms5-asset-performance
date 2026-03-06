@@ -12,7 +12,7 @@ import os
 import json
 from datetime import datetime
 from settlement_engine import get_settlement
-from plotting import save_jpdf_plots, save_settlement_forecast_plots, save_settlement_residual_plots, make_gifs
+from plotting import save_jpdf_plots, save_settlement_forecast_plots, save_settlement_residual_plots, save_beta_over_time_plot, make_gifs
 
 
 class ReliabilityPipeline:
@@ -394,8 +394,8 @@ def main():
     with open(specs_path, "r") as f:
         specs = json.load(f)
     variables = {v["name"]: v for v in specs.get("variables", [])}
-    CR_true = variables.get("CR", {}).get("true")
-    k_true = variables.get("k", {}).get("true")
+    CR_true = variables.get("CR").get("true")
+    k_true = variables.get("k").get("true")
 
     obs_values = np.array([float(v) for v in setting.values()])
     save_jpdf_plots(results=results, output_dir=output_dir, CR_true=CR_true, k_true=k_true)
@@ -411,6 +411,7 @@ def main():
         output_dir=output_dir,
         end_settlement_req=config.end_settlement_req
     )
+    save_beta_over_time_plot(results=results, output_dir=output_dir)
     make_gifs(output_dir)
 
 

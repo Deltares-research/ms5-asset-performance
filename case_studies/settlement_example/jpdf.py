@@ -134,6 +134,7 @@ class JPDF:
 
         log_prior = np.log(self.get_prior())
         log_post = log_prior + loglikes
+        log_post -= np.nanmax(log_post)
 
         post = np.exp(log_post)
         integral = np.trapezoid(post, self.k_grid, axis=1)

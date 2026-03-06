@@ -37,8 +37,10 @@ def plot_jpdf_snapshot(
 
     # Bivariate contour (center)
     CR_mesh, k_mesh = np.meshgrid(CR_grid, k_grid, indexing="ij")
+    prior_2d = CR_prior[:, np.newaxis] * k_prior[np.newaxis, :]
     posterior_2d = CR_posterior[:, np.newaxis] * k_posterior[np.newaxis, :]
     ax_main.contourf(CR_mesh, k_mesh, posterior_2d, levels=20, cmap="viridis")
+    ax_main.contour(CR_mesh, k_mesh, prior_2d, levels=5, colors="white", linewidths=0.8, linestyles="--", alpha=0.6)
     if CR_true is not None:
         ax_main.axvline(CR_true, color="red", linestyle="--", linewidth=1.5)
     if k_true is not None:
@@ -46,7 +48,7 @@ def plot_jpdf_snapshot(
     if CR_true is not None and k_true is not None:
         ax_main.plot(CR_true, k_true, "rx", markersize=15, markeredgewidth=2.5, zorder=5)
     ax_main.set_xlabel("CR [-]")
-    ax_main.set_ylabel("k [-]")
+    ax_main.set_ylabel("k [m/d]")
     ax_main.grid(True, alpha=0.3)
 
     # CR marginal (top, aligned to x-axis)
@@ -80,6 +82,70 @@ def plot_jpdf_snapshot(
     return fig
 
 
+def plot_jpdf_prior(
+    CR_grid: NDArray,
+    CR_prior: NDArray,
+    k_grid: NDArray,
+    k_prior: NDArray,
+    CR_true: float = None,
+    k_true: float = None,
+) -> plt.Figure:
+
+    fig = plt.figure(figsize=(8, 8))
+    fig.suptitle("JPDF Prior", fontsize=13, fontweight="bold")
+
+    gs = fig.add_gridspec(
+        2, 2,
+        width_ratios=[3, 1],
+        height_ratios=[1, 3],
+        hspace=0.05,
+        wspace=0.05,
+    )
+
+    ax_main = fig.add_subplot(gs[1, 0])
+    ax_top = fig.add_subplot(gs[0, 0], sharex=ax_main)
+    ax_right = fig.add_subplot(gs[1, 1], sharey=ax_main)
+
+    # Bivariate contour (prior)
+    CR_mesh, k_mesh = np.meshgrid(CR_grid, k_grid, indexing="ij")
+    prior_2d = CR_prior[:, np.newaxis] * k_prior[np.newaxis, :]
+    ax_main.contourf(CR_mesh, k_mesh, prior_2d, levels=20, cmap="viridis")
+    if CR_true is not None:
+        ax_main.axvline(CR_true, color="red", linestyle="--", linewidth=1.5)
+    if k_true is not None:
+        ax_main.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
+    if CR_true is not None and k_true is not None:
+        ax_main.plot(CR_true, k_true, "rx", markersize=15, markeredgewidth=2.5, zorder=5)
+    ax_main.set_xlabel("CR [-]")
+    ax_main.set_ylabel("k [m/d]")
+    ax_main.grid(True, alpha=0.3)
+
+    # CR marginal (top)
+    ax_top.fill_between(CR_grid, CR_prior, alpha=0.3, color="b", label="Prior")
+    ax_top.plot(CR_grid, CR_prior, "b-", linewidth=1.5)
+    if CR_true is not None:
+        ax_top.axvline(CR_true, color="red", linestyle="--", linewidth=1.5, label="True")
+    ax_top.set_ylabel("Density")
+    ax_top.legend(fontsize=8)
+    ax_top.grid(True, alpha=0.3)
+    ax_top.tick_params(labelbottom=False)
+
+    # k marginal (right)
+    ax_right.fill_betweenx(k_grid, k_prior, alpha=0.3, color="b")
+    ax_right.plot(k_prior, k_grid, "b-", linewidth=1.5)
+    if k_true is not None:
+        ax_right.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
+    ax_right.set_xlabel("Density")
+    ax_right.grid(True, alpha=0.3)
+    ax_right.tick_params(labelleft=False)
+
+    fig.add_subplot(gs[0, 1]).set_visible(False)
+
+    plt.close()
+
+    return fig
+
+
 def save_jpdf_plots(
     results: Dict[float, Dict[str, Any]],
     output_dir: Path,
@@ -93,6 +159,19 @@ def save_jpdf_plots(
     pdf_path = output_dir / "jpdf.pdf"
 
     with PdfPages(pdf_path) as pdf:
+        # Prior-only plot (use first time step's state for grid/prior)
+        first_state = next(iter(results.values()))["jpdf_state"]
+        fig_prior = plot_jpdf_prior(
+            CR_grid=np.array(first_state["CR_grid"]),
+            CR_prior=np.array(first_state["CR_prior"]),
+            k_grid=np.array(first_state["k_grid"]),
+            k_prior=np.array(first_state["k_prior"]),
+            CR_true=CR_true,
+            k_true=k_true,
+        )
+        fig_prior.savefig(png_dir / "jpdf_prior.png", dpi=150, bbox_inches="tight")
+        pdf.savefig(fig_prior)
+
         for t, data in results.items():
             state = data["jpdf_state"]
             fig = plot_jpdf_snapshot(
@@ -273,15 +352,17 @@ def plot_settlement_residual(
     ax.plot(posterior_grid, posterior_pdf_smooth, "r-", linewidth=1.5)
 
     if end_settlement_req is not None:
-        ax.axvline(end_settlement_req, color="k", linestyle="--", linewidth=1.5,
-                   label=f"Requirement ({end_settlement_req} m)")
+        ax.axvline(end_settlement_req, color="k", linestyle="--", linewidth=1.5, label=f"Requirement")
 
     ax.set_xlabel("End differential settlement [m]")
     ax.set_ylabel("Density")
 
     title = f"End Differential Settlement PDF (t = {time:.0f} days)"
     if pf_prior is not None and pf_posterior is not None:
-        title += f"\nPrior: Pf={pf_prior:.2e}, \u03b2={beta_prior:.2f}  |  Posterior: Pf={pf_posterior:.2e}, \u03b2={beta_posterior:.2f}"
+        title += f"""
+        \nPrior: Pf={pf_prior:.2e}, \u03b2={beta_prior:.2f}  |  
+        Posterior: Pf={pf_posterior:.2e}, \u03b2={beta_posterior:.2f}
+        """
     ax.set_title(title)
     if y_max is not None:
         ax.set_ylim(0, y_max * 1.05)
@@ -334,8 +415,50 @@ def save_settlement_residual_plots(
             fig.savefig(png_dir / f"settlement_residual_t{t:.0f}.png", dpi=150, bbox_inches="tight")
             pdf.savefig(fig)
 
-    print(f"End diff settlement PNGs saved to {png_dir}")
-    print(f"End diff settlement PDF  saved to {pdf_path}")
+    print(f"Residual settlement PNGs saved to {png_dir}")
+    print(f"Residual settlement PDF  saved to {pdf_path}")
+
+
+def plot_beta_over_time(
+    results: Dict[float, Dict[str, Any]],
+    beta_req: float = None,
+) -> plt.Figure:
+
+    times = sorted(results.keys())
+    beta_prior = results[times[0]]["prior"]["beta"]
+    beta_posterior = [results[t]["posterior"]["beta"] for t in times]
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    ax.axhline(beta_prior, color="b", linewidth=2, label=f"Prior ({beta_prior:.2f})")
+    ax.plot(times, beta_posterior, "r-o", linewidth=2, markersize=4, label="Posterior")
+
+    if beta_req is not None:
+        ax.axhline(beta_req, color="k", linestyle="--", linewidth=1.5, label=f"Requirement ({beta_req:.1f})")
+
+    ax.set_xlabel("Observation time [days]")
+    ax.set_ylabel("\u03b2 [-]")
+    ax.set_title("Reliability Index over Time")
+    ax.set_ylim(bottom=0)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.close()
+
+    return fig
+
+
+def save_beta_over_time_plot(
+    results: Dict[float, Dict[str, Any]],
+    output_dir: Path,
+    beta_req: float = None,
+) -> None:
+
+    fig = plot_beta_over_time(results=results, beta_req=beta_req)
+    fig.savefig(output_dir / "beta_over_time.png", dpi=150, bbox_inches="tight")
+
+    print(f"Beta over time saved to {output_dir / 'beta_over_time.png'}")
 
 
 def make_gifs(output_dir: Path, duration: int = 500) -> None:
@@ -345,7 +468,10 @@ def make_gifs(output_dir: Path, duration: int = 500) -> None:
         if not png_dir.is_dir():
             continue
         import re
-        pngs = sorted(png_dir.glob("*.png"), key=lambda p: float(re.search(r'(\d+\.?\d*)', p.stem).group(1)))
+        def _sort_key(p):
+            m = re.search(r'(\d+\.?\d*)', p.stem)
+            return float(m.group(1)) if m else -1
+        pngs = sorted(png_dir.glob("*.png"), key=_sort_key)
         if len(pngs) < 2:
             continue
 
