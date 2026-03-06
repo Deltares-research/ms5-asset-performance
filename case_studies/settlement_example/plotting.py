@@ -134,6 +134,7 @@ def plot_settlement_forecast(
     obs_values: NDArray = None,
     obs_error: float = None,
     t_max: float = None,
+    y_max: float = None,
 ) -> plt.Figure:
 
     ft_sorted = sorted(forecast_times)
@@ -165,12 +166,27 @@ def plot_settlement_forecast(
 
     fig, ax = plt.subplots(figsize=(8, 5))
 
-    if prior_grids is not None and prior_pdfs is not None:
-        ax.plot(ft_sorted, means_pr, "b-", linewidth=2, label="Prior mean")
-        ax.fill_between(ft_sorted, lo_pr, hi_pr, alpha=0.15, color="b", label="Prior 95% CI")
+    ft_arr = np.array(ft_sorted)
+    t_split_idx = np.argmin(np.abs(ft_arr - time))
+    hind = np.arange(len(ft_arr)) <= t_split_idx
+    fore = np.arange(len(ft_arr)) >= t_split_idx
 
-    ax.plot(ft_sorted, means, "r-", linewidth=2, label="Posterior mean")
-    ax.fill_between(ft_sorted, lo, hi, alpha=0.2, color="r", label="Posterior 95% CI")
+    if prior_grids is not None and prior_pdfs is not None:
+        ax.plot(ft_arr[hind], means_pr[hind], "b-", linewidth=2, label="Prior hindcast")
+        ax.plot(ft_arr[fore], means_pr[fore], "b--", linewidth=2, label="Prior forecast")
+        ax.fill_between(ft_arr[hind], lo_pr[hind], hi_pr[hind], alpha=0.15, color="b")
+        ax.fill_between(ft_arr[fore], lo_pr[fore], hi_pr[fore], alpha=0.08, color="b")
+        ax.plot(ft_arr[fore], lo_pr[fore], "b--", linewidth=0.8, alpha=0.5)
+        ax.plot(ft_arr[fore], hi_pr[fore], "b--", linewidth=0.8, alpha=0.5)
+
+    ax.plot(ft_arr[hind], means[hind], "r-", linewidth=2, label="Posterior hindcast")
+    ax.plot(ft_arr[fore], means[fore], "r--", linewidth=2, label="Posterior forecast")
+    ax.fill_between(ft_arr[hind], lo[hind], hi[hind], alpha=0.2, color="r")
+    ax.fill_between(ft_arr[fore], lo[fore], hi[fore], alpha=0.1, color="r")
+    ax.plot(ft_arr[fore], lo[fore], "r--", linewidth=0.8, alpha=0.5)
+    ax.plot(ft_arr[fore], hi[fore], "r--", linewidth=0.8, alpha=0.5)
+
+    ax.axvline(ft_arr[t_split_idx], color="gray", linestyle=":", linewidth=1, alpha=0.7)
 
     if obs_times is not None and obs_values is not None:
         ci = 1.96 * obs_error if obs_error is not None else None
@@ -182,6 +198,10 @@ def plot_settlement_forecast(
     ax.set_title(f"Settlement Forecast (posterior at t = {time:.0f} days)")
     if t_max is not None:
         ax.set_xlim(0, t_max)
+    if y_max is not None:
+        ax.set_ylim(0, y_max * 1.05)
+    else:
+        ax.set_ylim(bottom=0)
     ax.legend()
     ax.grid(True, alpha=0.3)
 
@@ -196,6 +216,7 @@ def save_settlement_forecast_plots(
     output_dir: Path,
     t_max: float = None,
     obs_error: float = None,
+    y_max: float = None,
 ) -> None:
 
     png_dir = output_dir / "settlement_forecast"
@@ -218,6 +239,7 @@ def save_settlement_forecast_plots(
                 obs_values=np.array(data["settlement_obs"]),
                 obs_error=obs_error,
                 t_max=t_max,
+                y_max=y_max,
             )
             fig.savefig(png_dir / f"settlement_forecast_t{t:.0f}.png", dpi=150, bbox_inches="tight")
             pdf.savefig(fig)

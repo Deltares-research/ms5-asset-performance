@@ -60,8 +60,9 @@ class ReliabilityPipeline:
         end_time = self.config.end_time
         forecast_interval = self.config.forecast_interval
 
-        forecast_times = np.arange(self.obs_times.min(), self.obs_times.max(), forecast_interval)
+        forecast_times = np.arange(0, preload_removal_time, forecast_interval)
         forecast_times = np.append(forecast_times, [preload_removal_time, end_time])
+        forecast_times = np.append(forecast_times, self.obs_times)
         self.forecast_times = np.sort(np.unique(forecast_times))
 
     def init_settlements(
@@ -133,7 +134,6 @@ class ReliabilityPipeline:
         self.settlement_at_obs_times = settlements_obs
         self.settlement_residual = settlement_forecast[..., -1] - settlement_forecast[..., -2]
         self.settlement_forecast = settlement_forecast
-
 
         n_settlement_grid = 1_001
 
@@ -231,7 +231,6 @@ class ReliabilityPipeline:
                 self.jpdf.update(obs_values=obs_values, settlements=settlement_at_obs_time)
 
             # Compute Pf FORECAST for all future times (from t to t_end)
-            # prediction_times = [pt for pt in self.forecast_times.tolist() if pt >= t]
             prediction_times = [pt for pt in self.forecast_times.tolist()]
             pf_forecast_prior = {}
             pf_forecast_posterior = {}
@@ -331,7 +330,7 @@ class ReliabilityPipeline:
 
         load_dotenv("ark_example.env")
         username = os.environ.get("USER", "unknown").lower()
-        timestamp = datetime.now().strptime("%Y%m%d_%H%M")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
         output_folder = f"{username}_{timestamp}/{filename}"
 
         save_json(results_json, output_folder)
@@ -388,7 +387,7 @@ def main():
     print("=" * 60)
 
     username = os.environ.get("USER", "unknown").lower()
-    timestamp = datetime.now().strptime("%Y%m%d_%H%M")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     output_dir = get_remote_path() / f"output/results/{username}_{timestamp}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -399,7 +398,8 @@ def main():
     k_true = variables.get("k", {}).get("true")
 
     save_jpdf_plots(results=results, output_dir=output_dir, CR_true=CR_true, k_true=k_true)
-    save_settlement_forecast_plots(results=results, output_dir=output_dir, t_max=config.preload_removal_time, obs_error=config.obs_error)
+    obs_values = np.array([float(v) for v in setting.values()])
+    save_settlement_forecast_plots(results=results, output_dir=output_dir, t_max=config.preload_removal_time + 5, obs_error=config.obs_error, y_max=obs_values.max())
     save_settlement_residual_plots(results=results, output_dir=output_dir, end_settlement_req=config.end_settlement_req)
 
 
