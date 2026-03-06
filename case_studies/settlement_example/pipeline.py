@@ -134,14 +134,17 @@ class ReliabilityPipeline:
         self.settlement_residual = settlement_forecast[..., -1] - settlement_forecast[..., -2]
         self.settlement_forecast = settlement_forecast
 
+
+        n_settlement_grid = 1_001
+
         settlement_min = min(np.nanmin(self.settlement_at_obs_times), np.nanmin(self.settlement_forecast))
         settlement_max = max(np.nanmax(self.settlement_at_obs_times), np.nanmax(self.settlement_forecast))
-        settlement_grid = np.linspace(settlement_min, settlement_max, 201)
+        settlement_grid = np.linspace(settlement_min, settlement_max, n_settlement_grid)
         self.settlement_grid = np.sort(np.unique(np.append(settlement_grid, 0)))
 
         diff_min = np.nanmin(self.settlement_residual)
         diff_max = np.nanmax(self.settlement_residual)
-        diff_grid = np.linspace(diff_min, diff_max, 201)
+        diff_grid = np.linspace(diff_min, diff_max, n_settlement_grid)
         self.end_diff_grid = np.sort(np.unique(np.append(diff_grid, 0)))
 
     def get_settlement_pdf(self, settlement: NDArray, use_prior: bool = False, grid: NDArray = None) -> Tuple[NDArray, NDArray]:
@@ -174,11 +177,7 @@ class ReliabilityPipeline:
 
         return grid_centers, settlement_pdf
 
-    def compute_pf_at_time(
-            self,
-            forecast_time: float,
-            use_prior: bool = False,
-    ) -> None:
+    def compute_pf_at_time(self, forecast_time: float, use_prior: bool = False) -> None:
 
         pf = self.performance.failure_probability(
             x=self.settlement_residual,
@@ -186,6 +185,9 @@ class ReliabilityPipeline:
             CR_grid=self.jpdf.CR_grid,
             k_grid=self.jpdf.k_grid,
         )
+
+        pf_clipped = np.clip(pf, 1e-10, 1 - 1e-10)
+        beta = st.norm.ppf(1 - pf_clipped)
 
         settlement_at_forecast_time = self.settlement_forecast[..., self.forecast_times==forecast_time].squeeze()
         settlement_grid, settlement_pdf = self.get_settlement_pdf(
@@ -195,7 +197,7 @@ class ReliabilityPipeline:
 
         return {
             "pf": pf.item(),
-            "beta": st.norm.ppf(1-pf).item(),
+            "beta": beta.item(),
             "settlement_grid": settlement_grid.tolist(),
             "settlement_pdf": settlement_pdf.tolist(),
         }
@@ -229,7 +231,8 @@ class ReliabilityPipeline:
                 self.jpdf.update(obs_values=obs_values, settlements=settlement_at_obs_time)
 
             # Compute Pf FORECAST for all future times (from t to t_end)
-            future_times = [ft for ft in self.forecast_times.tolist() if ft >= t]
+            # prediction_times = [pt for pt in self.forecast_times.tolist() if pt >= t]
+            prediction_times = [pt for pt in self.forecast_times.tolist()]
             pf_forecast_prior = {}
             pf_forecast_posterior = {}
             beta_forecast_prior = {}
@@ -239,21 +242,21 @@ class ReliabilityPipeline:
             settlement_posterior_grid = {}
             settlement_forecast_posterior = {}
 
-            for ft in future_times:
+            for pt in prediction_times:
 
                 # Prior forecast
-                result_prior = self.compute_pf_at_time(forecast_time=ft, use_prior=True)
-                pf_forecast_prior[ft] = result_prior["pf"]
-                beta_forecast_prior[ft] = result_prior["beta"]
-                settlement_prior_grid[ft] = result_prior["settlement_grid"]
-                settlement_forecast_prior[ft] = result_prior["settlement_pdf"]
+                result_prior = self.compute_pf_at_time(forecast_time=pt, use_prior=True)
+                pf_forecast_prior[pt] = result_prior["pf"]
+                beta_forecast_prior[pt] = result_prior["beta"]
+                settlement_prior_grid[pt] = result_prior["settlement_grid"]
+                settlement_forecast_prior[pt] = result_prior["settlement_pdf"]
 
                 # Posterior forecast
-                result_posterior = self.compute_pf_at_time(forecast_time=ft, use_prior=False)
-                pf_forecast_posterior[ft] = result_posterior["pf"]
-                beta_forecast_posterior[ft] = result_posterior["beta"]
-                settlement_posterior_grid[ft] = result_posterior["settlement_grid"]
-                settlement_forecast_posterior[ft] = result_posterior["settlement_pdf"]
+                result_posterior = self.compute_pf_at_time(forecast_time=pt, use_prior=False)
+                pf_forecast_posterior[pt] = result_posterior["pf"]
+                beta_forecast_posterior[pt] = result_posterior["beta"]
+                settlement_posterior_grid[pt] = result_posterior["settlement_grid"]
+                settlement_forecast_posterior[pt] = result_posterior["settlement_pdf"]
 
             # End differential settlement PDFs
             diff_grid_prior, diff_pdf_prior = self.get_settlement_pdf(
@@ -328,7 +331,7 @@ class ReliabilityPipeline:
 
         load_dotenv("ark_example.env")
         username = os.environ.get("USER", "unknown").lower()
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        timestamp = datetime.now().strptime("%Y%m%d_%H%M")
         output_folder = f"{username}_{timestamp}/{filename}"
 
         save_json(results_json, output_folder)
@@ -385,7 +388,7 @@ def main():
     print("=" * 60)
 
     username = os.environ.get("USER", "unknown").lower()
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    timestamp = datetime.now().strptime("%Y%m%d_%H%M")
     output_dir = get_remote_path() / f"output/results/{username}_{timestamp}"
     output_dir.mkdir(parents=True, exist_ok=True)
 

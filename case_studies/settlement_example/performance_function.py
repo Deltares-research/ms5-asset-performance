@@ -19,7 +19,7 @@ class Performance(BasePerformance):
 
     def _lsf(self, x: NDArray, t: float = 0) -> NDArray:
         x_ = np.atleast_2d(x)
-        g = x_ <= self.parameters["end_settlement_req"]
+        g = x_ >= self.parameters["end_settlement_req"]
         return g
 
     def lsf(self, x: NDArray, t: float = 0) -> NDArray:

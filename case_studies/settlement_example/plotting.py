@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from numpy.typing import NDArray
+from scipy.ndimage import gaussian_filter1d
 
 
 def plot_jpdf_snapshot(
@@ -236,14 +237,18 @@ def plot_settlement_residual(
     pf_posterior: float = None,
     beta_prior: float = None,
     beta_posterior: float = None,
+    y_max: float = None,
 ) -> plt.Figure:
 
     fig, ax = plt.subplots(figsize=(8, 5))
 
-    ax.fill_between(prior_grid, prior_pdf, alpha=0.3, color="b", label="Prior")
-    ax.plot(prior_grid, prior_pdf, "b-", linewidth=1.5)
-    ax.fill_between(posterior_grid, posterior_pdf, alpha=0.3, color="r", label="Posterior")
-    ax.plot(posterior_grid, posterior_pdf, "r-", linewidth=1.5)
+    prior_pdf_smooth = gaussian_filter1d(prior_pdf, sigma=3)
+    posterior_pdf_smooth = gaussian_filter1d(posterior_pdf, sigma=3)
+
+    ax.fill_between(prior_grid, prior_pdf_smooth, alpha=0.3, color="b", label="Prior")
+    ax.plot(prior_grid, prior_pdf_smooth, "b-", linewidth=1.5)
+    ax.fill_between(posterior_grid, posterior_pdf_smooth, alpha=0.3, color="r", label="Posterior")
+    ax.plot(posterior_grid, posterior_pdf_smooth, "r-", linewidth=1.5)
 
     if end_settlement_req is not None:
         ax.axvline(end_settlement_req, color="k", linestyle="--", linewidth=1.5,
@@ -256,6 +261,10 @@ def plot_settlement_residual(
     if pf_prior is not None and pf_posterior is not None:
         title += f"\nPrior: Pf={pf_prior:.2e}, \u03b2={beta_prior:.2f}  |  Posterior: Pf={pf_posterior:.2e}, \u03b2={beta_posterior:.2f}"
     ax.set_title(title)
+    if y_max is not None:
+        ax.set_ylim(0, y_max * 1.05)
+    else:
+        ax.set_ylim(bottom=0)
     ax.legend()
     ax.grid(True, alpha=0.3)
 
@@ -276,6 +285,14 @@ def save_settlement_residual_plots(
 
     pdf_path = output_dir / "settlement_residual.pdf"
 
+    # Compute global y-max across all times (after smoothing)
+    y_max = 0
+    for data in results.values():
+        diff = data["settlement_residual"]
+        for key in ["prior_pdf", "posterior_pdf"]:
+            smoothed = gaussian_filter1d(np.array(diff[key]), sigma=3)
+            y_max = max(y_max, smoothed.max())
+
     with PdfPages(pdf_path) as pdf:
         for t, data in results.items():
             diff = data["settlement_residual"]
@@ -290,6 +307,7 @@ def save_settlement_residual_plots(
                 pf_posterior=data["posterior"]["pf"],
                 beta_prior=data["prior"]["beta"],
                 beta_posterior=data["posterior"]["beta"],
+                y_max=y_max,
             )
             fig.savefig(png_dir / f"settlement_residual_t{t:.0f}.png", dpi=150, bbox_inches="tight")
             pdf.savefig(fig)
