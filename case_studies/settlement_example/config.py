@@ -47,31 +47,33 @@ class CaseStudyConfig:
     obs_error: float = 0.1
     n_CR_grid: int = 100
     n_k_grid: int = 100
-    doc_method: str = "Terzaghi"
     end_settlement_req: float = 0.05
     forecast_interval: int = 10
+    doc_method: str = "Terzaghi"
+    analysis_method: str = "semi-analytical"
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CaseStudyConfig":
         """Create config from dictionary."""
         params = data.get("parameters", data)
         return cls(
-            layer_thickness=params.get("layer_thickness", None),
-            preload=params.get("preload", None),
-            permanent_load=params.get("permanent_load", None),
-            preload_removal_time=params.get("preload_removal_time", None),
-            end_time=params.get("end_time", None),
-            sigma_0=params.get("sigma_0", None),
-            sigma_v=params.get("sigma_v", None),
-            sigma_p=params.get("sigma_p", None),
-            RR=params.get("RR", None),
-            Ca=params.get("Ca", None),
-            obs_error=params.get("obs_error", None),
-            n_CR_grid=params.get("n_CR_grid", None),
-            n_k_grid=params.get("n_k_grid", None),
-            doc_method=params.get("doc_method", None),
-            end_settlement_req=params.get("end_settlement_req", None),
-            forecast_interval=params.get("forecast_interval", None),
+            layer_thickness=params.get("layer_thickness", self.layer_thickness),
+            preload=params.get("preload", self.preload),
+            permanent_load=params.get("permanent_load", self.permanent_load),
+            preload_removal_time=params.get("preload_removal_time", self.preload_removal_time),
+            end_time=params.get("end_time", self.end_time),
+            sigma_0=params.get("sigma_0", self.sigma_0),
+            sigma_v=params.get("sigma_v", self.sigma_v),
+            sigma_p=params.get("sigma_p", self.sigma_p),
+            RR=params.get("RR", self.RR),
+            Ca=params.get("Ca", self.Ca),
+            obs_error=params.get("obs_error", self.obs_error),
+            n_CR_grid=params.get("n_CR_grid", self.n_CR_grid),
+            n_k_grid=params.get("n_k_grid", self.n_k_grid),
+            doc_method=params.get("doc_method", self.doc_method),
+            end_settlement_req=params.get("end_settlement_req", self.end_settlement_req),
+            forecast_interval=params.get("forecast_interval", self.forecast_interval),
+            analysis_method=params.get("analysis_method", self.analysis_method),
         )
 
     @classmethod
@@ -100,4 +102,5 @@ class CaseStudyConfig:
             "doc_method": self.doc_method,
             "end_settlement_req": self.end_settlement_req,
             "forecast_interval": self.forecast_interval,
+            "analysis_method": self.analysis_method,
         }

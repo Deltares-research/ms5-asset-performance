@@ -25,6 +25,7 @@ import json
 from datetime import datetime
 from settlement_engine import get_settlement
 from plotting import save_jpdf_plots, save_settlement_forecast_plots, save_settlement_residual_plots, save_beta_over_time_plot, make_gifs
+from argparse import ArgumentParser
 
 
 class ReliabilityPipeline:
@@ -473,7 +474,7 @@ class ReliabilityPipeline:
         save_json(results_json, output_folder)
 
 
-def main():
+def main(analysis_method: Optional[str] = None):
     # Paths
     load_dotenv("settlement_example.env")
     os.environ["REMOTE_DATA_PATH"] = str(get_remote_path()/"input")
@@ -486,6 +487,9 @@ def main():
 
     # Initialize pipeline
     config = CaseStudyConfig.from_json(specs_path)
+    if analysis_method:
+        config.analysis_method = analysis_method
+
     pipeline = ReliabilityPipeline(config=config, specs_path=specs_path)
 
     # =========================================================================
@@ -554,5 +558,9 @@ def main():
 
 if __name__ == "__main__":
 
-    main()
+    parser = ArgumentParser()
+    parser.add_argument("analysis_method", type=str, default="semi-analytical")
+    args = parser.parse_args()
+
+    main(analysis_method=args.analysis_method)
 
