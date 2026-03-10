@@ -559,7 +559,7 @@ def main(analysis_method: Optional[str] = None):
 if __name__ == "__main__":
 
     parser = ArgumentParser()
-    parser.add_argument("analysis_method", type=str, default="semi-analytical")
+    parser.add_argument("--analysis_method", type=str, default="semi-analytical")
     args = parser.parse_args()
 
     main(analysis_method=args.analysis_method)
