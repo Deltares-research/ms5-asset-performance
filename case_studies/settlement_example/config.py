@@ -6,7 +6,7 @@ Parameters can be loaded from a JSON specifications file or set directly.
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, Any
 
@@ -56,25 +56,8 @@ class CaseStudyConfig:
     def from_dict(cls, data: Dict[str, Any]) -> "CaseStudyConfig":
         """Create config from dictionary."""
         params = data.get("parameters", data)
-        return cls(
-            layer_thickness=params.get("layer_thickness", self.layer_thickness),
-            preload=params.get("preload", self.preload),
-            permanent_load=params.get("permanent_load", self.permanent_load),
-            preload_removal_time=params.get("preload_removal_time", self.preload_removal_time),
-            end_time=params.get("end_time", self.end_time),
-            sigma_0=params.get("sigma_0", self.sigma_0),
-            sigma_v=params.get("sigma_v", self.sigma_v),
-            sigma_p=params.get("sigma_p", self.sigma_p),
-            RR=params.get("RR", self.RR),
-            Ca=params.get("Ca", self.Ca),
-            obs_error=params.get("obs_error", self.obs_error),
-            n_CR_grid=params.get("n_CR_grid", self.n_CR_grid),
-            n_k_grid=params.get("n_k_grid", self.n_k_grid),
-            doc_method=params.get("doc_method", self.doc_method),
-            end_settlement_req=params.get("end_settlement_req", self.end_settlement_req),
-            forecast_interval=params.get("forecast_interval", self.forecast_interval),
-            analysis_method=params.get("analysis_method", self.analysis_method),
-        )
+        valid_fields = cls.__dataclass_fields__
+        return cls(**{k: v for k, v in params.items() if k in valid_fields})
 
     @classmethod
     def from_json(cls, filepath: Path | str) -> "CaseStudyConfig":
@@ -85,22 +68,4 @@ class CaseStudyConfig:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
-        return {
-            "layer_thickness": self.layer_thickness,
-            "preload": self.preload,
-            "permanent_load": self.permanent_load,
-            "preload_removal_time": self.preload_removal_time,
-            "end_time": self.end_time,
-            "sigma_0": self.sigma_0,
-            "sigma_v": self.sigma_v,
-            "sigma_p": self.sigma_p,
-            "RR": self.RR,
-            "Ca": self.Ca,
-            "obs_error": self.obs_error,
-            "n_CR_grid": self.n_CR_grid,
-            "n_k_grid": self.n_k_grid,
-            "doc_method": self.doc_method,
-            "end_settlement_req": self.end_settlement_req,
-            "forecast_interval": self.forecast_interval,
-            "analysis_method": self.analysis_method,
-        }
+        return asdict(self)
