@@ -113,36 +113,43 @@ class JPDF:
 
         # Correlation matrix
         corr = specs.get("correlation_in_u_space")
-        if corr is not None:
+        if corr:
             self.correlation_matrix = np.array(corr)
         else:
             self.correlation_matrix = np.eye(self.nvar)
 
         # Initialize priors from specs
+        self.init_grids()
+        self.init_vol_weights()
         self.init_priors()
         self.pdf = self.get_prior()
         self.CR_pdf = self.CR_prior
         self.k_pdf = self.k_prior
 
-    def init_priors(self) -> None:
-        """Initialize discrete grids and marginal prior PDFs for CR and k.
-
-        CR grid: uniform spacing from 0.01 to 4.01.
-        k grid: geometric spacing from the 0.1th to 99.9th percentile of the
-        prior distribution, capturing the bulk of the lognormal mass while
-        providing finer resolution at small k values.
-        """
-
+    def init_grids(self) -> None:
         n_grid = self.config.n_CR_grid
         self.CR_grid = np.linspace(0.01, 4.01, n_grid)
-        self.CR_prior = self.variables["CR"].pdf(self.CR_grid)
-        self.CR_pdf = self.CR_prior.copy()
-        
+        self.CR_centers = (self.CR_grid[:-1] + self.CR_grid[1:]) / 2
+
         n_grid = self.config.n_k_grid
         k_lo = self.variables["k"].ppf(0.001)
         k_hi = self.variables["k"].ppf(0.999)
         self.k_grid = np.geomspace(k_lo, k_hi, n_grid)
-        self.k_prior = self.variables["k"].pdf(self.k_grid)
+        self.k_centers = (self.k_grid[:-1] + self.k_grid[1:]) / 2
+
+    def init_vol_weights(self) -> None:
+        dCR = np.diff(self.CR_grid)
+        dk = np.diff(self.k_grid)
+        self.vol_weights = dCR[:, np.newaxis] * dk[np.newaxis, :]
+        self.CR_vol_weights = dk
+        self.k_vol_weights = dCR
+
+    def init_priors(self) -> None:
+
+        self.CR_prior = self.variables["CR"].pdf(self.CR_centers)
+        self.CR_pdf = self.CR_prior.copy()
+
+        self.k_prior = self.variables["k"].pdf(self.k_centers)
         self.k_pdf = self.k_prior.copy()
 
     def get_prior(self) -> NDArray:
@@ -156,8 +163,9 @@ class JPDF:
             2D array of shape (n_CR, n_k) representing the normalized joint prior.
         """
         prior = np.exp(np.log(self.CR_prior)[:, np.newaxis] + np.log(self.k_prior)[np.newaxis, :])
-        integral = np.trapezoid(prior, self.k_grid, axis=1)
-        integral = np.trapezoid(integral, self.CR_grid)
+        # integral = np.trapezoid(prior, self.k_centers, axis=1)
+        # integral = np.trapezoid(integral, self.CR_centers)
+        integral = np.sum(prior*self.vol_weights)
         prior /= integral
         return prior
 
@@ -205,13 +213,16 @@ class JPDF:
         log_post -= np.nanmax(log_post)
 
         post = np.exp(log_post)
-        integral = np.trapezoid(post, self.k_grid, axis=1)
-        integral = np.trapezoid(integral, self.CR_grid, axis=0)
+        # integral = np.trapezoid(post, self.k_centers, axis=1)
+        # integral = np.trapezoid(integral, self.CR_centers, axis=0)
+        integral = np.sum(post*self.vol_weights)
         post /= integral
 
         self.pdf = post.copy()
-        self.CR_pdf = np.trapezoid(self.pdf, self.k_grid, axis=1)
-        self.k_pdf = np.trapezoid(self.pdf, self.CR_grid, axis=0)
+        # self.CR_pdf = np.trapezoid(self.pdf, self.k_centers, axis=1)
+        # self.k_pdf = np.trapezoid(self.pdf, self.CR_centers, axis=0)
+        self.CR_pdf = np.sum(self.pdf*self.CR_vol_weights, axis=1)
+        self.k_pdf = np.sum(self.pdf*self.k_vol_weights, axis=0)
 
     def get_stats(self) -> Dict[str, float]:
         """Compute summary statistics (mean, std, quantiles) for CR and k."""

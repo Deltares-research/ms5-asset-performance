@@ -56,29 +56,11 @@ class Performance(BasePerformance):
     def failure_probability(
             self,
             x: NDArray,
-            pdf: NDArray,
-            CR_grid: NDArray,
-            k_grid: NDArray,
+            importance_weights: NDArray
         ) -> float:
-        """Compute failure probability by integrating the PDF over the failure domain.
 
-        Multiplies the joint PDF by the limit-state indicator (1 in failure
-        domain, 0 otherwise) and integrates over the (CR, k) grid using
-        the trapezoidal rule.
-
-        Args:
-            x: Residual settlement array of shape (n_CR, n_k).
-            pdf: Joint PDF array of shape (n_CR, n_k).
-            CR_grid: 1D array of CR grid values.
-            k_grid: 1D array of k grid values.
-
-        Returns:
-            Scalar failure probability.
-        """
         g = self.lsf(x, None)
-        lsf_mask = g * pdf
-        pf = np.trapezoid(lsf_mask, k_grid, axis=1)
-        pf = np.trapezoid(pf, CR_grid)
+        pf = np.sum(g*importance_weights)
         return pf
 
 

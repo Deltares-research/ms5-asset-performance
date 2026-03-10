@@ -148,8 +148,8 @@ class ReliabilityPipeline:
     
             settlements_obs = get_settlement(
                 t=self.obs_times,
-                CR=self.jpdf.CR_grid,
-                k=self.jpdf.k_grid,
+                CR=self.jpdf.CR_centers,
+                k=self.jpdf.k_centers,
                 RR=self.config.RR,
                 Ca=self.config.Ca,
                 h=self.config.layer_thickness,
@@ -161,8 +161,8 @@ class ReliabilityPipeline:
             
             settlement_forecast = get_settlement(
                 t=self.forecast_times,
-                CR=self.jpdf.CR_grid,
-                k=self.jpdf.k_grid,
+                CR=self.jpdf.CR_centers,
+                k=self.jpdf.k_centers,
                 RR=self.config.RR,
                 Ca=self.config.Ca,
                 h=self.config.layer_thickness,
@@ -296,12 +296,12 @@ class ReliabilityPipeline:
         Returns:
             Dict with keys "pf", "beta", "settlement_grid", "settlement_pdf".
         """
+        pdf = self.jpdf.get_prior() if use_prior else self.jpdf.pdf
+        importance_weights = self.jpdf.vol_weights * pdf
 
         pf = self.performance.failure_probability(
             x=self.settlement_residual,
-            pdf=self.jpdf.get_prior() if use_prior else self.jpdf.pdf,
-            CR_grid=self.jpdf.CR_grid,
-            k_grid=self.jpdf.k_grid,
+            importance_weights=importance_weights,
         )
 
         pf_clipped = np.clip(pf, 1e-10, 1 - 1e-10)
@@ -442,10 +442,10 @@ class ReliabilityPipeline:
                 },
                 # Store JPDF state for snapshot generation
                 "jpdf_state": {
-                    "CR_grid": self.jpdf.CR_grid.tolist(),
+                    "CR_centers": self.jpdf.CR_centers.tolist(),
                     "CR_prior": self.jpdf.CR_prior.tolist(),
                     "CR_posterior": self.jpdf.CR_pdf.tolist(),
-                    "k_grid": self.jpdf.k_grid.tolist(),
+                    "k_centers": self.jpdf.k_centers.tolist(),
                     "k_prior": self.jpdf.k_prior.tolist(),
                     "k_posterior": self.jpdf.k_pdf.tolist(),
                     "prior": self.jpdf.get_prior().tolist(),
@@ -559,7 +559,7 @@ def main(analysis_method: Optional[str] = None):
 if __name__ == "__main__":
 
     parser = ArgumentParser()
-    parser.add_argument("analysis_method", type=str, default="semi-analytical")
+    parser.add_argument("--analysis-method", type=str, default="semi-analytical")
     args = parser.parse_args()
 
     main(analysis_method=args.analysis_method)

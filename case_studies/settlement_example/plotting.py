@@ -273,9 +273,9 @@ def save_jpdf_plots(
         # Prior-only plot (use first time step's state for grid/prior)
         first_state = next(iter(results.values()))["jpdf_state"]
         fig_prior = plot_jpdf_prior(
-            CR_grid=np.array(first_state["CR_grid"]),
+            CR_grid=np.array(first_state["CR_centers"]),
             CR_prior=np.array(first_state["CR_prior"]),
-            k_grid=np.array(first_state["k_grid"]),
+            k_grid=np.array(first_state["k_centers"]),
             k_prior=np.array(first_state["k_prior"]),
             CR_true=CR_true,
             k_true=k_true,
@@ -287,10 +287,10 @@ def save_jpdf_plots(
             state = data["jpdf_state"]
             fig = plot_jpdf_snapshot(
                 time=t,
-                CR_grid=np.array(state["CR_grid"]),
+                CR_grid=np.array(state["CR_centers"]),
                 CR_prior=np.array(state["CR_prior"]),
                 CR_posterior=np.array(state["CR_posterior"]),
-                k_grid=np.array(state["k_grid"]),
+                k_grid=np.array(state["k_centers"]),
                 k_prior=np.array(state["k_prior"]),
                 k_posterior=np.array(state["k_posterior"]),
                 CR_true=CR_true,
