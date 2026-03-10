@@ -78,6 +78,7 @@ class ReliabilityPipeline:
         # Initialize JPDF
         self.jpdf = JPDF(name="settlement", config=self.config)
         self.jpdf.set_prior_from_specs(self.specs_path)
+        self.jpdf.init_prior_samples(covar_IS = 2.0)
 
         # Initialize corrosion model
         with open(self.specs_path, "r") as f:
@@ -148,28 +149,30 @@ class ReliabilityPipeline:
     
             settlements_obs = get_settlement(
                 t=self.obs_times,
-                CR=self.jpdf.CR_grid,
-                k=self.jpdf.k_grid,
-                RR=self.config.RR,
+                CR = self.jpdf.X_samples[:,0],
+                k = self.jpdf.X_samples[:,1],
+                RR = self.config.RR,
                 Ca=self.config.Ca,
                 h=self.config.layer_thickness,
                 sigma_0=self.config.sigma_0,
                 sigma_v=self.config.sigma_0+self.config.preload,
                 sigma_p=self.config.sigma_p,
                 method=self.config.doc_method,
+                grid_based = False
             )
             
             settlement_forecast = get_settlement(
-                t=self.forecast_times,
-                CR=self.jpdf.CR_grid,
-                k=self.jpdf.k_grid,
-                RR=self.config.RR,
-                Ca=self.config.Ca,
-                h=self.config.layer_thickness,
-                sigma_0=self.config.sigma_0,
-                sigma_v=self.config.sigma_0+self.config.preload,
-                sigma_p=self.config.sigma_p,
-                method=self.config.doc_method,
+                t = self.forecast_times,
+                CR = self.jpdf.X_samples[:,0],
+                k = self.jpdf.X_samples[:,1],
+                RR = self.config.RR,
+                Ca = self.config.Ca,
+                h = self.config.layer_thickness,
+                sigma_0 = self.config.sigma_0,
+                sigma_v = self.config.sigma_0 + self.config.preload,
+                sigma_p = self.config.sigma_p,
+                method = self.config.doc_method,
+                grid_based = False
             )
             
             np.save(cache_file_obs, settlements_obs)
@@ -284,6 +287,12 @@ class ReliabilityPipeline:
         grid_centers = (grid[:-1] + grid[1:]) / 2
         settlement_pdf /= np.trapezoid(settlement_pdf, grid_centers)
 
+        else:
+            import matplotlib.pyplot as plt
+            settlement_pdf,grid,_ = plt.hist(settlement,200 ,weights=self.jpdf.W_samples)
+
+        grid_centers = (grid[:-1] + grid[1:]) / 2
+
         return grid_centers, settlement_pdf
 
     def compute_pf_at_time(self, forecast_time: float, use_prior: bool = False) -> Dict[str, Any]:
@@ -366,7 +375,22 @@ class ReliabilityPipeline:
             # Update posterior
             if len(obs_times) > 0:
                 settlement_at_obs_time = self.settlement_at_obs_times[..., self.obs_times<=t]
-                self.jpdf.update(obs_values=obs_values, settlements=settlement_at_obs_time)
+
+                # likelyhood:
+
+                print(obs_values)
+
+                self.jpdf.n_samples = 100_000
+                lh = np.zeros(self.jpdf.n_samples)
+
+
+                for obs_value,settlement_at_t  in zip(obs_values, settlement_at_obs_time.T):
+                    lh += st.norm(loc = obs_value, scale=self.jpdf.config.obs_error).logpdf(settlement_at_t)
+
+                lh = np.exp(lh)
+
+                self.jpdf.W_update = lh / np.mean(lh)
+
 
             # Compute Pf FORECAST for all future times (from t to t_end)
             prediction_times = [pt for pt in self.forecast_times.tolist()]
@@ -474,7 +498,7 @@ class ReliabilityPipeline:
         save_json(results_json, output_folder)
 
 
-def main(analysis_method: Optional[str] = None):
+def main():
     # Paths
     load_dotenv("settlement_example.env")
     os.environ["REMOTE_DATA_PATH"] = str(get_remote_path()/"input")
