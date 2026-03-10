@@ -522,6 +522,7 @@ def main(analysis_method: Optional[str] = None):
     results = pipeline.run_timeline(setting=setting, verbose=True)
 
     # Save results
+    print("Saving results...")
     pipeline.save_results()
     print("Results saved.")
 
