@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 import numpy as np
 import scipy.stats as st
-from numpy.typing import NDArray
+from numpy.typing import NDArray, ArrayLike
 from case_studies.settlement_example.config import CaseStudyConfig
 
 
@@ -41,6 +41,7 @@ class JPDF:
     ) -> None:
         self.name = name
         self.config = config or CaseStudyConfig()
+        self.grid_based = False
 
         # Variables (loaded from specs)
         self.nvar: int = 0
@@ -66,6 +67,7 @@ class JPDF:
 
         # Performance outputs
         self.G_samples: Optional[Dict[float, NDArray]] = None  # g values per time
+        self.W_prior: Optional[Dict[float, NDArray]] = None  # g values per time
 
     def set_prior_from_specs(self, filepath: Path | str) -> None:
         """Load variable definitions from a JSON specs file and initialize priors.
@@ -119,10 +121,53 @@ class JPDF:
             self.correlation_matrix = np.eye(self.nvar)
 
         # Initialize priors from specs
-        self.init_priors()
+        if self.grid_based:
+            self.init_priors()
+        else:
+            self.init_prior_samples(self.n_samples)
+
         self.pdf = self.get_prior()
         self.CR_pdf = self.CR_prior
         self.k_pdf = self.k_prior
+
+
+    def init_prior_samples(self, mean_IS: ArrayLike | None = None, covar_IS: ArrayLike | None = None) -> None:
+        '''
+        Initiates a set of `N` samples using Importance Sampling by default  
+        
+        '''
+
+        N = self.n_samples
+
+        # sampling weights
+        if isinstance(mean_IS,type(None)):
+            mean_IS = np.zeros(self.nvar)
+        elif isinstance(mean_IS,(int,float)):
+            mean_IS = mean_IS * np.ones(self.nvar)
+
+
+        if isinstance(covar_IS,type(None)):
+            covar_IS = np.eye(self.nvar)
+        elif isinstance(covar_IS,(int,float)):
+            covar_IS = covar_IS * np.eye(self.nvar)
+
+
+        print('>>>',self.nvar, np.shape(mean_IS))
+
+        self.U_samples = st.multivariate_normal(mean = mean_IS,cov = covar_IS).rvs(N)
+        self.q = st.multivariate_normal(mean = mean_IS, cov = covar_IS).pdf(self.U_samples)
+        self.p = st.multivariate_normal(mean = np.zeros(self.nvar), cov = np.eye(self.nvar)).pdf(self.U_samples)
+        self.W_samples = self.p / self.q
+        self.W_prior = self.p / self.q
+
+        # Transform correlated 
+        self.X_samples = (np.linalg.cholesky(self.correlation_matrix) @ self.U_samples.T).T
+        for i,name in enumerate(self.variable_names):
+            self.X_samples[:,i] = self.variables[name].ppf(st.norm.cdf(self.X_samples[:,i]))
+
+        self.Y_samples = [None]*N
+        self.G_samples = [None]*N
+
 
     def init_priors(self) -> None:
         """Initialize discrete grids and marginal prior PDFs for CR and k.
@@ -155,11 +200,24 @@ class JPDF:
         Returns:
             2D array of shape (n_CR, n_k) representing the normalized joint prior.
         """
-        prior = np.exp(np.log(self.CR_prior)[:, np.newaxis] + np.log(self.k_prior)[np.newaxis, :])
-        integral = np.trapezoid(prior, self.k_grid, axis=1)
-        integral = np.trapezoid(integral, self.CR_grid)
-        prior /= integral
+
+        if self.grid_based:
+            prior = np.exp(np.log(self.CR_prior)[:, np.newaxis] + np.log(self.k_prior)[np.newaxis, :])
+            integral = np.trapezoid(prior, self.k_grid, axis=1)
+            integral = np.trapezoid(integral, self.CR_grid)
+            prior /= integral
+
+        else:
+            self.init_prior_samples
+            
+            prior = self.W_prior / np.sum(self.W_prior)
+
+
         return prior
+
+    def get_pdf(self) -> NDArray:
+        pdf = self.W_samples / np.sum(self.W_samples)
+
 
     def reset_to_priors(self) -> None:
         """Reset the joint and marginal PDFs back to their prior state."""
@@ -197,8 +255,8 @@ class JPDF:
         if self.CR_pdf is None or self.CR_grid is None or self.k_pdf is None or self.k_grid is None:
             raise ValueError("Variables not initialized. Call set_prior_from_specs first.")
 
-        obs_values_ = obs_values.reshape(1, 1, -1)
-        loglikes = st.norm(loc=settlements, scale=self.config.obs_error).logpdf(obs_values_).sum(axis=-1)
+        obs_values_ = obs_values#.reshape(1, 1, -1)
+        loglikes = st.norm(loc=settlements, scale=self.config.obs_error).logpdf(obs_values_)#.sum(axis=-1)
 
         log_prior = np.log(self.get_prior())
         log_post = log_prior + loglikes

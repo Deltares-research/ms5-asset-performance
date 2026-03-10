@@ -133,6 +133,7 @@ def get_settlement(
         sigma_v: float = 20.0,
         sigma_p: float = 0.,
         method: str = "Terzaghi",
+        grid_based = False
 ) -> FloatArray:
     """Compute time-dependent settlement on a (CR, k, t) grid.
 
@@ -173,9 +174,14 @@ def get_settlement(
         Squeezed if any dimension is 1.
     """
 
-    CR = ensure_2d(CR, axis=1)[..., np.newaxis]
-    k = ensure_2d(k, axis=0)[..., np.newaxis]
-    t = ensure_2d(t, axis=0)[np.newaxis, ...]
+    if grid_based:
+        CR = ensure_2d(CR, axis=1)[..., np.newaxis]
+        k = ensure_2d(k, axis=0)[..., np.newaxis]
+        t = ensure_2d(t, axis=0)[np.newaxis, ...]
+    else:
+        CR = CR[..., np.newaxis]
+        k = k[..., np.newaxis]
+        t = t[np.newaxis, ...]
 
     gamma_w = 9.81
     mv = CR / (sigma_v * np.log(10))
@@ -192,6 +198,8 @@ def get_settlement(
         sigma_p=sigma_p,
         h=h
     )
+
+    print(doc)
 
     settlement = doc * end_settlement
 
