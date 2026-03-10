@@ -63,15 +63,10 @@ class ReliabilityPipeline:
         self.settlement_grid: Optional[NDArray] = None
         self.results: Dict[str, Any] = {}
 
-    def setup(
-        self,
-        n_samples: int = 100_000,
-        seed: int = 42,
-    ) -> None:
+    def setup(self, seed: int = 42) -> None:
         """Load prior distributions and initialize the performance function.
 
         Args:
-            n_samples: Number of Monte Carlo samples (reserved for future use).
             seed: Random seed (reserved for future use).
         """
 
@@ -287,9 +282,9 @@ class ReliabilityPipeline:
         grid_centers = (grid[:-1] + grid[1:]) / 2
         settlement_pdf /= np.trapezoid(settlement_pdf, grid_centers)
 
-        else:
-            import matplotlib.pyplot as plt
-            settlement_pdf,grid,_ = plt.hist(settlement,200 ,weights=self.jpdf.W_samples)
+        # else:
+        #     import matplotlib.pyplot as plt
+        #     settlement_pdf,grid,_ = plt.hist(settlement,200 ,weights=self.jpdf.W_samples)
 
         grid_centers = (grid[:-1] + grid[1:]) / 2
 
@@ -498,7 +493,7 @@ class ReliabilityPipeline:
         save_json(results_json, output_folder)
 
 
-def main():
+def main(analysis_method: Optional[str] = None):
     # Paths
     load_dotenv("settlement_example.env")
     os.environ["REMOTE_DATA_PATH"] = str(get_remote_path()/"input")
@@ -522,7 +517,7 @@ def main():
     print("=" * 60)
     print("STEP 1: Setup")
     print("=" * 60)
-    pipeline.setup(n_samples=1_000_000, seed=42)
+    pipeline.setup(seed=42)
 
     # =========================================================================
     # STEP 2: Initialize (or load) pre-evaluated settlements
@@ -584,7 +579,8 @@ def main():
 if __name__ == "__main__":
 
     parser = ArgumentParser()
-    parser.add_argument("--analysis_method", type=str, default="semi-analytical")
+    # parser.add_argument("--analysis_method", type=str, default="semi-analytical")
+    parser.add_argument("--analysis_method", type=str, default="sample-based")
     args = parser.parse_args()
 
     main(analysis_method=args.analysis_method)

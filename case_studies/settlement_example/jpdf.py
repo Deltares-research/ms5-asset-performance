@@ -41,7 +41,7 @@ class JPDF:
     ) -> None:
         self.name = name
         self.config = config or CaseStudyConfig()
-        self.grid_based = False
+        self.grid_based = self.config.analysis_method == "semi-analytical"
 
         # Variables (loaded from specs)
         self.nvar: int = 0
@@ -50,9 +50,10 @@ class JPDF:
         self.correlation_matrix: Optional[NDArray] = None
 
         # Samples
+        self.n_samples: int = 0
         self.X_samples: Optional[NDArray] = None  # (n_samples, nvar)
         self.U_samples: Optional[NDArray] = None  # Standard normal samples
-        self.n_samples: int = 0
+        self.W_prior: Optional[Dict[float, NDArray]] = None  # g values per time
 
         # Numerical PDF on grid
         self.CR_grid: Optional[NDArray] = None
@@ -64,10 +65,6 @@ class JPDF:
         self.k_pdf: Optional[NDArray] = None
 
         self.pdf: Optional[NDArray] = None
-
-        # Performance outputs
-        self.G_samples: Optional[Dict[float, NDArray]] = None  # g values per time
-        self.W_prior: Optional[Dict[float, NDArray]] = None  # g values per time
 
     def set_prior_from_specs(self, filepath: Path | str) -> None:
         """Load variable definitions from a JSON specs file and initialize priors.
@@ -113,31 +110,19 @@ class JPDF:
             self.variable_names.append(name)
             self.variables[name] = var
 
-        # Correlation matrix
-        corr = specs.get("correlation_in_u_space")
-        if corr is not None:
-            self.correlation_matrix = np.array(corr)
-        else:
-            self.correlation_matrix = np.eye(self.nvar)
-
         # Initialize priors from specs
         if self.grid_based:
             self.init_priors()
+            self.pdf = self.get_prior()
         else:
-            self.init_prior_samples(self.n_samples)
-
-        self.pdf = self.get_prior()
-        self.CR_pdf = self.CR_prior
-        self.k_pdf = self.k_prior
-
+            self.init_prior_samples()
 
     def init_prior_samples(self, mean_IS: ArrayLike | None = None, covar_IS: ArrayLike | None = None) -> None:
         '''
-        Initiates a set of `N` samples using Importance Sampling by default  
-        
+        Initiates a set of `N` samples using Importance Sampling by default
         '''
 
-        N = self.n_samples
+        N = self.config.n_samples
 
         # sampling weights
         if isinstance(mean_IS,type(None)):
@@ -154,19 +139,29 @@ class JPDF:
 
         print('>>>',self.nvar, np.shape(mean_IS))
 
-        self.U_samples = st.multivariate_normal(mean = mean_IS,cov = covar_IS).rvs(N)
-        self.q = st.multivariate_normal(mean = mean_IS, cov = covar_IS).pdf(self.U_samples)
-        self.p = st.multivariate_normal(mean = np.zeros(self.nvar), cov = np.eye(self.nvar)).pdf(self.U_samples)
-        self.W_samples = self.p / self.q
-        self.W_prior = self.p / self.q
+        # self.U_samples = st.multivariate_normal(mean = mean_IS,cov = covar_IS).rvs(N)
+        # self.q = st.multivariate_normal(mean = mean_IS, cov = covar_IS).pdf(self.U_samples)
+        # self.p = st.multivariate_normal(mean = np.zeros(self.nvar), cov = np.eye(self.nvar)).pdf(self.U_samples)
+        # self.W_samples = self.p / self.q
+        # self.W_prior = self.p / self.q
 
-        # Transform correlated 
-        self.X_samples = (np.linalg.cholesky(self.correlation_matrix) @ self.U_samples.T).T
-        for i,name in enumerate(self.variable_names):
-            self.X_samples[:,i] = self.variables[name].ppf(st.norm.cdf(self.X_samples[:,i]))
+        # # Transform correlated
+        # self.X_samples = (np.linalg.cholesky(self.correlation_matrix) @ self.U_samples.T).T
+        # for i,name in enumerate(self.variable_names):
+        #     self.X_samples[:,i] = self.variables[name].ppf(st.norm.cdf(self.X_samples[:,i]))
+        #
+        # self.Y_samples = [None]*N
+        # self.G_samples = [None]*N
 
-        self.Y_samples = [None]*N
-        self.G_samples = [None]*N
+        self.U_samples = np.stack([
+            st.norm(loc=0, scale=1).rvs(N)
+            for _ in range(self.nvar)
+        ], axis=-1)
+
+        self.X_samples = np.stack([
+            var.ppf(st.norm.cdf(self.U_samples[:, i]))
+            for i, var in enumerate(self.variables.values())
+        ], axis=-1)
 
 
     def init_priors(self) -> None:

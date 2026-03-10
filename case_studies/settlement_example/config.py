@@ -49,6 +49,7 @@ class CaseStudyConfig:
     n_k_grid: int = 100
     end_settlement_req: float = 0.05
     forecast_interval: int = 10
+    n_samples: int = 100_000
     doc_method: str = "Terzaghi"
     analysis_method: str = "semi-analytical"
 
