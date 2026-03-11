@@ -125,16 +125,11 @@ class JPDF:
         self.k_pdf = self.k_prior
 
     def init_priors(self) -> None:
-        """Initialize discrete grids and marginal prior PDFs for CR and k.
-
-        CR grid: uniform spacing from 0.01 to 4.01.
-        k grid: geometric spacing from the 0.1th to 99.9th percentile of the
-        prior distribution, capturing the bulk of the lognormal mass while
-        providing finer resolution at small k values.
-        """
 
         n_grid = self.config.n_CR_grid
-        self.CR_grid = np.linspace(0.01, 4.01, n_grid)
+        CR_lo = self.variables["CR"].ppf(0.001)
+        CR_hi = self.variables["CR"].ppf(0.999)
+        self.CR_grid = np.linspace(CR_lo, CR_hi, n_grid)
         self.CR_prior = self.variables["CR"].pdf(self.CR_grid)
         self.CR_pdf = self.CR_prior.copy()
         
@@ -198,7 +193,7 @@ class JPDF:
             raise ValueError("Variables not initialized. Call set_prior_from_specs first.")
 
         obs_values_ = obs_values.reshape(1, 1, -1)
-        loglikes = st.norm(loc=settlements, scale=self.config.obs_error).logpdf(obs_values_).sum(axis=-1)
+        loglikes = self.get_loglikes(obs_values, settlements)
 
         log_prior = np.log(self.get_prior())
         log_post = log_prior + loglikes
@@ -212,6 +207,10 @@ class JPDF:
         self.pdf = post.copy()
         self.CR_pdf = np.trapezoid(self.pdf, self.k_grid, axis=1)
         self.k_pdf = np.trapezoid(self.pdf, self.CR_grid, axis=0)
+
+    def get_loglikes(self, obs_values: NDArray, settlements: NDArray) -> NDArray:
+        obs_values_ = obs_values.reshape(1, 1, -1)
+        return st.norm(loc=settlements, scale=self.config.obs_error).logpdf(obs_values_).sum(axis=-1)
 
     def get_stats(self) -> Dict[str, float]:
         """Compute summary statistics (mean, std, quantiles) for CR and k."""

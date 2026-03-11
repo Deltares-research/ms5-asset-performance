@@ -449,6 +449,7 @@ class ReliabilityPipeline:
                     "k_prior": self.jpdf.k_prior.tolist(),
                     "k_posterior": self.jpdf.k_pdf.tolist(),
                     "prior": self.jpdf.get_prior().tolist(),
+                    "loglikes": self.jpdf.get_loglikes(obs_values, settlement_at_obs_time).tolist(),
                     "posterior": self.jpdf.pdf.tolist(),
                 },
             }
@@ -523,7 +524,7 @@ def main(analysis_method: Optional[str] = None):
 
     # Save results
     print("Saving results...")
-    pipeline.save_results()
+    # pipeline.save_results()
     print("Results saved.")
 
     # =========================================================================
