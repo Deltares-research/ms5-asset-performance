@@ -118,7 +118,9 @@ def plot_jpdf_snapshot(
     # 95% CI errorbar on CR posterior marginal
     cr_mean, cr_q025, cr_q975 = _pdf_stats(CR_grid, CR_posterior)
     cr_pdf_at_mean = np.interp(cr_mean, CR_grid, CR_posterior)
-    ax_top.errorbar(cr_mean, cr_pdf_at_mean * 0.5, xerr=[[cr_mean - cr_q025], [cr_q975 - cr_mean]],
+    cr_xerr_lo = max(0.0, cr_mean - cr_q025)
+    cr_xerr_hi = max(0.0, cr_q975 - cr_mean)
+    ax_top.errorbar(cr_mean, cr_pdf_at_mean * 0.5, xerr=[[cr_xerr_lo], [cr_xerr_hi]],
                     fmt="none", ecolor="r", elinewidth=1.5, capsize=4, capthick=1.5, label="95% CI")
     if CR_true is not None:
         ax_top.axvline(CR_true, color="red", linestyle="--", linewidth=1.5, label=f"True")
@@ -135,7 +137,9 @@ def plot_jpdf_snapshot(
     # 95% CI errorbar on k posterior marginal
     k_mean, k_q025, k_q975 = _pdf_stats(k_grid, k_posterior)
     k_pdf_at_mean = np.interp(k_mean, k_grid, k_posterior)
-    ax_right.errorbar(k_pdf_at_mean * 0.5, k_mean, yerr=[[k_mean - k_q025], [k_q975 - k_mean]],
+    k_yerr_lo = max(0.0, k_mean - k_q025)
+    k_yerr_hi = max(0.0, k_q975 - k_mean)
+    ax_right.errorbar(k_pdf_at_mean * 0.5, k_mean, yerr=[[k_yerr_lo], [k_yerr_hi]],
                       fmt="none", ecolor="r", elinewidth=1.5, capsize=4, capthick=1.5)
     if k_true is not None:
         ax_right.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
