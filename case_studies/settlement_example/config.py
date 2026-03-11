@@ -8,7 +8,7 @@ Parameters can be loaded from a JSON specifications file or set directly.
 import json
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 
 @dataclass
@@ -34,7 +34,7 @@ class CaseStudyConfig:
         forecast_interval: Time interval between forecast evaluation points [days].
     """
 
-    layer_thickness: float = 5.0
+    layer_thickness: float | List[float] = 5.0
     preload: float = 50.0
     permanent_load: float = 50.0
     preload_removal_time: float = 365.0

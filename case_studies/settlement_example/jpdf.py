@@ -165,34 +165,30 @@ class JPDF:
         if self.k_prior is not None:
             self.k_pdf = self.k_prior.copy()
 
-    def update(self, obs_values: NDArray, settlements: NDArray) -> None:
-        """Bayesian update of the joint PDF given settlement observations.
+    def update(
+            self,
+            obs_values: Dict[int, NDArray],
+            settlements: Dict[int, NDArray],
+    ) -> None:
+        """Bayesian update of the joint PDF given multi-location observations.
 
-        Computes the posterior using Bayes' theorem on the discrete grid:
+        The total log-likelihood is the sum over all locations and all
+        observation times:
 
-            log_posterior = log_prior + sum(log_likelihood)
+            log_posterior = log_prior + sum_loc( sum_t( log L(obs|pred) ) )
 
-        where the likelihood for each observation is a normal distribution
-        centered on the predicted settlement with standard deviation equal
-        to the configured observation error.
-
-        A log-sum-exp trick is applied (subtracting the maximum log-posterior)
-        before exponentiation to prevent numerical underflow when many
-        observations are used simultaneously.
-
-        After updating, the marginal PDFs (CR_pdf, k_pdf) are recomputed
-        by integrating the joint posterior over the other axis.
+        A log-sum-exp trick is applied before exponentiation to prevent
+        numerical underflow.
 
         Args:
-            obs_values: 1D array of observed settlement values [m].
-            settlements: 3D array of shape (n_CR, n_k, n_obs) with predicted
-                settlements at the observation times for each (CR, k) pair.
+            obs_values: Dict {loc: 1D array of observed settlements [m]}.
+            settlements: Dict {loc: 3D array (n_CR, n_k, n_obs) of predicted
+                settlements at observation times}.
         """
 
         if self.CR_pdf is None or self.CR_grid is None or self.k_pdf is None or self.k_grid is None:
             raise ValueError("Variables not initialized. Call set_prior_from_specs first.")
 
-        obs_values_ = obs_values.reshape(1, 1, -1)
         loglikes = self.get_loglikes(obs_values, settlements)
 
         log_prior = np.log(self.get_prior())
@@ -208,9 +204,41 @@ class JPDF:
         self.CR_pdf = np.trapezoid(self.pdf, self.k_grid, axis=1)
         self.k_pdf = np.trapezoid(self.pdf, self.CR_grid, axis=0)
 
-    def get_loglikes(self, obs_values: NDArray, settlements: NDArray) -> NDArray:
-        obs_values_ = obs_values.reshape(1, 1, -1)
-        return st.norm(loc=settlements, scale=self.config.obs_error).logpdf(obs_values_).sum(axis=-1)
+    def get_loglikes(
+            self,
+            obs_values: Dict[int, NDArray],
+            settlements: Dict[int, NDArray],
+    ) -> NDArray:
+        """Compute total log-likelihood summed over all locations and times.
+
+        Args:
+            obs_values: Dict {loc: 1D array of observed settlements}.
+            settlements: Dict {loc: 3D array (n_CR, n_k, n_obs)}.
+
+        Returns:
+            2D array (n_CR, n_k) of total log-likelihood per grid point.
+        """
+        total = np.zeros((len(self.CR_grid), len(self.k_grid)))
+        for loc in obs_values:
+            obs = obs_values[loc].reshape(1, 1, -1)
+            total += st.norm(loc=settlements[loc], scale=self.config.obs_error).logpdf(obs).sum(axis=-1)
+        return total
+
+    def get_loglikes_per_loc(
+            self,
+            obs_values: Dict[int, NDArray],
+            settlements: Dict[int, NDArray],
+    ) -> Dict[int, NDArray]:
+        """Compute log-likelihood per location (not summed across locations).
+
+        Returns:
+            Dict {loc: 2D array (n_CR, n_k)} of log-likelihood per location.
+        """
+        result = {}
+        for loc in obs_values:
+            obs = obs_values[loc].reshape(1, 1, -1)
+            result[loc] = st.norm(loc=settlements[loc], scale=self.config.obs_error).logpdf(obs).sum(axis=-1)
+        return result
 
     def get_stats(self) -> Dict[str, float]:
         """Compute summary statistics (mean, std, quantiles) for CR and k."""

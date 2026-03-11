@@ -21,25 +21,39 @@ if __name__ == "__main__":
 
     times = np.linspace(30, specs["parameters"]["preload_removal_time"], 36)
 
-    settlements = get_settlement(
-        t=times,
-        CR=true_vars["CR"],
-        k=true_vars["k"],
-        RR=specs["parameters"]["RR"],
-        Ca=specs["parameters"]["Ca"],
-        h=specs["parameters"]["layer_thickness"],
-        sigma_0=specs["parameters"]["sigma_0"],
-        sigma_v=specs["parameters"]["sigma_0"]+specs["parameters"]["preload"],
-        sigma_p=specs["parameters"]["sigma_p"],
-        method=specs["parameters"]["doc_method"],
-    )
+    layer_thicknesses = specs["parameters"]["layer_thickness"]
+    if not isinstance(layer_thicknesses, list):
+        layer_thicknesses = [layer_thicknesses]
 
-    obs_error = specs["parameters"]["obs_error"]
-    random.seed(42)
-    gauss_errors = [random.gauss(mu=0, sigma=1) for _ in range(len(settlements))]
-    settlements = [s+gauss_err*obs_error for (s, gauss_err) in zip(settlements, gauss_errors)]
+    settlements_per_location = []
+    for loc, layer_thickness in enumerate(layer_thicknesses, start=1):
 
-    setting = {f"{time:.1f}": f"{settlement.item():.4f}" for (time, settlement) in zip(times, settlements)}
+        settlements = get_settlement(
+            t=times,
+            CR=true_vars["CR"],
+            k=true_vars["k"],
+            RR=specs["parameters"]["RR"],
+            Ca=specs["parameters"]["Ca"],
+            h=layer_thickness,
+            sigma_0=specs["parameters"]["sigma_0"],
+            sigma_v=specs["parameters"]["sigma_0"]+specs["parameters"]["preload"],
+            sigma_p=specs["parameters"]["sigma_p"],
+            method=specs["parameters"]["doc_method"],
+        )
+
+        obs_error = specs["parameters"]["obs_error"]
+        random.seed(42 + loc)
+        gauss_errors = [random.gauss(mu=0, sigma=1) for _ in range(len(settlements))]
+        settlements = [s+gauss_err*obs_error for (s, gauss_err) in zip(settlements, gauss_errors)]
+
+        settlements_per_location.append(settlements)
+
+    setting = []
+    for i, time in enumerate(times):
+        row = {"time": f"{time:.1f}"}
+        for loc, s_loc in enumerate(settlements_per_location, start=1):
+            row[f"settlement_{loc}"] = f"{s_loc[i]:.4f}"
+        setting.append(row)
 
     with open(setting_path, "w") as f:
         json.dump(setting, f, indent=2)

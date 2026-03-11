@@ -24,7 +24,7 @@ import os
 import json
 from datetime import datetime
 from settlement_engine import get_settlement
-from plotting import save_jpdf_plots, save_settlement_forecast_plots, save_settlement_residual_plots, save_beta_over_time_plot, make_gifs
+from plotting import save_jpdf_plots, save_jpdf_per_loc_plots, save_settlement_forecast_plots, save_settlement_residual_plots, save_beta_over_time_plot, make_gifs
 from argparse import ArgumentParser
 
 
@@ -86,17 +86,17 @@ class ReliabilityPipeline:
         params = specs.get("parameters", {})
         self.performance = Performance(name="settlement", parameters=params)
 
-    def init_times(self, setting: Dict[str, float]) -> None:
+    def init_times(self, setting: List[Dict[str, str]]) -> None:
         """Build observation and forecast time arrays from the setting.
 
         Forecast times include: regular intervals from 0 to preload removal,
         the preload removal time, the end time, and all observation times.
 
         Args:
-            setting: Dict mapping observation time strings to settlement values.
+            setting: List of dicts, each with "time" and "settlement_<i>" keys.
         """
 
-        self.obs_times = np.array([float(key) for key in setting.keys()])
+        self.obs_times = np.array([float(row["time"]) for row in setting])
 
         preload_removal_time = self.config.preload_removal_time
         end_time = self.config.end_time
@@ -107,101 +107,134 @@ class ReliabilityPipeline:
         forecast_times = np.append(forecast_times, self.obs_times)
         self.forecast_times = np.sort(np.unique(forecast_times))
 
+    def _parse_obs_values(self, setting: List[Dict[str, str]]) -> Dict[int, NDArray]:
+        """Extract per-location observation values from the setting.
+
+        Args:
+            setting: List of dicts with "time" and "settlement_<i>" keys.
+
+        Returns:
+            Dict mapping location index (1-based) to 1D array of observed
+            settlement values across all observation times.
+        """
+        settlement_keys = sorted([k for k in setting[0] if k.startswith("settlement_")])
+        obs_values = {}
+        for key in settlement_keys:
+            loc = int(key.split("_")[1])
+            obs_values[loc] = np.array([float(row[key]) for row in setting])
+        return obs_values
+
     def init_settlements(
             self,
-            setting: Dict[str, float],
+            setting: List[Dict[str, str]],
             cache_dir: Optional[Path] = None,
             force_rebuild: bool = False
     ) -> None:
         """Pre-evaluate settlements on the (CR, k) grid for all time steps.
 
         Computes settlement arrays at observation times and forecast times
-        using the settlement engine. Results are cached to disk as .npy files
-        to avoid recomputation on subsequent runs.
+        per location (layer thickness). Results are cached to disk as .npy
+        files to avoid recomputation on subsequent runs.
 
-        Also computes the residual settlement (end_time - preload_removal_time)
+        Also computes the residual settlement (end_time - preload_removal)
         and builds the 1D grids used for settlement PDF computation.
 
         Args:
-            setting: Dict mapping observation time strings to settlement values.
+            setting: List of dicts with "time" and "settlement_<i>" keys.
             cache_dir: Directory for caching settlement arrays.
             force_rebuild: If True, recompute even if cache exists.
         """
 
         self.init_times(setting)
+        self.obs_values = self._parse_obs_values(setting)
 
-        cache_file_obs = cache_dir / "settlements_obs.npy"
-        cache_file_forecast = cache_dir / "settlement_forecast.npy"
+        # Normalize layer_thickness to a list
+        layer_thicknesses = self.config.layer_thickness
+        if not isinstance(layer_thicknesses, list):
+            layer_thicknesses = [layer_thicknesses]
+        self.layer_thicknesses = layer_thicknesses
+        self.n_locations = len(layer_thicknesses)
 
-        if not force_rebuild and cache_file_obs.exists() and cache_file_forecast.exists():
-            
-            settlements_obs = np.load(cache_file_obs)
-            settlement_forecast = np.load(cache_file_forecast)
-            
-            if settlements_obs.shape[-1] != len(self.obs_times):
-                raise ValueError(f"""
-                Inconsistent times: cached settlements have {settlements_obs.shape[-1]} 
-                times while analysis needs {len(self.obs_times)}.
-                """)
-            
-        else:
-    
-            settlements_obs = get_settlement(
-                t=self.obs_times,
-                CR=self.jpdf.CR_grid,
-                k=self.jpdf.k_grid,
-                RR=self.config.RR,
-                Ca=self.config.Ca,
-                h=self.config.layer_thickness,
-                sigma_0=self.config.sigma_0,
-                sigma_v=self.config.sigma_0+self.config.preload,
-                sigma_p=self.config.sigma_p,
-                method=self.config.doc_method,
-            )
-            
-            settlement_forecast = get_settlement(
-                t=self.forecast_times,
-                CR=self.jpdf.CR_grid,
-                k=self.jpdf.k_grid,
-                RR=self.config.RR,
-                Ca=self.config.Ca,
-                h=self.config.layer_thickness,
-                sigma_0=self.config.sigma_0,
-                sigma_v=self.config.sigma_0+self.config.preload,
-                sigma_p=self.config.sigma_p,
-                method=self.config.doc_method,
-            )
-            
-            np.save(cache_file_obs, settlements_obs)
-            np.save(cache_file_forecast, settlement_forecast)
+        # Per-location settlement arrays: {loc: (n_CR, n_k, n_t)}
+        self.settlement_at_obs_times = {}
+        self.settlement_forecast = {}
+        self.settlement_residual = {}
 
-        # If settlement matrix is takes more than 100MB memory, reduce its accuracy.
-        if settlements_obs.nbytes / 1e6 >= 100:
-            settlements_obs = settlements_obs.astype(np.float32)
-            print("Reducing accuracy of 'settlements' to float32")
-            print(f"Current memory for 'settlements'={settlements_obs.nbytes/1e3:.0f}KB")
+        for loc, h in enumerate(layer_thicknesses, start=1):
 
-        # If settlement matrix is takes more than 100MB memory, reduce its accuracy.
-        if settlement_forecast.nbytes / 1e6 >= 100:
-            settlement_forecast = settlement_forecast.astype(np.float32)
-            print("Reducing accuracy of 'settlements' to float32")
-            print(f"Current memory for 'settlements'={settlement_forecast.nbytes/1e3:.0f}KB")
+            cache_file_obs = cache_dir / f"settlements_obs_loc{loc}.npy"
+            cache_file_forecast = cache_dir / f"settlement_forecast_loc{loc}.npy"
 
-        self.settlement_at_obs_times = settlements_obs
-        self.settlement_residual = settlement_forecast[..., -1] - settlement_forecast[..., -2]
-        self.settlement_forecast = settlement_forecast
+            if not force_rebuild and cache_file_obs.exists() and cache_file_forecast.exists():
 
+                settlements_obs = np.load(cache_file_obs)
+                settlement_forecast = np.load(cache_file_forecast)
+
+                if settlements_obs.shape[-1] != len(self.obs_times):
+                    raise ValueError(
+                        f"Inconsistent times for loc {loc}: cached has "
+                        f"{settlements_obs.shape[-1]}, need {len(self.obs_times)}."
+                    )
+
+            else:
+
+                settlements_obs = get_settlement(
+                    t=self.obs_times,
+                    CR=self.jpdf.CR_grid,
+                    k=self.jpdf.k_grid,
+                    RR=self.config.RR,
+                    Ca=self.config.Ca,
+                    h=h,
+                    sigma_0=self.config.sigma_0,
+                    sigma_v=self.config.sigma_0 + self.config.preload,
+                    sigma_p=self.config.sigma_p,
+                    method=self.config.doc_method,
+                )
+
+                settlement_forecast = get_settlement(
+                    t=self.forecast_times,
+                    CR=self.jpdf.CR_grid,
+                    k=self.jpdf.k_grid,
+                    RR=self.config.RR,
+                    Ca=self.config.Ca,
+                    h=h,
+                    sigma_0=self.config.sigma_0,
+                    sigma_v=self.config.sigma_0 + self.config.preload,
+                    sigma_p=self.config.sigma_p,
+                    method=self.config.doc_method,
+                )
+
+                np.save(cache_file_obs, settlements_obs)
+                np.save(cache_file_forecast, settlement_forecast)
+
+            # Reduce memory if needed
+            if settlements_obs.nbytes / 1e6 >= 100:
+                settlements_obs = settlements_obs.astype(np.float32)
+                print(f"Loc {loc}: reducing 'settlements_obs' to float32 ({settlements_obs.nbytes/1e3:.0f}KB)")
+
+            if settlement_forecast.nbytes / 1e6 >= 100:
+                settlement_forecast = settlement_forecast.astype(np.float32)
+                print(f"Loc {loc}: reducing 'settlement_forecast' to float32 ({settlement_forecast.nbytes/1e3:.0f}KB)")
+
+            self.settlement_at_obs_times[loc] = settlements_obs
+            self.settlement_forecast[loc] = settlement_forecast
+            self.settlement_residual[loc] = settlement_forecast[..., -1] - settlement_forecast[..., -2]
+
+        # Build settlement grids from all locations combined
         n_settlement_grid = 1_001
 
-        settlement_min = min(np.nanmin(self.settlement_at_obs_times), np.nanmin(self.settlement_forecast))
-        settlement_max = max(np.nanmax(self.settlement_at_obs_times), np.nanmax(self.settlement_forecast))
+        all_obs = np.concatenate([v.flatten() for v in self.settlement_at_obs_times.values()])
+        all_forecast = np.concatenate([v.flatten() for v in self.settlement_forecast.values()])
+        settlement_min = min(np.nanmin(all_obs), np.nanmin(all_forecast))
+        settlement_max = max(np.nanmax(all_obs), np.nanmax(all_forecast))
         settlement_grid = np.linspace(settlement_min, settlement_max, n_settlement_grid)
         self.settlement_grid = np.sort(np.unique(np.append(settlement_grid, 0)))
 
-        residual_settlement_min = np.nanmin(self.settlement_residual)
-        residual_settlement_max = np.nanmax(self.settlement_residual)
-        residual_settlement_grid = np.linspace(residual_settlement_min, residual_settlement_max, n_settlement_grid)
-        self.residual_settlement_grid = np.sort(np.unique(np.append(residual_settlement_grid, 0)))
+        all_residual = np.concatenate([v.flatten() for v in self.settlement_residual.values()])
+        residual_min = np.nanmin(all_residual)
+        residual_max = np.nanmax(all_residual)
+        residual_grid = np.linspace(residual_min, residual_max, n_settlement_grid)
+        self.residual_settlement_grid = np.sort(np.unique(np.append(residual_grid, 0)))
 
     def get_settlement_pdf(self, settlement: NDArray, use_prior: bool = False, grid: NDArray = None) -> Tuple[NDArray, NDArray]:
         """Transform the 2D joint (CR, k) PDF into a 1D settlement PDF.
@@ -286,11 +319,12 @@ class ReliabilityPipeline:
 
         return grid_centers, settlement_pdf
 
-    def compute_pf_at_time(self, forecast_time: float, use_prior: bool = False) -> Dict[str, Any]:
+    def compute_pf_at_time(self, forecast_time: float, loc: int = 1, use_prior: bool = False) -> Dict[str, Any]:
         """Compute failure probability, reliability index, and settlement PDF at a forecast time.
 
         Args:
             forecast_time: The time at which to evaluate [days].
+            loc: Location index (1-based).
             use_prior: If True, use the prior PDF. Otherwise use the posterior.
 
         Returns:
@@ -298,7 +332,7 @@ class ReliabilityPipeline:
         """
 
         pf = self.performance.failure_probability(
-            x=self.settlement_residual,
+            x=self.settlement_residual[loc],
             pdf=self.jpdf.get_prior() if use_prior else self.jpdf.pdf,
             CR_grid=self.jpdf.CR_grid,
             k_grid=self.jpdf.k_grid,
@@ -307,7 +341,7 @@ class ReliabilityPipeline:
         pf_clipped = np.clip(pf, 1e-10, 1 - 1e-10)
         beta = st.norm.ppf(1 - pf_clipped)
 
-        settlement_at_forecast_time = self.settlement_forecast[..., self.forecast_times==forecast_time].squeeze()
+        settlement_at_forecast_time = self.settlement_forecast[loc][..., self.forecast_times==forecast_time].squeeze()
         settlement_grid, settlement_pdf = self.get_settlement_pdf(
             settlement=settlement_at_forecast_time,
             use_prior=use_prior
@@ -321,21 +355,20 @@ class ReliabilityPipeline:
         }
 
 
-    def run_timeline(self, setting: Dict[str, float], verbose: bool = True) -> Dict[str, Any]:
+    def run_timeline(self, setting: List[Dict[str, str]], verbose: bool = True) -> Dict[str, Any]:
         """Run the sequential Bayesian analysis over all observation times.
 
         For each observation time:
-        1. Collects all observations up to that time.
+        1. Collects all observations (across locations) up to that time.
         2. Resets the JPDF to the prior and performs a full Bayesian update
            with all available observations (batch update, not incremental).
         3. Computes prior and posterior failure probabilities and settlement
-           PDFs at all forecast times.
+           PDFs at all forecast times (per location).
         4. Stores the JPDF state (grids, marginals, joint PDF) for later
            visualization.
 
         Args:
-            setting: Dict mapping observation time strings to settlement
-                value strings.
+            setting: List of dicts with "time" and "settlement_<i>" keys.
             verbose: If True, print progress and results.
 
         Returns:
@@ -344,15 +377,8 @@ class ReliabilityPipeline:
         """
 
         self.results = {}
+        mask_up_to = lambda t: self.obs_times <= t
 
-        # Collect settlement observations
-        def get_observations_up_to(t: float):
-            obs_times = self.obs_times[self.obs_times<=t]
-            obs_values = [float(v) for v in setting.values()]
-            obs_values = np.array(obs_values)[self.obs_times<=t]
-            return np.array(obs_times), np.array(obs_values)
-
-        # Reset C50 to prior
         self.jpdf.reset_to_priors()
 
         for t in self.obs_times.tolist():
@@ -360,87 +386,79 @@ class ReliabilityPipeline:
             if verbose:
                 print(f"Processing t={t:.0f}...")
 
-            # Get observations up to current time
-            obs_times, obs_values = get_observations_up_to(t)
+            mask = mask_up_to(t)
+            obs_times = self.obs_times[mask]
+
+            # Build per-location obs and settlement dicts for Bayesian update
+            obs_values_up_to = {loc: vals[mask] for loc, vals in self.obs_values.items()}
+            settlements_up_to = {loc: arr[..., mask] for loc, arr in self.settlement_at_obs_times.items()}
 
             # Update posterior
             if len(obs_times) > 0:
-                settlement_at_obs_time = self.settlement_at_obs_times[..., self.obs_times<=t]
-                self.jpdf.update(obs_values=obs_values, settlements=settlement_at_obs_time)
+                self.jpdf.update(obs_values=obs_values_up_to, settlements=settlements_up_to)
 
-            # Compute Pf FORECAST for all future times (from t to t_end)
-            prediction_times = [pt for pt in self.forecast_times.tolist()]
-            pf_forecast_prior = {}
-            pf_forecast_posterior = {}
-            beta_forecast_prior = {}
-            beta_forecast_posterior = {}
-            settlement_prior_grid = {}
-            settlement_forecast_prior = {}
-            settlement_posterior_grid = {}
-            settlement_forecast_posterior = {}
+            # Compute Pf and settlement PDFs per location
+            per_loc_results_prior = {}
+            per_loc_results_posterior = {}
 
-            for pt in prediction_times:
+            for loc in range(1, self.n_locations + 1):
 
-                # Prior forecast
-                result_prior = self.compute_pf_at_time(forecast_time=pt, use_prior=True)
-                pf_forecast_prior[pt] = result_prior["pf"]
-                beta_forecast_prior[pt] = result_prior["beta"]
-                settlement_prior_grid[pt] = result_prior["settlement_grid"]
-                settlement_forecast_prior[pt] = result_prior["settlement_pdf"]
+                prediction_times = self.forecast_times.tolist()
+                loc_prior = {"pf_forecast": {}, "beta_forecast": {},
+                             "settlement_grid": {}, "settlement_pdf": {}}
+                loc_posterior = {"pf_forecast": {}, "beta_forecast": {},
+                                "settlement_grid": {}, "settlement_pdf": {}}
 
-                # Posterior forecast
-                result_posterior = self.compute_pf_at_time(forecast_time=pt, use_prior=False)
-                pf_forecast_posterior[pt] = result_posterior["pf"]
-                beta_forecast_posterior[pt] = result_posterior["beta"]
-                settlement_posterior_grid[pt] = result_posterior["settlement_grid"]
-                settlement_forecast_posterior[pt] = result_posterior["settlement_pdf"]
+                for pt in prediction_times:
+                    result_prior = self.compute_pf_at_time(forecast_time=pt, loc=loc, use_prior=True)
+                    loc_prior["pf_forecast"][pt] = result_prior["pf"]
+                    loc_prior["beta_forecast"][pt] = result_prior["beta"]
+                    loc_prior["settlement_grid"][pt] = result_prior["settlement_grid"]
+                    loc_prior["settlement_pdf"][pt] = result_prior["settlement_pdf"]
 
-            # Residual settlement PDFs
-            residual_settlement_grid_prior, residual_settlement_pdf_prior = self.get_settlement_pdf(
-                settlement=self.settlement_residual,
-                use_prior=True,
-                grid=self.residual_settlement_grid,
-            )
-            residual_settlement_grid_posterior, residual_settlement_pdf_posterior = self.get_settlement_pdf(
-                settlement=self.settlement_residual,
-                use_prior=False,
-                grid=self.residual_settlement_grid,
-            )
+                    result_posterior = self.compute_pf_at_time(forecast_time=pt, loc=loc, use_prior=False)
+                    loc_posterior["pf_forecast"][pt] = result_posterior["pf"]
+                    loc_posterior["beta_forecast"][pt] = result_posterior["beta"]
+                    loc_posterior["settlement_grid"][pt] = result_posterior["settlement_grid"]
+                    loc_posterior["settlement_pdf"][pt] = result_posterior["settlement_pdf"]
 
-            # Current time results
-            t_min = min(beta_forecast_prior)
-            pf_current_prior = pf_forecast_prior[t_min]
-            pf_current_posterior = pf_forecast_posterior[t_min]
-            beta_current_prior = beta_forecast_prior[t_min]
-            beta_current_posterior = beta_forecast_posterior[t_min]
+                # Residual settlement PDFs
+                res_grid_prior, res_pdf_prior = self.get_settlement_pdf(
+                    settlement=self.settlement_residual[loc], use_prior=True,
+                    grid=self.residual_settlement_grid,
+                )
+                res_grid_posterior, res_pdf_posterior = self.get_settlement_pdf(
+                    settlement=self.settlement_residual[loc], use_prior=False,
+                    grid=self.residual_settlement_grid,
+                )
+
+                t_min = min(loc_prior["pf_forecast"])
+                loc_prior["pf"] = loc_prior["pf_forecast"][t_min]
+                loc_prior["beta"] = loc_prior["beta_forecast"][t_min]
+                loc_posterior["pf"] = loc_posterior["pf_forecast"][t_min]
+                loc_posterior["beta"] = loc_posterior["beta_forecast"][t_min]
+
+                per_loc_results_prior[loc] = {
+                    **loc_prior,
+                    "settlement_residual": {
+                        "grid": res_grid_prior.tolist(),
+                        "pdf": res_pdf_prior.tolist(),
+                    },
+                }
+                per_loc_results_posterior[loc] = {
+                    **loc_posterior,
+                    "settlement_residual": {
+                        "grid": res_grid_posterior.tolist(),
+                        "pdf": res_pdf_posterior.tolist(),
+                    },
+                }
 
             self.results[t] = {
                 "time": t,
                 "obs_times": obs_times.tolist(),
-                "settlement_obs": obs_values.tolist(),
-                "prior": {
-                    "pf": pf_current_prior,
-                    "beta": beta_current_prior,
-                    "pf_forecast": pf_forecast_prior,
-                    "beta_forecast": beta_forecast_prior,
-                    "settlement_prior_grid": settlement_prior_grid,
-                    "settlement_forecast": settlement_forecast_prior,
-                },
-                "posterior": {
-                    "pf": pf_current_posterior,
-                    "beta": beta_current_posterior,
-                    "pf_forecast": pf_forecast_posterior,
-                    "beta_forecast": beta_forecast_posterior,
-                    "settlement_posterior_grid": settlement_posterior_grid,
-                    "settlement_forecast": settlement_forecast_posterior,
-                },
-                "settlement_residual": {
-                    "prior_grid": residual_settlement_grid_prior.tolist(),
-                    "prior_pdf": residual_settlement_pdf_prior.tolist(),
-                    "posterior_grid": residual_settlement_grid_posterior.tolist(),
-                    "posterior_pdf": residual_settlement_pdf_posterior.tolist(),
-                },
-                # Store JPDF state for snapshot generation
+                "obs_values": {loc: vals.tolist() for loc, vals in obs_values_up_to.items()},
+                "prior": per_loc_results_prior,
+                "posterior": per_loc_results_posterior,
                 "jpdf_state": {
                     "CR_grid": self.jpdf.CR_grid.tolist(),
                     "CR_prior": self.jpdf.CR_prior.tolist(),
@@ -449,14 +467,19 @@ class ReliabilityPipeline:
                     "k_prior": self.jpdf.k_prior.tolist(),
                     "k_posterior": self.jpdf.k_pdf.tolist(),
                     "prior": self.jpdf.get_prior().tolist(),
-                    "loglikes": self.jpdf.get_loglikes(obs_values, settlement_at_obs_time).tolist(),
+                    "loglikes": self.jpdf.get_loglikes(obs_values_up_to, settlements_up_to).tolist(),
+                    "loglikes_per_loc": {
+                        loc: ll.tolist()
+                        for loc, ll in self.jpdf.get_loglikes_per_loc(obs_values_up_to, settlements_up_to).items()
+                    },
                     "posterior": self.jpdf.pdf.tolist(),
                 },
             }
 
             if verbose:
-                print(f"  Prior:     Pf={result_prior['pf']:.2e}, beta={result_prior['beta']:.2f}")
-                print(f"  Posterior: Pf={result_posterior['pf']:.2e}, beta={result_posterior['beta']:.2f}")
+                for loc in range(1, self.n_locations + 1):
+                    print(f"  Loc {loc} Prior:     Pf={per_loc_results_prior[loc]['pf']:.2e}, beta={per_loc_results_prior[loc]['beta']:.2f}")
+                    print(f"  Loc {loc} Posterior: Pf={per_loc_results_posterior[loc]['pf']:.2e}, beta={per_loc_results_posterior[loc]['beta']:.2f}")
 
         return self.results
 
@@ -540,21 +563,59 @@ def main(analysis_method: Optional[str] = None):
     CR_true = variables.get("CR").get("true")
     k_true = variables.get("k").get("true")
 
-    obs_values = np.array([float(v) for v in setting.values()])
     save_jpdf_plots(results=results, output_dir=output_dir, CR_true=CR_true, k_true=k_true)
-    save_settlement_forecast_plots(
-        results=results,
-        output_dir=output_dir,
-        t_max=config.preload_removal_time+5,
-        obs_error=config.obs_error,
-        y_max=obs_values.max()
-    )
-    save_settlement_residual_plots(
-        results=results,
-        output_dir=output_dir,
-        end_settlement_req=config.end_settlement_req
-    )
-    save_beta_over_time_plot(results=results, output_dir=output_dir)
+    save_jpdf_per_loc_plots(results=results, output_dir=output_dir, n_locations=pipeline.n_locations, CR_true=CR_true, k_true=k_true)
+
+    # Plot per location
+    for loc in range(1, pipeline.n_locations + 1):
+        loc_dir = output_dir / f"loc_{loc}"
+        loc_dir.mkdir(parents=True, exist_ok=True)
+
+        # Build single-location results view for plotting functions
+        loc_results = {}
+        for t, data in results.items():
+            obs_vals_loc = np.array(data["obs_values"][loc])
+            loc_results[t] = {
+                "time": data["time"],
+                "obs_times": data["obs_times"],
+                "settlement_obs": obs_vals_loc.tolist(),
+                "prior": {
+                    "pf": data["prior"][loc]["pf"],
+                    "beta": data["prior"][loc]["beta"],
+                    "settlement_prior_grid": data["prior"][loc]["settlement_grid"],
+                    "settlement_forecast": data["prior"][loc]["settlement_pdf"],
+                },
+                "posterior": {
+                    "pf": data["posterior"][loc]["pf"],
+                    "beta": data["posterior"][loc]["beta"],
+                    "settlement_posterior_grid": data["posterior"][loc]["settlement_grid"],
+                    "settlement_forecast": data["posterior"][loc]["settlement_pdf"],
+                },
+                "settlement_residual": {
+                    "prior_grid": data["prior"][loc]["settlement_residual"]["grid"],
+                    "prior_pdf": data["prior"][loc]["settlement_residual"]["pdf"],
+                    "posterior_grid": data["posterior"][loc]["settlement_residual"]["grid"],
+                    "posterior_pdf": data["posterior"][loc]["settlement_residual"]["pdf"],
+                },
+                "jpdf_state": data["jpdf_state"],
+            }
+
+        obs_vals_all = np.array([float(row[f"settlement_{loc}"]) for row in setting])
+        save_settlement_forecast_plots(
+            results=loc_results,
+            output_dir=loc_dir,
+            t_max=config.preload_removal_time + 5,
+            obs_error=config.obs_error,
+            y_max=obs_vals_all.max()
+        )
+        save_settlement_residual_plots(
+            results=loc_results,
+            output_dir=loc_dir,
+            end_settlement_req=config.end_settlement_req
+        )
+        save_beta_over_time_plot(results=loc_results, output_dir=loc_dir)
+        make_gifs(loc_dir)
+
     make_gifs(output_dir)
 
 
