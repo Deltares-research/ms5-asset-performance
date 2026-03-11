@@ -148,12 +148,19 @@ class ReliabilityPipeline:
         self.init_times(setting)
         self.obs_values = self._parse_obs_values(setting)
 
-        # Normalize layer_thickness to a list
-        layer_thicknesses = self.config.layer_thickness
-        if not isinstance(layer_thicknesses, list):
-            layer_thicknesses = [layer_thicknesses]
-        self.layer_thicknesses = layer_thicknesses
+        # Normalize per-location parameters to lists
+        def _as_list(val, n=None):
+            if not isinstance(val, list):
+                return [val] * (n or 1)
+            return val
+
+        layer_thicknesses = _as_list(self.config.layer_thickness)
         self.n_locations = len(layer_thicknesses)
+        self.layer_thicknesses = layer_thicknesses
+        self.sigma_0s = _as_list(self.config.sigma_0, self.n_locations)
+        self.preloads = _as_list(self.config.preload, self.n_locations)
+        self.sigma_ps = _as_list(self.config.sigma_p, self.n_locations)
+        self.end_settlement_reqs = _as_list(self.config.end_settlement_req, self.n_locations)
 
         # Per-location settlement arrays: {loc: (n_CR, n_k, n_t)}
         self.settlement_at_obs_times = {}
@@ -178,6 +185,10 @@ class ReliabilityPipeline:
 
             else:
 
+                s0 = self.sigma_0s[loc - 1]
+                sv = s0 + self.preloads[loc - 1]
+                sp = self.sigma_ps[loc - 1]
+
                 settlements_obs = get_settlement(
                     t=self.obs_times,
                     CR=self.jpdf.CR_grid,
@@ -185,9 +196,9 @@ class ReliabilityPipeline:
                     RR=self.config.RR,
                     Ca=self.config.Ca,
                     h=h,
-                    sigma_0=self.config.sigma_0,
-                    sigma_v=self.config.sigma_0 + self.config.preload,
-                    sigma_p=self.config.sigma_p,
+                    sigma_0=s0,
+                    sigma_v=sv,
+                    sigma_p=sp,
                     method=self.config.doc_method,
                 )
 
@@ -198,9 +209,9 @@ class ReliabilityPipeline:
                     RR=self.config.RR,
                     Ca=self.config.Ca,
                     h=h,
-                    sigma_0=self.config.sigma_0,
-                    sigma_v=self.config.sigma_0 + self.config.preload,
-                    sigma_p=self.config.sigma_p,
+                    sigma_0=s0,
+                    sigma_v=sv,
+                    sigma_p=sp,
                     method=self.config.doc_method,
                 )
 
@@ -331,6 +342,9 @@ class ReliabilityPipeline:
             Dict with keys "pf", "beta", "settlement_grid", "settlement_pdf".
         """
 
+        # Override end_settlement_req with per-location value
+        self.performance.parameters["end_settlement_req"] = self.end_settlement_reqs[loc - 1]
+
         pf = self.performance.failure_probability(
             x=self.settlement_residual[loc],
             pdf=self.jpdf.get_prior() if use_prior else self.jpdf.pdf,
@@ -381,10 +395,17 @@ class ReliabilityPipeline:
 
         self.jpdf.reset_to_priors()
 
-        for t in self.obs_times.tolist():
+        # Print table header
+        if verbose:
+            loc_headers = "".join(
+                f"{'b_pri_' + str(loc):>10s}{'b_post_' + str(loc):>10s}"
+                for loc in range(1, self.n_locations + 1)
+            )
+            header = f"{'t':>8s}{loc_headers}"
+            print(header)
+            print("-" * len(header))
 
-            if verbose:
-                print(f"Processing t={t:.0f}...")
+        for t in self.obs_times.tolist():
 
             mask = mask_up_to(t)
             obs_times = self.obs_times[mask]
@@ -477,9 +498,11 @@ class ReliabilityPipeline:
             }
 
             if verbose:
-                for loc in range(1, self.n_locations + 1):
-                    print(f"  Loc {loc} Prior:     Pf={per_loc_results_prior[loc]['pf']:.2e}, beta={per_loc_results_prior[loc]['beta']:.2f}")
-                    print(f"  Loc {loc} Posterior: Pf={per_loc_results_posterior[loc]['pf']:.2e}, beta={per_loc_results_posterior[loc]['beta']:.2f}")
+                loc_cols = "".join(
+                    f"{per_loc_results_prior[loc]['beta']:>10.2f}{per_loc_results_posterior[loc]['beta']:>10.2f}"
+                    for loc in range(1, self.n_locations + 1)
+                )
+                print(f"{t:>8.0f}{loc_cols}")
 
         return self.results
 
@@ -608,10 +631,11 @@ def main(analysis_method: Optional[str] = None):
             obs_error=config.obs_error,
             y_max=obs_vals_all.max()
         )
+        end_settlement_reqs = pipeline.end_settlement_reqs
         save_settlement_residual_plots(
             results=loc_results,
             output_dir=loc_dir,
-            end_settlement_req=config.end_settlement_req
+            end_settlement_req=end_settlement_reqs[loc - 1]
         )
         save_beta_over_time_plot(results=loc_results, output_dir=loc_dir)
         make_gifs(loc_dir)

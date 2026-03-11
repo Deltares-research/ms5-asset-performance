@@ -21,12 +21,18 @@ if __name__ == "__main__":
 
     times = np.linspace(30, specs["parameters"]["preload_removal_time"], 36)
 
-    layer_thicknesses = specs["parameters"]["layer_thickness"]
-    if not isinstance(layer_thicknesses, list):
-        layer_thicknesses = [layer_thicknesses]
+    def _as_list(val, n=1):
+        return val if isinstance(val, list) else [val] * n
+
+    layer_thicknesses = _as_list(specs["parameters"]["layer_thickness"])
+    n_loc = len(layer_thicknesses)
+    sigma_0s = _as_list(specs["parameters"]["sigma_0"], n_loc)
+    preloads = _as_list(specs["parameters"]["preload"], n_loc)
+    sigma_ps = _as_list(specs["parameters"]["sigma_p"], n_loc)
 
     settlements_per_location = []
-    for loc, layer_thickness in enumerate(layer_thicknesses, start=1):
+    for loc, (layer_thickness, s0, preload, sp) in enumerate(
+            zip(layer_thicknesses, sigma_0s, preloads, sigma_ps), start=1):
 
         settlements = get_settlement(
             t=times,
@@ -35,9 +41,9 @@ if __name__ == "__main__":
             RR=specs["parameters"]["RR"],
             Ca=specs["parameters"]["Ca"],
             h=layer_thickness,
-            sigma_0=specs["parameters"]["sigma_0"],
-            sigma_v=specs["parameters"]["sigma_0"]+specs["parameters"]["preload"],
-            sigma_p=specs["parameters"]["sigma_p"],
+            sigma_0=s0,
+            sigma_v=s0 + preload,
+            sigma_p=sp,
             method=specs["parameters"]["doc_method"],
         )
 

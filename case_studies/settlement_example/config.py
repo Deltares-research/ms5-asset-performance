@@ -30,24 +30,24 @@ class CaseStudyConfig:
         n_CR_grid: Number of grid points for the CR (compression ratio) axis.
         n_k_grid: Number of grid points for the k (permeability) axis.
         doc_method: Method to compute degree of consolidation (e.g. "Terzaghi").
-        end_settlement_req: Allowable residual settlement after preload removal [m].
+        end_settlement_req: Allowable residual settlement after preload removal [m]. Float or list per location.
         forecast_interval: Time interval between forecast evaluation points [days].
     """
 
     layer_thickness: float | List[float] = 5.0
-    preload: float = 50.0
-    permanent_load: float = 50.0
+    preload: float | List[float] = 50.0
+    permanent_load: float | List[float] = 50.0
     preload_removal_time: float = 365.0
     end_time: float = 25550.0
-    sigma_0: float = 10.0
-    sigma_v: float = 20.0
-    sigma_p: float = 0.0
+    sigma_0: float | List[float] = 10.0
+    sigma_v: float | List[float] = 20.0
+    sigma_p: float | List[float] = 0.0
     RR: float = 0.02
     Ca: float = 0.0
     obs_error: float = 0.1
     n_CR_grid: int = 100
     n_k_grid: int = 100
-    end_settlement_req: float = 0.05
+    end_settlement_req: float | List[float] = 0.05
     forecast_interval: int = 10
     doc_method: str = "Terzaghi"
     analysis_method: str = "semi-analytical"
