@@ -60,24 +60,13 @@ def plot_jpdf_snapshot(
     k_grid: NDArray,
     k_prior: NDArray,
     k_posterior: NDArray,
+    prior: NDArray,
+    posterior: NDArray,
+    loglikes: NDArray,
     CR_true: float = None,
     k_true: float = None,
 ) -> plt.Figure:
-    """Corner plot of the posterior JPDF with prior overlay.
 
-    Layout: center contour plot (posterior filled + prior dashed white),
-    top marginal for CR, right marginal for k. True values shown as
-    red dashed lines with an x at their intersection.
-
-    Args:
-        time: Current observation time [days] (shown in title).
-        CR_grid, CR_prior, CR_posterior: Grid and marginal PDFs for CR.
-        k_grid, k_prior, k_posterior: Grid and marginal PDFs for k.
-        CR_true, k_true: True parameter values for reference markers.
-
-    Returns:
-        Matplotlib Figure.
-    """
 
     fig = plt.figure(figsize=(8, 8))
     fig.suptitle(f"JPDF at t = {time:.0f} days", fontsize=13, fontweight="bold")
@@ -96,18 +85,18 @@ def plot_jpdf_snapshot(
 
     # Bivariate contour (center)
     CR_mesh, k_mesh = np.meshgrid(CR_grid, k_grid, indexing="ij")
-    prior_2d = CR_prior[:, np.newaxis] * k_prior[np.newaxis, :]
-    posterior_2d = CR_posterior[:, np.newaxis] * k_posterior[np.newaxis, :]
-    ax_main.contourf(CR_mesh, k_mesh, posterior_2d, levels=20, cmap="viridis")
-    ax_main.contour(CR_mesh, k_mesh, prior_2d, levels=5, colors="white", linewidths=0.8, linestyles="--", alpha=0.6)
+    ax_main.contourf(CR_mesh, k_mesh, posterior, levels=20, cmap="viridis")
+    ax_main.contour(CR_mesh, k_mesh, prior, levels=5, colors="white", linewidths=0.8, linestyles="--", alpha=0.6)
+    ax_main.contour(CR_mesh, k_mesh, loglikes, levels=5, colors="magenta", linewidths=0.8, linestyles="--", alpha=0.6)
     # 95% HDR contour for posterior
-    level_95 = _hdr_level(posterior_2d, CR_grid, k_grid, alpha=0.95)
-    ax_main.contour(CR_mesh, k_mesh, posterior_2d, levels=[level_95], colors="yellow", linewidths=2, linestyles="-")
+    level_95 = _hdr_level(posterior, CR_grid, k_grid, alpha=0.95)
+    ax_main.contour(CR_mesh, k_mesh, posterior, levels=[level_95], colors="yellow", linewidths=2, linestyles="-")
     # Legend
     from matplotlib.lines import Line2D
     legend_handles = [
         Line2D([], [], color="yellow", linewidth=2, linestyle="-", label="95% HDR"),
         Line2D([], [], color="white", linewidth=0.8, linestyle="--", label="Prior"),
+        Line2D([], [], color="magenta", linewidth=0.8, linestyle="--", label="Log-likelihood"),
     ]
     if CR_true is not None:
         ax_main.axvline(CR_true, color="red", linestyle="--", linewidth=1.5)
@@ -118,7 +107,7 @@ def plot_jpdf_snapshot(
         legend_handles.append(Line2D([], [], color="red", marker="x", linestyle="--", linewidth=1.5, markersize=10, label="True"))
     ax_main.legend(handles=legend_handles, loc="upper right", fontsize=8, facecolor="black", framealpha=0.4, labelcolor="white")
     ax_main.set_xlabel("CR [-]")
-    ax_main.set_ylabel("k [m/d]")
+    ax_main.set_ylabel("k [m/s]")
     ax_main.grid(True, alpha=0.3)
 
     # CR marginal (top, aligned to x-axis)
@@ -129,7 +118,9 @@ def plot_jpdf_snapshot(
     # 95% CI errorbar on CR posterior marginal
     cr_mean, cr_q025, cr_q975 = _pdf_stats(CR_grid, CR_posterior)
     cr_pdf_at_mean = np.interp(cr_mean, CR_grid, CR_posterior)
-    ax_top.errorbar(cr_mean, cr_pdf_at_mean * 0.5, xerr=[[cr_mean - cr_q025], [cr_q975 - cr_mean]],
+    cr_xerr_lo = max(0.0, cr_mean - cr_q025)
+    cr_xerr_hi = max(0.0, cr_q975 - cr_mean)
+    ax_top.errorbar(cr_mean, cr_pdf_at_mean * 0.5, xerr=[[cr_xerr_lo], [cr_xerr_hi]],
                     fmt="none", ecolor="r", elinewidth=1.5, capsize=4, capthick=1.5, label="95% CI")
     if CR_true is not None:
         ax_top.axvline(CR_true, color="red", linestyle="--", linewidth=1.5, label=f"True")
@@ -146,7 +137,9 @@ def plot_jpdf_snapshot(
     # 95% CI errorbar on k posterior marginal
     k_mean, k_q025, k_q975 = _pdf_stats(k_grid, k_posterior)
     k_pdf_at_mean = np.interp(k_mean, k_grid, k_posterior)
-    ax_right.errorbar(k_pdf_at_mean * 0.5, k_mean, yerr=[[k_mean - k_q025], [k_q975 - k_mean]],
+    k_yerr_lo = max(0.0, k_mean - k_q025)
+    k_yerr_hi = max(0.0, k_q975 - k_mean)
+    ax_right.errorbar(k_pdf_at_mean * 0.5, k_mean, yerr=[[k_yerr_lo], [k_yerr_hi]],
                       fmt="none", ecolor="r", elinewidth=1.5, capsize=4, capthick=1.5)
     if k_true is not None:
         ax_right.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
@@ -167,21 +160,11 @@ def plot_jpdf_prior(
     CR_prior: NDArray,
     k_grid: NDArray,
     k_prior: NDArray,
+    prior=NDArray,
+    loglikes=NDArray,
     CR_true: float = None,
     k_true: float = None,
 ) -> plt.Figure:
-    """Corner plot of the prior JPDF (no posterior overlay).
-
-    Same layout as plot_jpdf_snapshot but only shows the prior distribution.
-
-    Args:
-        CR_grid, CR_prior: Grid and marginal prior PDF for CR.
-        k_grid, k_prior: Grid and marginal prior PDF for k.
-        CR_true, k_true: True parameter values for reference markers.
-
-    Returns:
-        Matplotlib Figure.
-    """
 
     fig = plt.figure(figsize=(8, 8))
     fig.suptitle("JPDF Prior", fontsize=13, fontweight="bold")
@@ -200,15 +183,17 @@ def plot_jpdf_prior(
 
     # Bivariate contour (prior)
     CR_mesh, k_mesh = np.meshgrid(CR_grid, k_grid, indexing="ij")
-    prior_2d = CR_prior[:, np.newaxis] * k_prior[np.newaxis, :]
-    ax_main.contourf(CR_mesh, k_mesh, prior_2d, levels=20, cmap="viridis")
+    ax_main.contourf(CR_mesh, k_mesh, prior, levels=20, cmap="viridis")
+    ax_main.contour(CR_mesh, k_mesh, loglikes, levels=5, colors="magenta", linewidths=0.8, linestyles="--", alpha=0.6)
     # 95% HDR contour for prior
-    level_95 = _hdr_level(prior_2d, CR_grid, k_grid, alpha=0.95)
-    ax_main.contour(CR_mesh, k_mesh, prior_2d, levels=[level_95], colors="yellow", linewidths=2, linestyles="-")
+    level_95 = _hdr_level(prior, CR_grid, k_grid, alpha=0.95)
+    ax_main.contour(CR_mesh, k_mesh, prior, levels=[level_95], colors="yellow", linewidths=2, linestyles="-")
     # Legend
     from matplotlib.lines import Line2D
     legend_handles = [
         Line2D([], [], color="yellow", linewidth=2, linestyle="-", label="95% HDR"),
+        Line2D([], [], color="white", linewidth=0.8, linestyle="--", label="Prior"),
+        Line2D([], [], color="magenta", linewidth=0.8, linestyle="--", label="Log-likelihood"),
     ]
     if CR_true is not None:
         ax_main.axvline(CR_true, color="red", linestyle="--", linewidth=1.5)
@@ -219,7 +204,7 @@ def plot_jpdf_prior(
         legend_handles.append(Line2D([], [], color="red", marker="x", linestyle="--", linewidth=1.5, markersize=10, label="True"))
     ax_main.legend(handles=legend_handles, loc="upper right", fontsize=8, facecolor="black", framealpha=0.4, labelcolor="white")
     ax_main.set_xlabel("CR [-]")
-    ax_main.set_ylabel("k [m/d]")
+    ax_main.set_ylabel("k [m/s]")
     ax_main.grid(True, alpha=0.3)
 
     # CR marginal (top)
@@ -277,6 +262,8 @@ def save_jpdf_plots(
             CR_prior=np.array(first_state["CR_prior"]),
             k_grid=np.array(first_state["k_grid"]),
             k_prior=np.array(first_state["k_prior"]),
+            prior=np.array(first_state["prior"]),
+            loglikes=np.array(first_state["loglikes"]),
             CR_true=CR_true,
             k_true=k_true,
         )
@@ -293,6 +280,9 @@ def save_jpdf_plots(
                 k_grid=np.array(state["k_grid"]),
                 k_prior=np.array(state["k_prior"]),
                 k_posterior=np.array(state["k_posterior"]),
+                prior=np.array(state["prior"]),
+                loglikes=np.array(state["loglikes"]),
+                posterior=np.array(state["posterior"]),
                 CR_true=CR_true,
                 k_true=k_true,
             )

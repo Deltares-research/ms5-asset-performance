@@ -151,7 +151,7 @@ def get_settlement(
     CR : array_like
         Compression ratio [-]. Broadcast along axis 0.
     k : array_like
-        Permeability [m/day]. Broadcast along axis 1.
+        Permeability [m/s]. Broadcast along axis 1.
     RR : float
         Recompression ratio [-].
     Ca : float
@@ -185,7 +185,8 @@ def get_settlement(
 
     gamma_w = 9.81
     mv = CR / (sigma_v * np.log(10))
-    cv = k / (gamma_w * mv)
+    k_day = k * 3_600 * 24 # Time in days, so permeability needs to be scaled.
+    cv = k_day / (gamma_w * mv)
 
     doc = get_doc(t=t, h=h, cv=cv, method=method)
 
