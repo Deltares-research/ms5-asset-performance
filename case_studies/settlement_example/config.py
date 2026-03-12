@@ -32,6 +32,9 @@ class CaseStudyConfig:
         doc_method: Method to compute degree of consolidation (e.g. "Terzaghi").
         end_settlement_req: Allowable residual settlement after preload removal [m].
         forecast_interval: Time interval between forecast evaluation points [days].
+        n_samples: Number of importance samples for the sample-based approach.
+        analysis_method: Analysis mode — "semi-analytical" (grid integration)
+            or "sample-based" (importance sampling).
     """
 
     layer_thickness: float = 5.0

@@ -66,7 +66,24 @@ def plot_jpdf_snapshot(
     CR_true: float = None,
     k_true: float = None,
 ) -> plt.Figure:
+    """Corner plot of the grid-based JPDF at a given observation time.
 
+    Center panel: filled contour of the posterior with prior and
+    log-likelihood contour overlays and 95% HDR contour. Top/right panels:
+    marginal PDFs of CR and k (prior in blue, posterior in red) with 95% CI.
+
+    Args:
+        time: Observation time [days].
+        CR_grid, CR_prior, CR_posterior: CR grid and marginal PDFs.
+        k_grid, k_prior, k_posterior: k grid and marginal PDFs.
+        prior: 2D joint prior array (n_CR, n_k).
+        posterior: 2D joint posterior array (n_CR, n_k).
+        loglikes: 2D log-likelihood array (n_CR, n_k).
+        CR_true, k_true: True parameter values for reference markers.
+
+    Returns:
+        Matplotlib Figure.
+    """
 
     fig = plt.figure(figsize=(8, 8))
     fig.suptitle(f"JPDF at t = {time:.0f} days", fontsize=13, fontweight="bold")
@@ -165,6 +182,21 @@ def plot_jpdf_prior(
     CR_true: float = None,
     k_true: float = None,
 ) -> plt.Figure:
+    """Corner plot of the grid-based prior JPDF (before any observations).
+
+    Center panel: filled contour of the prior with log-likelihood overlay
+    and 95% HDR contour. Top/right panels: marginal prior PDFs.
+
+    Args:
+        CR_grid, CR_prior: CR grid and prior marginal PDF.
+        k_grid, k_prior: k grid and prior marginal PDF.
+        prior: 2D joint prior array (n_CR, n_k).
+        loglikes: 2D log-likelihood array (n_CR, n_k).
+        CR_true, k_true: True parameter values for reference markers.
+
+    Returns:
+        Matplotlib Figure.
+    """
 
     fig = plt.figure(figsize=(8, 8))
     fig.suptitle("JPDF Prior", fontsize=13, fontweight="bold")
@@ -641,6 +673,225 @@ def save_beta_over_time_plot(
     fig.savefig(output_dir / "beta_over_time.png", dpi=150, bbox_inches="tight")
 
     print(f"Beta over time saved to {output_dir / 'beta_over_time.png'}")
+
+
+def plot_jpdf_snapshot_samples(
+    time: float,
+    CR_samples: NDArray,
+    k_samples: NDArray,
+    W_prior: NDArray,
+    W_posterior: NDArray,
+    CR_true: float = None,
+    k_true: float = None,
+    n_bins: int = 60,
+) -> plt.Figure:
+    """Corner plot for sample-based JPDF using weighted histograms.
+
+    Center: 2D weighted histogram (posterior). Marginals: 1D weighted
+    histograms showing prior (blue) and posterior (red).
+
+    Args:
+        time: Current observation time [days].
+        CR_samples: 1D array of CR sample values.
+        k_samples: 1D array of k sample values.
+        W_prior: Normalized prior importance weights.
+        W_posterior: Normalized posterior importance weights.
+        CR_true, k_true: True parameter values for reference markers.
+        n_bins: Number of histogram bins per axis.
+
+    Returns:
+        Matplotlib Figure.
+    """
+    from matplotlib.lines import Line2D
+
+    fig = plt.figure(figsize=(8, 8))
+    fig.suptitle(f"JPDF samples at t = {time:.0f} days", fontsize=13, fontweight="bold")
+
+    gs = fig.add_gridspec(
+        2, 2,
+        width_ratios=[3, 1],
+        height_ratios=[1, 3],
+        hspace=0.05,
+        wspace=0.05,
+    )
+
+    ax_main = fig.add_subplot(gs[1, 0])
+    ax_top = fig.add_subplot(gs[0, 0], sharex=ax_main)
+    ax_right = fig.add_subplot(gs[1, 1], sharey=ax_main)
+
+    # 2D weighted histogram (posterior)
+    ax_main.hist2d(CR_samples, k_samples, bins=n_bins, weights=W_posterior,
+                   cmap="viridis", cmin=1e-30)
+
+    legend_handles = []
+    if CR_true is not None:
+        ax_main.axvline(CR_true, color="red", linestyle="--", linewidth=1.5)
+    if k_true is not None:
+        ax_main.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
+    if CR_true is not None and k_true is not None:
+        ax_main.plot(CR_true, k_true, "rx", markersize=15, markeredgewidth=2.5, zorder=5)
+        legend_handles.append(Line2D([], [], color="red", marker="x", linestyle="--",
+                                     linewidth=1.5, markersize=10, label="True"))
+    if legend_handles:
+        ax_main.legend(handles=legend_handles, loc="upper right", fontsize=8,
+                       facecolor="black", framealpha=0.4, labelcolor="white")
+    ax_main.set_xlabel("CR [-]")
+    ax_main.set_ylabel("k [m/s]")
+    ax_main.grid(True, alpha=0.3)
+
+    # CR marginal (top)
+    ax_top.hist(CR_samples, bins=n_bins, weights=W_prior, density=True,
+                alpha=0.3, color="b", label="Prior")
+    ax_top.hist(CR_samples, bins=n_bins, weights=W_posterior, density=True,
+                alpha=0.3, color="r", label="Posterior")
+    if CR_true is not None:
+        ax_top.axvline(CR_true, color="red", linestyle="--", linewidth=1.5)
+    ax_top.set_ylabel("Density")
+    ax_top.legend(fontsize=8)
+    ax_top.grid(True, alpha=0.3)
+    ax_top.tick_params(labelbottom=False)
+
+    # k marginal (right)
+    ax_right.hist(k_samples, bins=n_bins, weights=W_prior, density=True,
+                  alpha=0.3, color="b", orientation="horizontal")
+    ax_right.hist(k_samples, bins=n_bins, weights=W_posterior, density=True,
+                  alpha=0.3, color="r", orientation="horizontal")
+    if k_true is not None:
+        ax_right.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
+    ax_right.set_xlabel("Density")
+    ax_right.grid(True, alpha=0.3)
+    ax_right.tick_params(labelleft=False)
+
+    fig.add_subplot(gs[0, 1]).set_visible(False)
+
+    plt.close()
+    return fig
+
+
+def plot_jpdf_prior_samples(
+    CR_samples: NDArray,
+    k_samples: NDArray,
+    W_prior: NDArray,
+    CR_true: float = None,
+    k_true: float = None,
+    n_bins: int = 60,
+) -> plt.Figure:
+    """Corner plot for the sample-based prior JPDF.
+
+    Args:
+        CR_samples: 1D array of CR sample values.
+        k_samples: 1D array of k sample values.
+        W_prior: Normalized prior importance weights.
+        CR_true, k_true: True parameter values.
+        n_bins: Number of histogram bins per axis.
+
+    Returns:
+        Matplotlib Figure.
+    """
+    from matplotlib.lines import Line2D
+
+    fig = plt.figure(figsize=(8, 8))
+    fig.suptitle("JPDF Prior (samples)", fontsize=13, fontweight="bold")
+
+    gs = fig.add_gridspec(
+        2, 2,
+        width_ratios=[3, 1],
+        height_ratios=[1, 3],
+        hspace=0.05,
+        wspace=0.05,
+    )
+
+    ax_main = fig.add_subplot(gs[1, 0])
+    ax_top = fig.add_subplot(gs[0, 0], sharex=ax_main)
+    ax_right = fig.add_subplot(gs[1, 1], sharey=ax_main)
+
+    ax_main.hist2d(CR_samples, k_samples, bins=n_bins, weights=W_prior,
+                   cmap="viridis", cmin=1e-30)
+
+    legend_handles = []
+    if CR_true is not None:
+        ax_main.axvline(CR_true, color="red", linestyle="--", linewidth=1.5)
+    if k_true is not None:
+        ax_main.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
+    if CR_true is not None and k_true is not None:
+        ax_main.plot(CR_true, k_true, "rx", markersize=15, markeredgewidth=2.5, zorder=5)
+        legend_handles.append(Line2D([], [], color="red", marker="x", linestyle="--",
+                                     linewidth=1.5, markersize=10, label="True"))
+    if legend_handles:
+        ax_main.legend(handles=legend_handles, loc="upper right", fontsize=8,
+                       facecolor="black", framealpha=0.4, labelcolor="white")
+    ax_main.set_xlabel("CR [-]")
+    ax_main.set_ylabel("k [m/s]")
+    ax_main.grid(True, alpha=0.3)
+
+    ax_top.hist(CR_samples, bins=n_bins, weights=W_prior, density=True,
+                alpha=0.3, color="b", label="Prior")
+    if CR_true is not None:
+        ax_top.axvline(CR_true, color="red", linestyle="--", linewidth=1.5)
+    ax_top.set_ylabel("Density")
+    ax_top.legend(fontsize=8)
+    ax_top.grid(True, alpha=0.3)
+    ax_top.tick_params(labelbottom=False)
+
+    ax_right.hist(k_samples, bins=n_bins, weights=W_prior, density=True,
+                  alpha=0.3, color="b", orientation="horizontal")
+    if k_true is not None:
+        ax_right.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
+    ax_right.set_xlabel("Density")
+    ax_right.grid(True, alpha=0.3)
+    ax_right.tick_params(labelleft=False)
+
+    fig.add_subplot(gs[0, 1]).set_visible(False)
+
+    plt.close()
+    return fig
+
+
+def save_jpdf_plots_samples(
+    results: Dict[float, Dict[str, Any]],
+    output_dir: Path,
+    CR_samples: NDArray,
+    k_samples: NDArray,
+    W_prior: NDArray,
+    W_posterior_per_t: Dict[float, NDArray],
+    CR_true: float = None,
+    k_true: float = None,
+) -> None:
+    """Save sample-based JPDF corner plots: prior + one per observation time.
+
+    Args:
+        results: Pipeline results dict.
+        output_dir: Directory for output files.
+        CR_samples, k_samples: 1D sample arrays.
+        W_prior: Normalized prior weights.
+        W_posterior_per_t: Dict mapping obs time to posterior weights.
+        CR_true, k_true: True parameter values.
+    """
+    png_dir = output_dir / "pdfs"
+    png_dir.mkdir(parents=True, exist_ok=True)
+
+    pdf_path = output_dir / "jpdf.pdf"
+
+    with PdfPages(pdf_path) as pdf:
+        fig_prior = plot_jpdf_prior_samples(
+            CR_samples=CR_samples, k_samples=k_samples,
+            W_prior=W_prior, CR_true=CR_true, k_true=k_true,
+        )
+        fig_prior.savefig(png_dir / "jpdf_prior.png", dpi=150, bbox_inches="tight")
+        pdf.savefig(fig_prior)
+
+        for t in results:
+            W_post = W_posterior_per_t[t]
+            fig = plot_jpdf_snapshot_samples(
+                time=t, CR_samples=CR_samples, k_samples=k_samples,
+                W_prior=W_prior, W_posterior=W_post,
+                CR_true=CR_true, k_true=k_true,
+            )
+            fig.savefig(png_dir / f"jpdf_t{t:.0f}.png", dpi=150, bbox_inches="tight")
+            pdf.savefig(fig)
+
+    print(f"JPDF PNGs saved to {png_dir}")
+    print(f"JPDF PDF  saved to {pdf_path}")
 
 
 def make_gifs(output_dir: Path, duration: int = 500) -> None:

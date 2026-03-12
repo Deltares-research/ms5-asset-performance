@@ -37,24 +37,23 @@ def get_doc(
         cv: float | List[float] | FloatArray = 1.,
         method: str = "Terzaghi"
 ) -> FloatArray:
-    """
+    """Compute the mean degree of consolidation (DoC).
 
     Parameters
     ----------
     t : array_like
-        time [days]
+        Time [days].
     h : float or array_like, optional
-        percolation layer thickness [m]. The default is 1.0.
+        Percolation layer thickness [m]. The default is 1.0.
     cv : float or array_like, optional
-        consolidation coefficient [m2/day]. The default is 1.0.
+        Consolidation coefficient [m2/day]. The default is 1.0.
     method : str, optional
-        method to compute the consolidation curve. The default is 'Terzaghi'.
-
+        Method to compute the consolidation curve. The default is 'Terzaghi'.
 
     Returns
     -------
     U : array_like
-        mean degree of consolidation [-]
+        Mean degree of consolidation [-].
 
     """
     if cv.ndim < 2:
@@ -91,24 +90,24 @@ def get_end_settlement(
     Parameters
     ----------
     sigma_0 : float
-        initial effective vertical stress [kPa]
-    sigma_v : array_like
-        effective vertical stress [kPa]
-    Cr : float, optional
-        recompression index [-]. The default is 0.02.
-    Cc : float, optional
-        compression index [-]. The default is 0.2.
+        Initial effective vertical stress [kPa].
+    sigma_v : float
+        Effective vertical stress [kPa].
+    RR : float, optional
+        Recompression ratio [-]. The default is 0.02.
+    CR : float or array_like, optional
+        Compression ratio [-]. The default is 0.2.
+    Ca : float, optional
+        Secondary compression coefficient [-]. The default is 0.0.
     sigma_p : float, optional
-        preconsolidation stress [kPa]. The default is 0.0.
-    e0 : float, optional
-        initial void ratio [-]. The default is 1.0.
+        Preconsolidation stress [kPa]. The default is 0.0.
     h : float, optional
-        layer thickness [m]. The default is 1.0.
+        Layer thickness [m]. The default is 1.0.
 
     Returns
     -------
-    S : array_like
-        final settlement [m]
+    S : float or array_like
+        Final (end-of-primary) settlement [m].
 
     '''
 
@@ -135,23 +134,26 @@ def get_settlement(
         method: str = "Terzaghi",
         grid_based = False
 ) -> FloatArray:
-    """Compute time-dependent settlement on a (CR, k, t) grid.
+    """Compute time-dependent settlement for given CR, k, and time arrays.
 
     Combines the degree of consolidation (DoC) with the end-of-primary
     settlement to produce settlement = DoC * end_settlement.
 
-    The inputs CR and k are broadcast into a 3D array of shape
-    (n_CR, n_k, n_t), enabling vectorized evaluation over the full
-    parameter grid at all time steps simultaneously.
+    Two broadcasting modes controlled by ``grid_based``:
+
+    - ``grid_based=True``: CR and k form a cross-product grid, producing
+      output shape (n_CR, n_k, n_t).
+    - ``grid_based=False``: CR and k are paired element-wise (e.g. from
+      IS samples), producing output shape (n_samples, n_t).
 
     Parameters
     ----------
     t : array_like
         Time points [days].
     CR : array_like
-        Compression ratio [-]. Broadcast along axis 0.
+        Compression ratio [-].
     k : array_like
-        Permeability [m/s]. Broadcast along axis 1.
+        Permeability [m/s].
     RR : float
         Recompression ratio [-].
     Ca : float
@@ -166,22 +168,24 @@ def get_settlement(
         Preconsolidation stress [kPa].
     method : str
         Consolidation method (default "Terzaghi").
+    grid_based : bool
+        If True, broadcast CR×k into a 2D grid. If False, treat CR and k
+        as paired samples.
 
     Returns
     -------
     NDArray
-        Settlement array of shape (n_CR, n_k, n_t) [m].
-        Squeezed if any dimension is 1.
+        Settlement array [m]. Shape (n_CR, n_k, n_t) if grid_based,
+        (n_samples, n_t) otherwise. Squeezed if any dimension is 1.
     """
-
     if grid_based:
         CR = ensure_2d(CR, axis=1)[..., np.newaxis]
         k = ensure_2d(k, axis=0)[..., np.newaxis]
         t = ensure_2d(t, axis=0)[np.newaxis, ...]
     else:
-        CR = CR[..., np.newaxis]
-        k = k[..., np.newaxis]
-        t = t[np.newaxis, ...]
+        CR = np.atleast_1d(np.asarray(CR, dtype=float))[..., np.newaxis]
+        k = np.atleast_1d(np.asarray(k, dtype=float))[..., np.newaxis]
+        t = np.atleast_1d(np.asarray(t, dtype=float))[np.newaxis, ...]
 
     gamma_w = 9.81
     mv = CR / (sigma_v * np.log(10))
@@ -199,8 +203,6 @@ def get_settlement(
         sigma_p=sigma_p,
         h=h
     )
-
-    print(doc)
 
     settlement = doc * end_settlement
 

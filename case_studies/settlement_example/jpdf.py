@@ -1,9 +1,11 @@
 """
 Joint probability density function (JPDF) for soil parameters CR and k.
 
-Manages the prior and posterior distributions on a 2D grid of compression
-ratio (CR) and permeability (k). Supports Bayesian updating given settlement
-observations with measurement error.
+Manages the prior and posterior distributions of compression ratio (CR) and
+permeability (k). Supports two modes: grid-based (discrete 2D PDF on a CR×k
+grid) and sample-based (importance sampling with weighted particles). Both
+modes support Bayesian updating given settlement observations with
+measurement error.
 """
 
 import json
@@ -17,12 +19,16 @@ from case_studies.settlement_example.config import CaseStudyConfig
 
 class JPDF:
 
-    """Joint PDF of CR (compression ratio) and k (permeability) on a discrete grid.
+    """Joint PDF of CR (compression ratio) and k (permeability).
 
-    The joint distribution is stored as a 2D array of shape (n_CR, n_k).
-    The prior is constructed from marginal distributions loaded from a JSON
-    specs file, and the posterior is updated via Bayesian inference using
-    settlement observations.
+    Supports two representations:
+
+    Grid-based: the joint distribution is stored as a 2D array of shape
+    (n_CR, n_k). The prior is constructed from marginal distributions and
+    the posterior is updated via discrete Bayes on the grid.
+
+    Sample-based: importance samples are drawn from a widened proposal
+    distribution and reweighted to represent the prior and posterior.
 
     Attributes:
         CR_grid: 1D array of CR grid values.
@@ -31,7 +37,13 @@ class JPDF:
         k_grid: 1D array of k grid values.
         k_prior: 1D array of prior marginal PDF of k.
         k_pdf: 1D array of current (posterior) marginal PDF of k.
-        pdf: 2D array (n_CR, n_k) of current joint PDF.
+        pdf: 2D array (n_CR, n_k) of current joint PDF (grid-based only).
+        X_samples: 2D array (n_samples, nvar) of IS samples.
+        IS_dists: Dict of importance sampling proposal distributions.
+        log_W_IS: 1D array of log importance weights log(prior/IS) per sample.
+        log_likelihood: 1D array of log-likelihood per sample.
+        W_prior_samples: 1D array of normalized prior importance weights.
+        W_samples: 1D array of normalized posterior importance weights.
     """
 
     def __init__(
@@ -63,6 +75,13 @@ class JPDF:
         self.k_pdf: Optional[NDArray] = None
 
         self.pdf: Optional[NDArray] = None
+
+        # Sample-based (importance sampling)
+        self.IS_dists: Optional[Dict] = None
+        self.log_W_IS: Optional[NDArray] = None  # log(prior/IS) per sample
+        self.log_likelihood: Optional[NDArray] = None  # log-likelihood per sample
+        self.W_prior_samples: Optional[NDArray] = None  # normalized prior weights
+        self.W_samples: Optional[NDArray] = None  # normalized posterior weights
 
         # Performance outputs
         self.G_samples: Optional[Dict[float, NDArray]] = None  # g values per time
@@ -125,7 +144,11 @@ class JPDF:
         self.k_pdf = self.k_prior
 
     def init_priors(self) -> None:
+        """Build discrete grids and evaluate marginal prior PDFs for CR and k.
 
+        CR uses a linear grid; k uses a geometric (log-spaced) grid. Both span
+        the 0.1st to 99.9th percentile of the respective marginal distribution.
+        """
         n_grid = self.config.n_CR_grid
         CR_lo = self.variables["CR"].ppf(0.001)
         CR_hi = self.variables["CR"].ppf(0.999)
@@ -156,6 +179,62 @@ class JPDF:
         prior /= integral
         return prior
 
+    def init_prior_samples(self, covar_IS: float = 2.0, seed: int = 42) -> None:
+        """Draw importance samples from a widened prior and compute IS weights.
+
+        The importance sampling (IS) distribution uses the same family as each
+        marginal prior but with standard deviation scaled by covar_IS, giving
+        broader tails to ensure adequate coverage of the posterior.
+
+        Args:
+            covar_IS: Factor by which to widen the prior std for the IS
+                proposal distribution.
+            seed: Random seed for reproducibility.
+        """
+        rng = np.random.default_rng(seed)
+        n = self.config.n_samples
+
+        # Build IS distributions: same family, wider std
+        IS_dists = {}
+        for name, var in self.variables.items():
+            mean = var.mean()
+            std = var.std()
+            if var.dist.name == "lognorm":
+                std_IS = std * covar_IS
+                sigma_IS = np.sqrt(np.log(1 + (std_IS / mean) ** 2))
+                mu_IS = np.log(mean) - 0.5 * sigma_IS ** 2
+                IS_dists[name] = st.lognorm(s=sigma_IS, scale=np.exp(mu_IS))
+            elif var.dist.name == "norm":
+                IS_dists[name] = st.norm(loc=mean, scale=std * covar_IS)
+            else:
+                IS_dists[name] = var
+        self.IS_dists = IS_dists
+
+        # Draw samples from IS distribution
+        samples = {name: IS_dists[name].rvs(n, random_state=rng) for name in self.variable_names}
+        self.X_samples = np.column_stack([samples[name] for name in self.variable_names])
+        self.n_samples = n
+
+        # Log IS weights: log p(x) - log q(x)
+        log_prior = sum(self.variables[name].logpdf(samples[name]) for name in self.variable_names)
+        log_IS = sum(IS_dists[name].logpdf(samples[name]) for name in self.variable_names)
+        self.log_W_IS = log_prior - log_IS
+
+        # Normalized prior weights
+        log_w = self.log_W_IS - np.max(self.log_W_IS)
+        w = np.exp(log_w)
+        self.W_prior_samples = w / w.sum()
+
+        # No likelihood yet — posterior = prior
+        self.log_likelihood = np.zeros(n)
+        self.W_samples = self.W_prior_samples.copy()
+
+    def reset_sample_weights(self) -> None:
+        """Reset sample weights to prior (discard likelihood)."""
+        if self.log_W_IS is not None:
+            self.log_likelihood = np.zeros(self.n_samples)
+            self.W_samples = self.W_prior_samples.copy()
+
     def reset_to_priors(self) -> None:
         """Reset the joint and marginal PDFs back to their prior state."""
         if self.pdf is not None:
@@ -164,63 +243,86 @@ class JPDF:
             self.CR_pdf = self.CR_prior.copy()
         if self.k_prior is not None:
             self.k_pdf = self.k_prior.copy()
+        self.reset_sample_weights()
 
     def update(self, obs_values: NDArray, settlements: NDArray) -> None:
-        """Bayesian update of the joint PDF given settlement observations.
+        """Bayesian update given settlement observations.
 
-        Computes the posterior using Bayes' theorem on the discrete grid:
+        Dispatches between sample-based (importance weight reweighting) and
+        grid-based (discrete Bayes on 2D grid) depending on whether IS
+        samples have been initialized.
 
-            log_posterior = log_prior + sum(log_likelihood)
-
-        where the likelihood for each observation is a normal distribution
-        centered on the predicted settlement with standard deviation equal
-        to the configured observation error.
-
-        A log-sum-exp trick is applied (subtracting the maximum log-posterior)
-        before exponentiation to prevent numerical underflow when many
-        observations are used simultaneously.
-
-        After updating, the marginal PDFs (CR_pdf, k_pdf) are recomputed
-        by integrating the joint posterior over the other axis.
+        Sample-based: posterior weight_i ∝ (prior_i / IS_i) * likelihood_i.
+        Grid-based: log_posterior = log_prior + sum(log_likelihood),
+        normalized by trapezoidal integration.
 
         Args:
             obs_values: 1D array of observed settlement values [m].
-            settlements: 3D array of shape (n_CR, n_k, n_obs) with predicted
-                settlements at the observation times for each (CR, k) pair.
+            settlements: Sample-based: 2D array (n_samples, n_obs).
+                Grid-based: 3D array (n_CR, n_k, n_obs).
         """
 
-        if self.CR_pdf is None or self.CR_grid is None or self.k_pdf is None or self.k_grid is None:
-            raise ValueError("Variables not initialized. Call set_prior_from_specs first.")
+        if self.log_W_IS is not None:
+            # Sample-based: reweight importance samples
+            log_likes = st.norm(loc=obs_values, scale=self.config.obs_error).logpdf(settlements).sum(axis=-1)
+            self.log_likelihood = log_likes
 
-        obs_values_ = obs_values.reshape(1, 1, -1)
-        loglikes = self.get_loglikes(obs_values, settlements)
+            log_w = self.log_W_IS + log_likes
+            log_w -= np.max(log_w)
+            w = np.exp(log_w)
+            self.W_samples = w / w.sum()
+        else:
+            # Grid-based: discrete Bayes
+            if self.CR_pdf is None or self.CR_grid is None or self.k_pdf is None or self.k_grid is None:
+                raise ValueError("Variables not initialized. Call set_prior_from_specs first.")
 
-        log_prior = np.log(self.get_prior())
-        log_post = log_prior + loglikes
-        log_post -= np.nanmax(log_post)
+            loglikes = self.get_loglikes(obs_values, settlements)
 
-        post = np.exp(log_post)
-        integral = np.trapezoid(post, self.k_grid, axis=1)
-        integral = np.trapezoid(integral, self.CR_grid, axis=0)
-        post /= integral
+            log_prior = np.log(self.get_prior())
+            log_post = log_prior + loglikes
+            log_post -= np.nanmax(log_post)
 
-        self.pdf = post.copy()
-        self.CR_pdf = np.trapezoid(self.pdf, self.k_grid, axis=1)
-        self.k_pdf = np.trapezoid(self.pdf, self.CR_grid, axis=0)
+            post = np.exp(log_post)
+            integral = np.trapezoid(post, self.k_grid, axis=1)
+            integral = np.trapezoid(integral, self.CR_grid, axis=0)
+            post /= integral
+
+            self.pdf = post.copy()
+            self.CR_pdf = np.trapezoid(self.pdf, self.k_grid, axis=1)
+            self.k_pdf = np.trapezoid(self.pdf, self.CR_grid, axis=0)
 
     def get_loglikes(self, obs_values: NDArray, settlements: NDArray) -> NDArray:
+        """Compute the sum of log-likelihoods on the (CR, k) grid.
+
+        Assumes independent Gaussian measurement error with std = config.obs_error.
+
+        Args:
+            obs_values: 1D array of observed settlement values [m].
+            settlements: 3D array (n_CR, n_k, n_obs) of modelled settlements.
+
+        Returns:
+            2D array (n_CR, n_k) of summed log-likelihood values.
+        """
         obs_values_ = obs_values.reshape(1, 1, -1)
         return st.norm(loc=settlements, scale=self.config.obs_error).logpdf(obs_values_).sum(axis=-1)
 
-    def get_stats(self) -> Dict[str, float]:
-        """Compute summary statistics (mean, std, quantiles) for CR and k."""
+    def get_stats(self) -> Dict[str, Any]:
+        """Compute summary statistics (mean, std, quantiles) for CR and k.
+
+        Uses the current marginal PDFs (CR_pdf, k_pdf) on their respective
+        grids. Quantiles are obtained by inverting the discrete CDF.
+
+        Returns:
+            Nested dict with keys "CR" and "k", each containing
+            "mean", "std", "q05", "median", "q95".
+        """
 
         if self.CR_pdf is None or self.CR_grid is None or self.k_pdf is None or self.k_grid is None:
             return {}
 
         CR_mean = np.trapezoid(self.CR_grid * self.CR_pdf, self.CR_grid)
-        CR_var = np.trapezoid((self.CR_grid - mean)**2 * self.CR_pdf, self.CR_grid)
-        CR_std = np.sqrt(var)
+        CR_var = np.trapezoid((self.CR_grid - CR_mean)**2 * self.CR_pdf, self.CR_grid)
+        CR_std = np.sqrt(CR_var)
 
         # CDF for quantiles
         cdf = np.cumsum(self.CR_pdf) * np.diff(self.CR_grid, prepend=self.CR_grid[0])
@@ -229,10 +331,10 @@ class JPDF:
         CR_q05 = np.interp(0.05, cdf, self.CR_grid)
         CR_q50 = np.interp(0.50, cdf, self.CR_grid)
         CR_q95 = np.interp(0.95, cdf, self.CR_grid)
-        
+
         k_mean = np.trapezoid(self.k_grid * self.k_pdf, self.k_grid)
-        k_var = np.trapezoid((self.k_grid - mean)**2 * self.k_pdf, self.k_grid)
-        k_std = np.sqrt(var)
+        k_var = np.trapezoid((self.k_grid - k_mean)**2 * self.k_pdf, self.k_grid)
+        k_std = np.sqrt(k_var)
 
         # CDF for quantiles
         cdf = np.cumsum(self.k_pdf) * np.diff(self.k_grid, prepend=self.k_grid[0])

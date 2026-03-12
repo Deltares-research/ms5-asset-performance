@@ -3,11 +3,15 @@ Reliability pipeline for settlement analysis with Bayesian updating.
 
 Orchestrates the full analysis workflow:
 1. Setup — load prior distributions and performance function from specs.
-2. Settlements — pre-evaluate settlement on the (CR, k) grid for all times.
+2. Settlements — pre-evaluate settlement on the (CR, k) parameter space.
 3. Timeline — iterate over observation times, update the posterior via Bayes,
    compute failure probability and settlement PDFs at each step.
 4. Plots — generate JPDF snapshots, settlement forecasts, residual PDFs,
    and reliability index over time.
+
+Supports two analysis modes controlled by ``config.analysis_method``:
+- ``"semi-analytical"``: grid-based 2D integration over a CR×k grid.
+- ``"sample-based"``: importance sampling with weighted particles.
 """
 
 import numpy as np
@@ -24,7 +28,9 @@ import os
 import json
 from datetime import datetime
 from settlement_engine import get_settlement
-from plotting import save_jpdf_plots, save_settlement_forecast_plots, save_settlement_residual_plots, save_beta_over_time_plot, make_gifs
+from plotting import (save_jpdf_plots, save_jpdf_plots_samples,
+                      save_settlement_forecast_plots, save_settlement_residual_plots,
+                      save_beta_over_time_plot, make_gifs)
 from argparse import ArgumentParser
 
 
@@ -33,9 +39,12 @@ class ReliabilityPipeline:
     """Bayesian reliability analysis pipeline for settlement prediction.
 
     Manages the joint PDF of soil parameters (CR, k), pre-evaluates
-    settlements on the parameter grid, performs sequential Bayesian updating
-    as observations arrive, and computes failure probabilities and
-    settlement PDFs at each time step.
+    settlements over the parameter space, performs sequential Bayesian
+    updating as observations arrive, and computes failure probabilities
+    and settlement PDFs at each time step.
+
+    Supports grid-based (semi-analytical) and sample-based (importance
+    sampling) modes, selected via ``config.analysis_method``.
     """
 
     def __init__(
@@ -63,19 +72,25 @@ class ReliabilityPipeline:
         self.settlement_grid: Optional[NDArray] = None
         self.results: Dict[str, Any] = {}
 
+    @property
+    def is_sample_based(self) -> bool:
+        return self.config.analysis_method == "sample-based"
+
     def setup(self, seed: int = 42) -> None:
         """Load prior distributions and initialize the performance function.
 
         Args:
-            seed: Random seed (reserved for future use).
+            seed: Random seed for importance sampling (sample-based mode).
         """
 
         # Initialize JPDF
         self.jpdf = JPDF(name="settlement", config=self.config)
         self.jpdf.set_prior_from_specs(self.specs_path)
-        self.jpdf.init_prior_samples(covar_IS = 2.0)
 
-        # Initialize corrosion model
+        if self.is_sample_based:
+            self.jpdf.init_prior_samples(covar_IS=2.0, seed=seed)
+
+        # Initialize performance function
         with open(self.specs_path, "r") as f:
             specs = json.load(f)
 
@@ -109,14 +124,16 @@ class ReliabilityPipeline:
             cache_dir: Optional[Path] = None,
             force_rebuild: bool = False
     ) -> None:
-        """Pre-evaluate settlements on the (CR, k) grid for all time steps.
+        """Pre-evaluate settlements over the parameter space for all time steps.
 
-        Computes settlement arrays at observation times and forecast times
-        using the settlement engine. Results are cached to disk as .npy files
-        to avoid recomputation on subsequent runs.
+        Grid-based: evaluates on the (CR, k) cross-product grid, producing
+        arrays of shape (n_CR, n_k, n_t). Sample-based: evaluates at each
+        (CR_i, k_i) sample pair, producing arrays of shape (n_samples, n_t).
 
-        Also computes the residual settlement (end_time - preload_removal_time)
-        and builds the 1D grids used for settlement PDF computation.
+        Results are cached to disk as .npy files to avoid recomputation on
+        subsequent runs. Also computes the residual settlement
+        (end_time - preload_removal_time) and builds 1D grids for settlement
+        PDF computation.
 
         Args:
             setting: Dict mapping observation time strings to settlement values.
@@ -130,46 +147,53 @@ class ReliabilityPipeline:
         cache_file_forecast = cache_dir / "settlement_forecast.npy"
 
         if not force_rebuild and cache_file_obs.exists() and cache_file_forecast.exists():
-            
+
             settlements_obs = np.load(cache_file_obs)
             settlement_forecast = np.load(cache_file_forecast)
-            
+
             if settlements_obs.shape[-1] != len(self.obs_times):
                 raise ValueError(f"""
-                Inconsistent times: cached settlements have {settlements_obs.shape[-1]} 
+                Inconsistent times: cached settlements have {settlements_obs.shape[-1]}
                 times while analysis needs {len(self.obs_times)}.
                 """)
-            
+
         else:
-    
+
+            if self.is_sample_based:
+                CR = self.jpdf.X_samples[:, 0]
+                k = self.jpdf.X_samples[:, 1]
+            else:
+                CR = self.jpdf.CR_grid
+                k = self.jpdf.k_grid
+
             settlements_obs = get_settlement(
                 t=self.obs_times,
-                CR = self.jpdf.X_samples[:,0],
-                k = self.jpdf.X_samples[:,1],
-                RR = self.config.RR,
+                CR=CR,
+                k=k,
+                RR=self.config.RR,
                 Ca=self.config.Ca,
                 h=self.config.layer_thickness,
                 sigma_0=self.config.sigma_0,
                 sigma_v=self.config.sigma_0+self.config.preload,
                 sigma_p=self.config.sigma_p,
                 method=self.config.doc_method,
-                grid_based = False
+                grid_based=not self.is_sample_based,
             )
-            
+
             settlement_forecast = get_settlement(
-                t = self.forecast_times,
-                CR = self.jpdf.X_samples[:,0],
-                k = self.jpdf.X_samples[:,1],
-                RR = self.config.RR,
-                Ca = self.config.Ca,
-                h = self.config.layer_thickness,
-                sigma_0 = self.config.sigma_0,
-                sigma_v = self.config.sigma_0 + self.config.preload,
-                sigma_p = self.config.sigma_p,
-                method = self.config.doc_method,
-                grid_based = False
+                t=self.forecast_times,
+                CR=CR,
+                k=k,
+                RR=self.config.RR,
+                Ca=self.config.Ca,
+                h=self.config.layer_thickness,
+                sigma_0=self.config.sigma_0,
+                sigma_v=self.config.sigma_0 + self.config.preload,
+                sigma_p=self.config.sigma_p,
+                method=self.config.doc_method,
+                grid_based=not self.is_sample_based,
             )
-            
+
             np.save(cache_file_obs, settlements_obs)
             np.save(cache_file_forecast, settlement_forecast)
 
@@ -202,91 +226,48 @@ class ReliabilityPipeline:
         self.residual_settlement_grid = np.sort(np.unique(np.append(residual_settlement_grid, 0)))
 
     def get_settlement_pdf(self, settlement: NDArray, use_prior: bool = False, grid: NDArray = None) -> Tuple[NDArray, NDArray]:
-        """Transform the 2D joint (CR, k) PDF into a 1D settlement PDF.
+        """Compute 1D settlement PDF from the joint (CR, k) distribution.
 
-        This method performs a change of variables from the parameter space
-        (CR, k) to the settlement space. Because the mapping from (CR, k) to
-        settlement is nonlinear and not analytically invertible, a numerical
-        binning approach is used instead of the Jacobian method to preserve
-        the PDF without distortion.
-
-        Algorithm — step by step:
-
-        1. **Cell-center averaging**: Both the joint PDF and the settlement
-           array live on a (n_CR, n_k) grid of *edge* values. To compute
-           probability *mass* per cell, we need values at cell centers. The
-           2D arrays are averaged over their four corner nodes:
-
-               pdf_centers[i,j] = mean(pdf[i,j], pdf[i,j+1], pdf[i+1,j], pdf[i+1,j+1])
-
-           This produces arrays of shape (n_CR-1, n_k-1).
-
-        2. **Probability mass**: Each cell's probability mass is:
-
-               prob_mass[i,j] = pdf_centers[i,j] * dCR[i] * dk[j]
-
-           where dCR and dk are the spacings between adjacent grid points.
-           The total of all prob_mass entries sums to ~1.0 (up to
-           discretization error).
-
-        3. **Binning into settlement space**: Each cell has a settlement
-           value (settlement_centers[i,j]) and a probability mass. We assign
-           each cell to a bin of the 1D settlement grid using np.digitize.
-           All probability mass landing in the same settlement bin is summed
-           via np.add.at (unbuffered addition to handle duplicate indices).
-
-        4. **Mass → density**: The accumulated probability mass per bin is
-           divided by the bin width (ds) to convert to probability density.
-           This yields a histogram-like PDF on the settlement grid centers.
-
-        5. **Normalization**: The resulting PDF is normalized so that its
-           integral (via trapezoidal rule) equals 1.
+        Semi-analytical: bins probability mass from the 2D grid into a 1D
+        settlement histogram. Sample-based: uses a weighted histogram of
+        settlement values with importance sampling weights.
 
         Args:
-            settlement: 2D array of shape (n_CR, n_k) with settlement values
-                for each parameter combination (e.g. at a specific time).
-            use_prior: If True, use the prior joint PDF. Otherwise use the
-                current (posterior) joint PDF.
-            grid: 1D array of settlement bin edges. If None, uses
+            settlement: Settlement values. Shape (n_CR, n_k) for
+                semi-analytical, (n_samples,) for sample-based.
+            use_prior: If True, use prior weights/PDF. Otherwise posterior.
+            grid: 1D array of settlement bin edges. Defaults to
                 self.settlement_grid.
 
         Returns:
-            Tuple of (grid_centers, settlement_pdf):
-                - grid_centers: 1D array of bin center values, length len(grid)-1.
-                - settlement_pdf: 1D array of PDF values at those centers.
+            Tuple of (grid_centers, settlement_pdf).
         """
-
-        pdf = self.jpdf.get_prior() if use_prior else self.jpdf.pdf
         grid = grid if grid is not None else self.settlement_grid
 
-        dCR = np.diff(self.jpdf.CR_grid)
-        dk = np.diff(self.jpdf.k_grid)
-        pdf_centers = (pdf[:-1, :-1] + pdf[:-1, 1:] + pdf[1:, :-1] + pdf[1:, 1:]) / 4
-        prob_mass = pdf_centers * dCR[:, np.newaxis] * dk[np.newaxis, :]
-
-        settlement_centers = (settlement[:-1, :-1] + settlement[:-1, 1:] + settlement[1:, :-1] + settlement[1:, 1:]) / 4
-
-        s_flat = settlement_centers.flatten()
-        pm_flat = prob_mass.flatten()
-        valid = np.isfinite(s_flat) & np.isfinite(pm_flat)
-
-        idx = np.digitize(s_flat[valid], bins=grid) - 1
-        idx = np.clip(idx, 0, len(grid) - 1)
-
-        settlement_prob_mass = np.zeros(len(grid))
-        np.add.at(settlement_prob_mass, idx, pm_flat[valid])
+        if self.is_sample_based:
+            weights = self.jpdf.W_prior_samples if use_prior else self.jpdf.W_samples
+            hist, _ = np.histogram(settlement, bins=grid, weights=weights)
+        else:
+            pdf = self.jpdf.get_prior() if use_prior else self.jpdf.pdf
+            dCR = np.diff(self.jpdf.CR_grid)
+            dk = np.diff(self.jpdf.k_grid)
+            pdf_centers = (pdf[:-1, :-1] + pdf[:-1, 1:] + pdf[1:, :-1] + pdf[1:, 1:]) / 4
+            prob_mass = pdf_centers * dCR[:, np.newaxis] * dk[np.newaxis, :]
+            settlement_centers = (settlement[:-1, :-1] + settlement[:-1, 1:] + settlement[1:, :-1] + settlement[1:, 1:]) / 4
+            s_flat = settlement_centers.flatten()
+            pm_flat = prob_mass.flatten()
+            valid = np.isfinite(s_flat) & np.isfinite(pm_flat)
+            idx = np.digitize(s_flat[valid], bins=grid) - 1
+            idx = np.clip(idx, 0, len(grid) - 2)
+            hist = np.zeros(len(grid) - 1)
+            np.add.at(hist, idx, pm_flat[valid])
 
         ds = np.diff(grid)
-        settlement_pdf = settlement_prob_mass[:-1] / ds
-
+        settlement_pdf = hist / ds
         grid_centers = (grid[:-1] + grid[1:]) / 2
-        settlement_pdf /= np.trapezoid(settlement_pdf, grid_centers)
-
-        # else:
-        #     import matplotlib.pyplot as plt
-        #     settlement_pdf,grid,_ = plt.hist(settlement,200 ,weights=self.jpdf.W_samples)
-
-        grid_centers = (grid[:-1] + grid[1:]) / 2
+        integral = np.trapezoid(settlement_pdf, grid_centers)
+        if integral > 0:
+            settlement_pdf /= integral
 
         return grid_centers, settlement_pdf
 
@@ -301,25 +282,32 @@ class ReliabilityPipeline:
             Dict with keys "pf", "beta", "settlement_grid", "settlement_pdf".
         """
 
-        pf = self.performance.failure_probability(
-            x=self.settlement_residual,
-            pdf=self.jpdf.get_prior() if use_prior else self.jpdf.pdf,
-            CR_grid=self.jpdf.CR_grid,
-            k_grid=self.jpdf.k_grid,
-        )
+        if self.is_sample_based:
+            weights = self.jpdf.W_prior_samples if use_prior else self.jpdf.W_samples
+            pf = self.performance.failure_probability(
+                x=self.settlement_residual,
+                weights=weights,
+            )
+        else:
+            pf = self.performance.failure_probability(
+                x=self.settlement_residual,
+                pdf=self.jpdf.get_prior() if use_prior else self.jpdf.pdf,
+                CR_grid=self.jpdf.CR_grid,
+                k_grid=self.jpdf.k_grid,
+            )
 
         pf_clipped = np.clip(pf, 1e-10, 1 - 1e-10)
         beta = st.norm.ppf(1 - pf_clipped)
 
-        settlement_at_forecast_time = self.settlement_forecast[..., self.forecast_times==forecast_time].squeeze()
+        settlement_at_forecast_time = self.settlement_forecast[..., self.forecast_times == forecast_time].squeeze()
         settlement_grid, settlement_pdf = self.get_settlement_pdf(
             settlement=settlement_at_forecast_time,
-            use_prior=use_prior
+            use_prior=use_prior,
         )
 
         return {
-            "pf": pf.item(),
-            "beta": beta.item(),
+            "pf": float(pf),
+            "beta": float(beta),
             "settlement_grid": settlement_grid.tolist(),
             "settlement_pdf": settlement_pdf.tolist(),
         }
@@ -348,47 +336,39 @@ class ReliabilityPipeline:
         """
 
         self.results = {}
+        self.W_posterior_per_t = {}  # for sample-based plotting
+        mask_up_to = lambda t: self.obs_times <= t
 
         # Collect settlement observations
         def get_observations_up_to(t: float):
-            obs_times = self.obs_times[self.obs_times<=t]
-            obs_values = [float(v) for v in setting.values()]
-            obs_values = np.array(obs_values)[self.obs_times<=t]
-            return np.array(obs_times), np.array(obs_values)
+            mask = mask_up_to(t)
+            obs_times = self.obs_times[mask]
+            obs_values = np.array([float(v) for v in setting.values()])[mask]
+            return obs_times, obs_values
 
-        # Reset C50 to prior
         self.jpdf.reset_to_priors()
+
+        # Table header
+        if verbose:
+            header = f"{'t':>8s}{'b_prior':>10s}{'b_post':>10s}"
+            print(header)
+            print("-" * len(header))
 
         for t in self.obs_times.tolist():
 
-            if verbose:
-                print(f"Processing t={t:.0f}...")
-
-            # Get observations up to current time
             obs_times, obs_values = get_observations_up_to(t)
+            mask = mask_up_to(t)
 
-            # Update posterior
+            # Bayesian update
             if len(obs_times) > 0:
-                settlement_at_obs_time = self.settlement_at_obs_times[..., self.obs_times<=t]
+                settlement_at_obs_time = self.settlement_at_obs_times[..., mask]
+                self.jpdf.update(obs_values, settlement_at_obs_time)
 
-                # likelyhood:
+            if self.is_sample_based:
+                self.W_posterior_per_t[t] = self.jpdf.W_samples.copy()
 
-                print(obs_values)
-
-                self.jpdf.n_samples = 100_000
-                lh = np.zeros(self.jpdf.n_samples)
-
-
-                for obs_value,settlement_at_t  in zip(obs_values, settlement_at_obs_time.T):
-                    lh += st.norm(loc = obs_value, scale=self.jpdf.config.obs_error).logpdf(settlement_at_t)
-
-                lh = np.exp(lh)
-
-                self.jpdf.W_update = lh / np.mean(lh)
-
-
-            # Compute Pf FORECAST for all future times (from t to t_end)
-            prediction_times = [pt for pt in self.forecast_times.tolist()]
+            # Compute Pf forecast for all times
+            prediction_times = self.forecast_times.tolist()
             pf_forecast_prior = {}
             pf_forecast_posterior = {}
             beta_forecast_prior = {}
@@ -400,14 +380,12 @@ class ReliabilityPipeline:
 
             for pt in prediction_times:
 
-                # Prior forecast
                 result_prior = self.compute_pf_at_time(forecast_time=pt, use_prior=True)
                 pf_forecast_prior[pt] = result_prior["pf"]
                 beta_forecast_prior[pt] = result_prior["beta"]
                 settlement_prior_grid[pt] = result_prior["settlement_grid"]
                 settlement_forecast_prior[pt] = result_prior["settlement_pdf"]
 
-                # Posterior forecast
                 result_posterior = self.compute_pf_at_time(forecast_time=pt, use_prior=False)
                 pf_forecast_posterior[pt] = result_posterior["pf"]
                 beta_forecast_posterior[pt] = result_posterior["beta"]
@@ -415,18 +393,15 @@ class ReliabilityPipeline:
                 settlement_forecast_posterior[pt] = result_posterior["settlement_pdf"]
 
             # Residual settlement PDFs
-            residual_settlement_grid_prior, residual_settlement_pdf_prior = self.get_settlement_pdf(
-                settlement=self.settlement_residual,
-                use_prior=True,
+            res_grid_prior, res_pdf_prior = self.get_settlement_pdf(
+                settlement=self.settlement_residual, use_prior=True,
                 grid=self.residual_settlement_grid,
             )
-            residual_settlement_grid_posterior, residual_settlement_pdf_posterior = self.get_settlement_pdf(
-                settlement=self.settlement_residual,
-                use_prior=False,
+            res_grid_posterior, res_pdf_posterior = self.get_settlement_pdf(
+                settlement=self.settlement_residual, use_prior=False,
                 grid=self.residual_settlement_grid,
             )
 
-            # Current time results
             t_min = min(beta_forecast_prior)
             pf_current_prior = pf_forecast_prior[t_min]
             pf_current_posterior = pf_forecast_posterior[t_min]
@@ -454,30 +429,78 @@ class ReliabilityPipeline:
                     "settlement_forecast": settlement_forecast_posterior,
                 },
                 "settlement_residual": {
-                    "prior_grid": residual_settlement_grid_prior.tolist(),
-                    "prior_pdf": residual_settlement_pdf_prior.tolist(),
-                    "posterior_grid": residual_settlement_grid_posterior.tolist(),
-                    "posterior_pdf": residual_settlement_pdf_posterior.tolist(),
+                    "prior_grid": res_grid_prior.tolist(),
+                    "prior_pdf": res_pdf_prior.tolist(),
+                    "posterior_grid": res_grid_posterior.tolist(),
+                    "posterior_pdf": res_pdf_posterior.tolist(),
                 },
-                # Store JPDF state for snapshot generation
-                "jpdf_state": {
-                    "CR_grid": self.jpdf.CR_grid.tolist(),
-                    "CR_prior": self.jpdf.CR_prior.tolist(),
-                    "CR_posterior": self.jpdf.CR_pdf.tolist(),
-                    "k_grid": self.jpdf.k_grid.tolist(),
-                    "k_prior": self.jpdf.k_prior.tolist(),
-                    "k_posterior": self.jpdf.k_pdf.tolist(),
-                    "prior": self.jpdf.get_prior().tolist(),
-                    "loglikes": self.jpdf.get_loglikes(obs_values, settlement_at_obs_time).tolist(),
-                    "posterior": self.jpdf.pdf.tolist(),
-                },
+                "jpdf_state": self._build_jpdf_state(obs_values, settlement_at_obs_time),
             }
 
             if verbose:
-                print(f"  Prior:     Pf={result_prior['pf']:.2e}, beta={result_prior['beta']:.2f}")
-                print(f"  Posterior: Pf={result_posterior['pf']:.2e}, beta={result_posterior['beta']:.2f}")
+                print(f"{t:>8.0f}{beta_current_prior:>10.2f}{beta_current_posterior:>10.2f}")
 
         return self.results
+
+    def _build_jpdf_state(self, obs_values: NDArray, settlement_at_obs_time: NDArray) -> Dict[str, Any]:
+        """Build JPDF state dict for results storage and plotting.
+
+        Grid-based: stores grids, marginal PDFs, joint prior/posterior, and
+        log-likelihoods. Sample-based: computes marginal PDFs from weighted
+        histograms of the IS samples.
+
+        Args:
+            obs_values: 1D array of observed settlement values used for updating.
+            settlement_at_obs_time: Settlement array at observation times.
+
+        Returns:
+            Dict with CR/k grids, prior and posterior marginal PDFs, and
+            (grid-based only) joint prior, log-likelihoods, and posterior arrays.
+        """
+        if self.is_sample_based:
+            # Compute marginal PDFs from weighted samples via histogram
+            CR_hist_prior, _ = np.histogram(self.jpdf.X_samples[:, 0],
+                                            bins=self.jpdf.CR_grid,
+                                            weights=self.jpdf.W_prior_samples)
+            CR_hist_post, _ = np.histogram(self.jpdf.X_samples[:, 0],
+                                           bins=self.jpdf.CR_grid,
+                                           weights=self.jpdf.W_samples)
+            k_hist_prior, _ = np.histogram(self.jpdf.X_samples[:, 1],
+                                           bins=self.jpdf.k_grid,
+                                           weights=self.jpdf.W_prior_samples)
+            k_hist_post, _ = np.histogram(self.jpdf.X_samples[:, 1],
+                                          bins=self.jpdf.k_grid,
+                                          weights=self.jpdf.W_samples)
+            # Convert to density
+            dCR = np.diff(self.jpdf.CR_grid)
+            dk = np.diff(self.jpdf.k_grid)
+            CR_prior_pdf = CR_hist_prior / dCR
+            CR_post_pdf = CR_hist_post / dCR
+            k_prior_pdf = k_hist_prior / dk
+            k_post_pdf = k_hist_post / dk
+            CR_centers = (self.jpdf.CR_grid[:-1] + self.jpdf.CR_grid[1:]) / 2
+            k_centers = (self.jpdf.k_grid[:-1] + self.jpdf.k_grid[1:]) / 2
+
+            return {
+                "CR_grid": CR_centers.tolist(),
+                "CR_prior": CR_prior_pdf.tolist(),
+                "CR_posterior": CR_post_pdf.tolist(),
+                "k_grid": k_centers.tolist(),
+                "k_prior": k_prior_pdf.tolist(),
+                "k_posterior": k_post_pdf.tolist(),
+            }
+        else:
+            return {
+                "CR_grid": self.jpdf.CR_grid.tolist(),
+                "CR_prior": self.jpdf.CR_prior.tolist(),
+                "CR_posterior": self.jpdf.CR_pdf.tolist(),
+                "k_grid": self.jpdf.k_grid.tolist(),
+                "k_prior": self.jpdf.k_prior.tolist(),
+                "k_posterior": self.jpdf.k_pdf.tolist(),
+                "prior": self.jpdf.get_prior().tolist(),
+                "loglikes": self.jpdf.get_loglikes(obs_values, settlement_at_obs_time).tolist(),
+                "posterior": self.jpdf.pdf.tolist(),
+            }
 
     def save_results(self, filename: str = "reliability_results.json") -> None:
         """Save analysis results to a JSON file in the remote output folder."""
@@ -494,7 +517,14 @@ class ReliabilityPipeline:
         save_json(results_json, output_folder)
 
 
-def main(analysis_method: Optional[str] = None):
+def main(analysis_method: Optional[str] = None, force_rebuild: bool = False):
+    """Run the full settlement reliability analysis pipeline.
+
+    Args:
+        analysis_method: Override for the analysis method from the specs file.
+            Either "semi-analytical" or "sample-based".
+        force_rebuild: If True, recompute settlement caches even if they exist.
+    """
     # Paths
     load_dotenv("settlement_example.env")
     os.environ["REMOTE_DATA_PATH"] = str(get_remote_path()/"input")
@@ -529,7 +559,7 @@ def main(analysis_method: Optional[str] = None):
     setting = load_json("case_study_setting.json")
     cache_dir = get_remote_path() / "output/cache"
     cache_dir.mkdir(exist_ok=True, parents=True)
-    pipeline.init_settlements(setting=setting, force_rebuild=True, cache_dir=cache_dir)
+    pipeline.init_settlements(setting=setting, force_rebuild=force_rebuild, cache_dir=cache_dir)
 
     # =========================================================================
     # STEP 3: Run timeline analysis
@@ -560,7 +590,17 @@ def main(analysis_method: Optional[str] = None):
     k_true = variables.get("k").get("true")
 
     obs_values = np.array([float(v) for v in setting.values()])
-    save_jpdf_plots(results=results, output_dir=output_dir, CR_true=CR_true, k_true=k_true)
+    if pipeline.is_sample_based:
+        save_jpdf_plots_samples(
+            results=results, output_dir=output_dir,
+            CR_samples=pipeline.jpdf.X_samples[:, 0],
+            k_samples=pipeline.jpdf.X_samples[:, 1],
+            W_prior=pipeline.jpdf.W_prior_samples,
+            W_posterior_per_t=pipeline.W_posterior_per_t,
+            CR_true=CR_true, k_true=k_true,
+        )
+    else:
+        save_jpdf_plots(results=results, output_dir=output_dir, CR_true=CR_true, k_true=k_true)
     save_settlement_forecast_plots(
         results=results,
         output_dir=output_dir,
@@ -580,9 +620,9 @@ def main(analysis_method: Optional[str] = None):
 if __name__ == "__main__":
 
     parser = ArgumentParser()
-    # parser.add_argument("--analysis_method", type=str, default="semi-analytical")
     parser.add_argument("--analysis_method", type=str, default="sample-based")
+    parser.add_argument("--force_rebuild", action="store_false")
     args = parser.parse_args()
 
-    main(analysis_method=args.analysis_method)
+    main(analysis_method=args.analysis_method, force_rebuild=args.force_rebuild)
 

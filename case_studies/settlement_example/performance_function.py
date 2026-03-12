@@ -24,8 +24,9 @@ class Performance(BasePerformance):
     """Limit-state function for residual settlement exceedance.
 
     Failure is defined as residual settlement >= end_settlement_req.
-    The failure probability is computed by integrating the joint PDF
-    over the failure domain on the (CR, k) grid.
+    Supports two modes for failure probability computation: grid-based
+    (trapezoidal integration of indicator × PDF over the CR×k grid) and
+    sample-based (weighted sum of failure indicators using IS weights).
     """
 
     def __init__(self, name: str, parameters: dict = {}):
@@ -35,7 +36,8 @@ class Performance(BasePerformance):
         """Evaluate the limit-state function.
 
         Args:
-            x: Array of residual settlement values on the (CR, k) grid.
+            x: Array of residual settlement values. Shape (n_CR, n_k) for
+                grid-based or (n_samples,) for sample-based.
             t: Time (unused, kept for interface compatibility).
 
         Returns:
@@ -56,30 +58,41 @@ class Performance(BasePerformance):
     def failure_probability(
             self,
             x: NDArray,
-            pdf: NDArray,
-            CR_grid: NDArray,
-            k_grid: NDArray,
+            pdf: NDArray = None,
+            CR_grid: NDArray = None,
+            k_grid: NDArray = None,
+            weights: NDArray = None,
         ) -> float:
-        """Compute failure probability by integrating the PDF over the failure domain.
+        """Compute failure probability.
 
-        Multiplies the joint PDF by the limit-state indicator (1 in failure
-        domain, 0 otherwise) and integrates over the (CR, k) grid using
-        the trapezoidal rule.
+        Two modes controlled by which arguments are provided:
+
+        Grid-based (pdf, CR_grid, k_grid): integrates indicator × pdf over
+        the (CR, k) grid using the trapezoidal rule.
+
+        Sample-based (weights): computes Pf = sum(weights * indicator) where
+        weights are normalized importance sampling weights.
 
         Args:
-            x: Residual settlement array of shape (n_CR, n_k).
-            pdf: Joint PDF array of shape (n_CR, n_k).
-            CR_grid: 1D array of CR grid values.
-            k_grid: 1D array of k grid values.
+            x: Residual settlement array. Shape (n_CR, n_k) for grid-based,
+                (n_samples,) for sample-based.
+            pdf: Joint PDF array of shape (n_CR, n_k). Grid-based only.
+            CR_grid: 1D array of CR grid values. Grid-based only.
+            k_grid: 1D array of k grid values. Grid-based only.
+            weights: Normalized IS weights of shape (n_samples,). Sample-based only.
 
         Returns:
             Scalar failure probability.
         """
-        g = self.lsf(x, None)
-        lsf_mask = g * pdf
-        pf = np.trapezoid(lsf_mask, k_grid, axis=1)
-        pf = np.trapezoid(pf, CR_grid)
-        return pf
+        if weights is not None:
+            I_fail = x >= self.parameters["end_settlement_req"]
+            return float(np.sum(weights * I_fail))
+        else:
+            g = self.lsf(x, None)
+            lsf_mask = g * pdf
+            pf = np.trapezoid(lsf_mask, k_grid, axis=1)
+            pf = np.trapezoid(pf, CR_grid)
+            return pf
 
 
 if __name__ == "__main__":
