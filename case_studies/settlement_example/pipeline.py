@@ -517,10 +517,11 @@ class ReliabilityPipeline:
         save_json(results_json, output_folder)
 
 
-def main(analysis_method: Optional[str] = None, force_rebuild: bool = False):
+def main(input_file: Optional[str] = None, analysis_method: Optional[str] = None, force_rebuild: bool = False):
     """Run the full settlement reliability analysis pipeline.
 
     Args:
+        input_file: Override for the specs file.
         analysis_method: Override for the analysis method from the specs file.
             Either "semi-analytical" or "sample-based".
         force_rebuild: If True, recompute settlement caches even if they exist.
@@ -528,7 +529,10 @@ def main(analysis_method: Optional[str] = None, force_rebuild: bool = False):
     # Paths
     load_dotenv("settlement_example.env")
     os.environ["REMOTE_DATA_PATH"] = str(get_remote_path()/"input")
-    specs_path = Path(os.environ["REMOTE_DATA_PATH"]) / "case_study_specifications.json"
+    if input_file:
+        specs_path = Path(os.environ["REMOTE_DATA_PATH"]) / f"{input_file}.json"
+    else:
+        specs_path = Path(os.environ["REMOTE_DATA_PATH"]) / "case_study_specifications.json"
 
     username = os.environ.get("USER", "unknown").lower()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
@@ -620,10 +624,15 @@ def main(analysis_method: Optional[str] = None, force_rebuild: bool = False):
 if __name__ == "__main__":
 
     parser = ArgumentParser()
+    parser.add_argument("--input-file", type=str, default="case_study_specifications_1loc")
     parser.add_argument("--analysis_method", type=str, default="sample-based")
     # parser.add_argument("--analysis_method", type=str, default="semi-analytical")
     parser.add_argument("--force_rebuild", action="store_false")
     args = parser.parse_args()
 
-    main(analysis_method=args.analysis_method, force_rebuild=args.force_rebuild)
+    main(
+        input_file=args.input_file,
+        analysis_method=args.analysis_method,
+        force_rebuild=args.force_rebuild
+    )
 
