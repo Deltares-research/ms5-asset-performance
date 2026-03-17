@@ -625,8 +625,8 @@ if __name__ == "__main__":
 
     parser = ArgumentParser()
     parser.add_argument("--input-file", type=str, default="case_study_specifications_1loc")
-    parser.add_argument("--analysis_method", type=str, default="sample-based")
     # parser.add_argument("--analysis_method", type=str, default="semi-analytical")
+    parser.add_argument("--analysis_method", type=str, default="sample-based")
     parser.add_argument("--force_rebuild", action="store_false")
     args = parser.parse_args()
 
