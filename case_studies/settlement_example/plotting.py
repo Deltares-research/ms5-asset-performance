@@ -125,6 +125,8 @@ def plot_jpdf_snapshot(
     ax_main.legend(handles=legend_handles, loc="upper right", fontsize=8, facecolor="black", framealpha=0.4, labelcolor="white")
     ax_main.set_xlabel("CR [-]")
     ax_main.set_ylabel("k [m/s]")
+    ax_main.set_xlim([0.025, 0.230])
+    ax_main.set_ylim([0, 8e-9])
     ax_main.grid(True, alpha=0.3)
 
     # CR marginal (top, aligned to x-axis)
@@ -237,6 +239,8 @@ def plot_jpdf_prior(
     ax_main.legend(handles=legend_handles, loc="upper right", fontsize=8, facecolor="black", framealpha=0.4, labelcolor="white")
     ax_main.set_xlabel("CR [-]")
     ax_main.set_ylabel("k [m/s]")
+    ax_main.set_xlim([0.025, 0.230])
+    ax_main.set_ylim([0, 8e-9])
     ax_main.grid(True, alpha=0.3)
 
     # CR marginal (top)
@@ -549,6 +553,7 @@ def plot_settlement_residual(
     if pf_prior is not None and pf_posterior is not None:
         title += f"\nPrior: Pf={pf_prior:.2e}, \u03b2={beta_prior:.2f}\nPosterior: Pf={pf_posterior:.2e}, \u03b2={beta_posterior:.2f}"
     ax.set_title(title)
+    ax.set_xlim(0, 0.65)
     if y_max is not None:
         ax.set_ylim(0, y_max * 1.05)
     else:
@@ -737,6 +742,8 @@ def plot_jpdf_snapshot_samples(
                        facecolor="black", framealpha=0.4, labelcolor="white")
     ax_main.set_xlabel("CR [-]")
     ax_main.set_ylabel("k [m/s]")
+    ax_main.set_xlim([0.025, 0.230])
+    ax_main.set_ylim([0, 8e-9])
     ax_main.grid(True, alpha=0.3)
 
     # CR marginal (top)
@@ -822,6 +829,8 @@ def plot_jpdf_prior_samples(
                        facecolor="black", framealpha=0.4, labelcolor="white")
     ax_main.set_xlabel("CR [-]")
     ax_main.set_ylabel("k [m/s]")
+    ax_main.set_xlim([0.025, 0.230])
+    ax_main.set_ylim([0, 8e-9])
     ax_main.grid(True, alpha=0.3)
 
     ax_top.hist(CR_samples, bins=n_bins, weights=W_prior, density=True,

@@ -596,7 +596,8 @@ def main(input_file: Optional[str] = None, analysis_method: Optional[str] = None
     obs_values = np.array([float(v) for v in setting.values()])
     if pipeline.is_sample_based:
         save_jpdf_plots_samples(
-            results=results, output_dir=output_dir,
+            results=results,
+            output_dir=output_dir,
             CR_samples=pipeline.jpdf.X_samples[:, 0],
             k_samples=pipeline.jpdf.X_samples[:, 1],
             W_prior=pipeline.jpdf.W_prior_samples,

@@ -56,6 +56,15 @@ class CaseStudyConfig:
     doc_method: str = "Terzaghi"
     analysis_method: str = "semi-analytical"
 
+    # TODO: separation between parameters
+    # TODO: replace with simple dict
+    # TODO: Generalize JPDF
+    # TODO: Remove log-sum-exp trick? --> No
+    # TODO: Update grid with volume was weights
+    # TODO: Rename input files
+    # TODO: Rename to .env
+    # TODO: JPDF line 234 self.n_samples
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CaseStudyConfig":
         """Create config from dictionary."""
