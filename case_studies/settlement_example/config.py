@@ -27,8 +27,6 @@ class CaseStudyConfig:
         RR: Recompression ratio [-].
         Ca: Secondary compression coefficient [-].
         obs_error: Standard deviation of observation measurement error [m].
-        n_CR_grid: Number of grid points for the CR (compression ratio) axis.
-        n_k_grid: Number of grid points for the k (permeability) axis.
         doc_method: Method to compute degree of consolidation (e.g. "Terzaghi").
         end_settlement_req: Allowable residual settlement after preload removal [m].
         forecast_interval: Time interval between forecast evaluation points [days].
@@ -48,8 +46,6 @@ class CaseStudyConfig:
     RR: float = 0.02
     Ca: float = 0.0
     obs_error: float = 0.1
-    n_CR_grid: int = 100
-    n_k_grid: int = 100
     end_settlement_req: float = 0.05
     forecast_interval: int = 10
     n_samples: int = 100_000
@@ -58,11 +54,11 @@ class CaseStudyConfig:
 
     # TODO: separation between parameters
     # TODO: replace with simple dict
-    # TODO: Generalize JPDF
+
     # TODO: Remove log-sum-exp trick? --> No
     # TODO: Update grid with volume was weights
     # TODO: Rename input files
-    # TODO: Rename to .env
+
     # TODO: JPDF line 234 self.n_samples
 
     @classmethod

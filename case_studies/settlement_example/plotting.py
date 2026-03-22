@@ -7,7 +7,7 @@ settlement PDF plots, reliability index evolution, and animated GIFs.
 """
 
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -54,36 +54,39 @@ def _hdr_level(pdf_2d: NDArray, x_grid: NDArray, y_grid: NDArray, alpha: float =
 
 def plot_jpdf_snapshot(
     time: float,
-    CR_grid: NDArray,
-    CR_prior: NDArray,
-    CR_posterior: NDArray,
-    k_grid: NDArray,
-    k_prior: NDArray,
-    k_posterior: NDArray,
-    prior: NDArray,
-    posterior: NDArray,
-    loglikes: NDArray,
-    CR_true: float = None,
-    k_true: float = None,
+    var_names: List[str],
+    state: Dict[str, Any],
+    true_values: Dict[str, float] = None,
 ) -> plt.Figure:
     """Corner plot of the grid-based JPDF at a given observation time.
 
     Center panel: filled contour of the posterior with prior and
     log-likelihood contour overlays and 95% HDR contour. Top/right panels:
-    marginal PDFs of CR and k (prior in blue, posterior in red) with 95% CI.
+    marginal PDFs (prior in blue, posterior in red) with 95% CI.
 
     Args:
         time: Observation time [days].
-        CR_grid, CR_prior, CR_posterior: CR grid and marginal PDFs.
-        k_grid, k_prior, k_posterior: k grid and marginal PDFs.
-        prior: 2D joint prior array (n_CR, n_k).
-        posterior: 2D joint posterior array (n_CR, n_k).
-        loglikes: 2D log-likelihood array (n_CR, n_k).
-        CR_true, k_true: True parameter values for reference markers.
+        var_names: List of two variable names [axis_0, axis_1].
+        state: JPDF state dict with keys "{name}_grid", "{name}_prior",
+            "{name}_posterior", "prior", "posterior", "loglikes".
+        true_values: Dict mapping variable name to true value.
 
     Returns:
         Matplotlib Figure.
     """
+    true_values = true_values or {}
+    v0, v1 = var_names[0], var_names[1]
+    g0 = np.array(state[f"{v0}_grid"])
+    g1 = np.array(state[f"{v1}_grid"])
+    p0_prior = np.array(state[f"{v0}_prior"])
+    p0_post = np.array(state[f"{v0}_posterior"])
+    p1_prior = np.array(state[f"{v1}_prior"])
+    p1_post = np.array(state[f"{v1}_posterior"])
+    prior = np.array(state["prior"])
+    posterior = np.array(state["posterior"])
+    loglikes = np.array(state["loglikes"])
+    t0 = true_values.get(v0)
+    t1 = true_values.get(v1)
 
     fig = plt.figure(figsize=(8, 8))
     fig.suptitle(f"JPDF at t = {time:.0f} days", fontsize=13, fontweight="bold")
@@ -101,72 +104,61 @@ def plot_jpdf_snapshot(
     ax_right = fig.add_subplot(gs[1, 1], sharey=ax_main)
 
     # Bivariate contour (center)
-    CR_mesh, k_mesh = np.meshgrid(CR_grid, k_grid, indexing="ij")
-    ax_main.contourf(CR_mesh, k_mesh, posterior, levels=20, cmap="viridis")
-    ax_main.contour(CR_mesh, k_mesh, prior, levels=5, colors="white", linewidths=0.8, linestyles="--", alpha=0.6)
-    ax_main.contour(CR_mesh, k_mesh, loglikes, levels=5, colors="magenta", linewidths=0.8, linestyles="--", alpha=0.6)
-    # 95% HDR contour for posterior
-    level_95 = _hdr_level(posterior, CR_grid, k_grid, alpha=0.95)
-    ax_main.contour(CR_mesh, k_mesh, posterior, levels=[level_95], colors="yellow", linewidths=2, linestyles="-")
-    # Legend
+    mesh0, mesh1 = np.meshgrid(g0, g1, indexing="ij")
+    ax_main.contourf(mesh0, mesh1, posterior, levels=20, cmap="viridis")
+    ax_main.contour(mesh0, mesh1, prior, levels=5, colors="white", linewidths=0.8, linestyles="--", alpha=0.6)
+    ax_main.contour(mesh0, mesh1, loglikes, levels=5, colors="magenta", linewidths=0.8, linestyles="--", alpha=0.6)
+    level_95 = _hdr_level(posterior, g0, g1, alpha=0.95)
+    ax_main.contour(mesh0, mesh1, posterior, levels=[level_95], colors="yellow", linewidths=2, linestyles="-")
     from matplotlib.lines import Line2D
     legend_handles = [
         Line2D([], [], color="yellow", linewidth=2, linestyle="-", label="95% HDR"),
         Line2D([], [], color="white", linewidth=0.8, linestyle="--", label="Prior"),
         Line2D([], [], color="magenta", linewidth=0.8, linestyle="--", label="Log-likelihood"),
     ]
-    if CR_true is not None:
-        ax_main.axvline(CR_true, color="red", linestyle="--", linewidth=1.5)
-    if k_true is not None:
-        ax_main.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
-    if CR_true is not None and k_true is not None:
-        ax_main.plot(CR_true, k_true, "rx", markersize=15, markeredgewidth=2.5, zorder=5)
+    if t0 is not None:
+        ax_main.axvline(t0, color="red", linestyle="--", linewidth=1.5)
+    if t1 is not None:
+        ax_main.axhline(t1, color="red", linestyle="--", linewidth=1.5)
+    if t0 is not None and t1 is not None:
+        ax_main.plot(t0, t1, "rx", markersize=15, markeredgewidth=2.5, zorder=5)
         legend_handles.append(Line2D([], [], color="red", marker="x", linestyle="--", linewidth=1.5, markersize=10, label="True"))
     ax_main.legend(handles=legend_handles, loc="upper right", fontsize=8, facecolor="black", framealpha=0.4, labelcolor="white")
-    ax_main.set_xlabel("CR [-]")
-    ax_main.set_ylabel("k [m/s]")
-    ax_main.set_xlim([0.025, 0.230])
-    ax_main.set_ylim([0, 8e-9])
+    ax_main.set_xlabel(v0)
+    ax_main.set_ylabel(v1)
     ax_main.grid(True, alpha=0.3)
 
-    # CR marginal (top, aligned to x-axis)
-    ax_top.fill_between(CR_grid, CR_prior, alpha=0.3, color="b", label="Prior")
-    ax_top.plot(CR_grid, CR_prior, "b-", linewidth=1.5)
-    ax_top.fill_between(CR_grid, CR_posterior, alpha=0.3, color="r", label="Posterior")
-    ax_top.plot(CR_grid, CR_posterior, "r-", linewidth=1.5)
-    # 95% CI errorbar on CR posterior marginal
-    cr_mean, cr_q025, cr_q975 = _pdf_stats(CR_grid, CR_posterior)
-    cr_pdf_at_mean = np.interp(cr_mean, CR_grid, CR_posterior)
-    cr_xerr_lo = max(0.0, cr_mean - cr_q025)
-    cr_xerr_hi = max(0.0, cr_q975 - cr_mean)
-    ax_top.errorbar(cr_mean, cr_pdf_at_mean * 0.5, xerr=[[cr_xerr_lo], [cr_xerr_hi]],
+    # Variable 0 marginal (top)
+    ax_top.fill_between(g0, p0_prior, alpha=0.3, color="b", label="Prior")
+    ax_top.plot(g0, p0_prior, "b-", linewidth=1.5)
+    ax_top.fill_between(g0, p0_post, alpha=0.3, color="r", label="Posterior")
+    ax_top.plot(g0, p0_post, "r-", linewidth=1.5)
+    m0, q025_0, q975_0 = _pdf_stats(g0, p0_post)
+    pdf_at_m0 = np.interp(m0, g0, p0_post)
+    ax_top.errorbar(m0, pdf_at_m0 * 0.5, xerr=[[max(0.0, m0 - q025_0)], [max(0.0, q975_0 - m0)]],
                     fmt="none", ecolor="r", elinewidth=1.5, capsize=4, capthick=1.5, label="95% CI")
-    if CR_true is not None:
-        ax_top.axvline(CR_true, color="red", linestyle="--", linewidth=1.5, label=f"True")
+    if t0 is not None:
+        ax_top.axvline(t0, color="red", linestyle="--", linewidth=1.5, label="True")
     ax_top.set_ylabel("Density")
     ax_top.legend(fontsize=8)
     ax_top.grid(True, alpha=0.3)
     ax_top.tick_params(labelbottom=False)
 
-    # k marginal (right, aligned to y-axis)
-    ax_right.fill_betweenx(k_grid, k_prior, alpha=0.3, color="b")
-    ax_right.plot(k_prior, k_grid, "b-", linewidth=1.5)
-    ax_right.fill_betweenx(k_grid, k_posterior, alpha=0.3, color="r")
-    ax_right.plot(k_posterior, k_grid, "r-", linewidth=1.5)
-    # 95% CI errorbar on k posterior marginal
-    k_mean, k_q025, k_q975 = _pdf_stats(k_grid, k_posterior)
-    k_pdf_at_mean = np.interp(k_mean, k_grid, k_posterior)
-    k_yerr_lo = max(0.0, k_mean - k_q025)
-    k_yerr_hi = max(0.0, k_q975 - k_mean)
-    ax_right.errorbar(k_pdf_at_mean * 0.5, k_mean, yerr=[[k_yerr_lo], [k_yerr_hi]],
+    # Variable 1 marginal (right)
+    ax_right.fill_betweenx(g1, p1_prior, alpha=0.3, color="b")
+    ax_right.plot(p1_prior, g1, "b-", linewidth=1.5)
+    ax_right.fill_betweenx(g1, p1_post, alpha=0.3, color="r")
+    ax_right.plot(p1_post, g1, "r-", linewidth=1.5)
+    m1, q025_1, q975_1 = _pdf_stats(g1, p1_post)
+    pdf_at_m1 = np.interp(m1, g1, p1_post)
+    ax_right.errorbar(pdf_at_m1 * 0.5, m1, yerr=[[max(0.0, m1 - q025_1)], [max(0.0, q975_1 - m1)]],
                       fmt="none", ecolor="r", elinewidth=1.5, capsize=4, capthick=1.5)
-    if k_true is not None:
-        ax_right.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
+    if t1 is not None:
+        ax_right.axhline(t1, color="red", linestyle="--", linewidth=1.5)
     ax_right.set_xlabel("Density")
     ax_right.grid(True, alpha=0.3)
     ax_right.tick_params(labelleft=False)
 
-    # Hide unused corner
     fig.add_subplot(gs[0, 1]).set_visible(False)
 
     plt.close()
@@ -175,14 +167,9 @@ def plot_jpdf_snapshot(
 
 
 def plot_jpdf_prior(
-    CR_grid: NDArray,
-    CR_prior: NDArray,
-    k_grid: NDArray,
-    k_prior: NDArray,
-    prior=NDArray,
-    loglikes=NDArray,
-    CR_true: float = None,
-    k_true: float = None,
+    var_names: List[str],
+    state: Dict[str, Any],
+    true_values: Dict[str, float] = None,
 ) -> plt.Figure:
     """Corner plot of the grid-based prior JPDF (before any observations).
 
@@ -190,15 +177,24 @@ def plot_jpdf_prior(
     and 95% HDR contour. Top/right panels: marginal prior PDFs.
 
     Args:
-        CR_grid, CR_prior: CR grid and prior marginal PDF.
-        k_grid, k_prior: k grid and prior marginal PDF.
-        prior: 2D joint prior array (n_CR, n_k).
-        loglikes: 2D log-likelihood array (n_CR, n_k).
-        CR_true, k_true: True parameter values for reference markers.
+        var_names: List of two variable names [axis_0, axis_1].
+        state: JPDF state dict with keys "{name}_grid", "{name}_prior",
+            "prior", "loglikes".
+        true_values: Dict mapping variable name to true value.
 
     Returns:
         Matplotlib Figure.
     """
+    true_values = true_values or {}
+    v0, v1 = var_names[0], var_names[1]
+    g0 = np.array(state[f"{v0}_grid"])
+    g1 = np.array(state[f"{v1}_grid"])
+    p0 = np.array(state[f"{v0}_prior"])
+    p1 = np.array(state[f"{v1}_prior"])
+    prior = np.array(state["prior"])
+    loglikes = np.array(state["loglikes"])
+    t0 = true_values.get(v0)
+    t1 = true_values.get(v1)
 
     fig = plt.figure(figsize=(8, 8))
     fig.suptitle("JPDF Prior", fontsize=13, fontweight="bold")
@@ -215,49 +211,42 @@ def plot_jpdf_prior(
     ax_top = fig.add_subplot(gs[0, 0], sharex=ax_main)
     ax_right = fig.add_subplot(gs[1, 1], sharey=ax_main)
 
-    # Bivariate contour (prior)
-    CR_mesh, k_mesh = np.meshgrid(CR_grid, k_grid, indexing="ij")
-    ax_main.contourf(CR_mesh, k_mesh, prior, levels=20, cmap="viridis")
-    ax_main.contour(CR_mesh, k_mesh, loglikes, levels=5, colors="magenta", linewidths=0.8, linestyles="--", alpha=0.6)
-    # 95% HDR contour for prior
-    level_95 = _hdr_level(prior, CR_grid, k_grid, alpha=0.95)
-    ax_main.contour(CR_mesh, k_mesh, prior, levels=[level_95], colors="yellow", linewidths=2, linestyles="-")
-    # Legend
+    mesh0, mesh1 = np.meshgrid(g0, g1, indexing="ij")
+    ax_main.contourf(mesh0, mesh1, prior, levels=20, cmap="viridis")
+    ax_main.contour(mesh0, mesh1, loglikes, levels=5, colors="magenta", linewidths=0.8, linestyles="--", alpha=0.6)
+    level_95 = _hdr_level(prior, g0, g1, alpha=0.95)
+    ax_main.contour(mesh0, mesh1, prior, levels=[level_95], colors="yellow", linewidths=2, linestyles="-")
     from matplotlib.lines import Line2D
     legend_handles = [
         Line2D([], [], color="yellow", linewidth=2, linestyle="-", label="95% HDR"),
         Line2D([], [], color="white", linewidth=0.8, linestyle="--", label="Prior"),
         Line2D([], [], color="magenta", linewidth=0.8, linestyle="--", label="Log-likelihood"),
     ]
-    if CR_true is not None:
-        ax_main.axvline(CR_true, color="red", linestyle="--", linewidth=1.5)
-    if k_true is not None:
-        ax_main.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
-    if CR_true is not None and k_true is not None:
-        ax_main.plot(CR_true, k_true, "rx", markersize=15, markeredgewidth=2.5, zorder=5)
+    if t0 is not None:
+        ax_main.axvline(t0, color="red", linestyle="--", linewidth=1.5)
+    if t1 is not None:
+        ax_main.axhline(t1, color="red", linestyle="--", linewidth=1.5)
+    if t0 is not None and t1 is not None:
+        ax_main.plot(t0, t1, "rx", markersize=15, markeredgewidth=2.5, zorder=5)
         legend_handles.append(Line2D([], [], color="red", marker="x", linestyle="--", linewidth=1.5, markersize=10, label="True"))
     ax_main.legend(handles=legend_handles, loc="upper right", fontsize=8, facecolor="black", framealpha=0.4, labelcolor="white")
-    ax_main.set_xlabel("CR [-]")
-    ax_main.set_ylabel("k [m/s]")
-    ax_main.set_xlim([0.025, 0.230])
-    ax_main.set_ylim([0, 8e-9])
+    ax_main.set_xlabel(v0)
+    ax_main.set_ylabel(v1)
     ax_main.grid(True, alpha=0.3)
 
-    # CR marginal (top)
-    ax_top.fill_between(CR_grid, CR_prior, alpha=0.3, color="b", label="Prior")
-    ax_top.plot(CR_grid, CR_prior, "b-", linewidth=1.5)
-    if CR_true is not None:
-        ax_top.axvline(CR_true, color="red", linestyle="--", linewidth=1.5, label="True")
+    ax_top.fill_between(g0, p0, alpha=0.3, color="b", label="Prior")
+    ax_top.plot(g0, p0, "b-", linewidth=1.5)
+    if t0 is not None:
+        ax_top.axvline(t0, color="red", linestyle="--", linewidth=1.5, label="True")
     ax_top.set_ylabel("Density")
     ax_top.legend(fontsize=8)
     ax_top.grid(True, alpha=0.3)
     ax_top.tick_params(labelbottom=False)
 
-    # k marginal (right)
-    ax_right.fill_betweenx(k_grid, k_prior, alpha=0.3, color="b")
-    ax_right.plot(k_prior, k_grid, "b-", linewidth=1.5)
-    if k_true is not None:
-        ax_right.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
+    ax_right.fill_betweenx(g1, p1, alpha=0.3, color="b")
+    ax_right.plot(p1, g1, "b-", linewidth=1.5)
+    if t1 is not None:
+        ax_right.axhline(t1, color="red", linestyle="--", linewidth=1.5)
     ax_right.set_xlabel("Density")
     ax_right.grid(True, alpha=0.3)
     ax_right.tick_params(labelleft=False)
@@ -272,8 +261,8 @@ def plot_jpdf_prior(
 def save_jpdf_plots(
     results: Dict[float, Dict[str, Any]],
     output_dir: Path,
-    CR_true: float = None,
-    k_true: float = None,
+    var_names: List[str] = None,
+    true_values: Dict[str, float] = None,
 ) -> None:
     """Save JPDF corner plots: one prior-only plot + one per observation time.
 
@@ -282,7 +271,8 @@ def save_jpdf_plots(
     Args:
         results: Pipeline results dict (keyed by observation time).
         output_dir: Directory for output files.
-        CR_true, k_true: True parameter values for reference markers.
+        var_names: List of variable names.
+        true_values: Dict mapping variable name to true value.
     """
 
     png_dir = output_dir / "pdfs"
@@ -291,36 +281,21 @@ def save_jpdf_plots(
     pdf_path = output_dir / "jpdf.pdf"
 
     with PdfPages(pdf_path) as pdf:
-        # Prior-only plot (use first time step's state for grid/prior)
         first_state = next(iter(results.values()))["jpdf_state"]
         fig_prior = plot_jpdf_prior(
-            CR_grid=np.array(first_state["CR_grid"]),
-            CR_prior=np.array(first_state["CR_prior"]),
-            k_grid=np.array(first_state["k_grid"]),
-            k_prior=np.array(first_state["k_prior"]),
-            prior=np.array(first_state["prior"]),
-            loglikes=np.array(first_state["loglikes"]),
-            CR_true=CR_true,
-            k_true=k_true,
+            var_names=var_names,
+            state=first_state,
+            true_values=true_values,
         )
         fig_prior.savefig(png_dir / "jpdf_prior.png", dpi=150, bbox_inches="tight")
         pdf.savefig(fig_prior)
 
         for t, data in results.items():
-            state = data["jpdf_state"]
             fig = plot_jpdf_snapshot(
                 time=t,
-                CR_grid=np.array(state["CR_grid"]),
-                CR_prior=np.array(state["CR_prior"]),
-                CR_posterior=np.array(state["CR_posterior"]),
-                k_grid=np.array(state["k_grid"]),
-                k_prior=np.array(state["k_prior"]),
-                k_posterior=np.array(state["k_posterior"]),
-                prior=np.array(state["prior"]),
-                loglikes=np.array(state["loglikes"]),
-                posterior=np.array(state["posterior"]),
-                CR_true=CR_true,
-                k_true=k_true,
+                var_names=var_names,
+                state=data["jpdf_state"],
+                true_values=true_values,
             )
             fig.savefig(png_dir / f"jpdf_t{t:.0f}.png", dpi=150, bbox_inches="tight")
             pdf.savefig(fig)
@@ -484,13 +459,13 @@ def save_settlement_forecast_plots(
             post = data["posterior"]
             fig = plot_settlement_forecast(
                 time=t,
-                forecast_times=list(post["settlement_posterior_grid"].keys()),
-                settlement_grids=post["settlement_posterior_grid"],
-                settlement_pdfs=post["settlement_forecast"],
-                prior_grids=prior["settlement_prior_grid"],
-                prior_pdfs=prior["settlement_forecast"],
+                forecast_times=list(post["output_grid"].keys()),
+                settlement_grids=post["output_grid"],
+                settlement_pdfs=post["output_pdf"],
+                prior_grids=prior["output_grid"],
+                prior_pdfs=prior["output_pdf"],
                 obs_times=np.array(data["obs_times"]),
-                obs_values=np.array(data["settlement_obs"]),
+                obs_values=np.array(data["obs_values"]),
                 obs_error=obs_error,
                 t_max=t_max,
                 y_max=y_max,
@@ -591,14 +566,14 @@ def save_settlement_residual_plots(
     # Compute global y-max across all times (after smoothing)
     y_max = 0
     for data in results.values():
-        diff = data["settlement_residual"]
+        diff = data["residual"]
         for key in ["prior_pdf", "posterior_pdf"]:
             smoothed = gaussian_filter1d(np.array(diff[key]), sigma=3)
             y_max = max(y_max, smoothed.max())
 
     with PdfPages(pdf_path) as pdf:
         for t, data in results.items():
-            diff = data["settlement_residual"]
+            diff = data["residual"]
             fig = plot_settlement_residual(
                 time=t,
                 prior_grid=np.array(diff["prior_grid"]),
@@ -682,12 +657,11 @@ def save_beta_over_time_plot(
 
 def plot_jpdf_snapshot_samples(
     time: float,
-    CR_samples: NDArray,
-    k_samples: NDArray,
+    var_names: List[str],
+    samples: Dict[str, NDArray],
     W_prior: NDArray,
     W_posterior: NDArray,
-    CR_true: float = None,
-    k_true: float = None,
+    true_values: Dict[str, float] = None,
     n_bins: int = 60,
 ) -> plt.Figure:
     """Corner plot for sample-based JPDF using weighted histograms.
@@ -697,17 +671,21 @@ def plot_jpdf_snapshot_samples(
 
     Args:
         time: Current observation time [days].
-        CR_samples: 1D array of CR sample values.
-        k_samples: 1D array of k sample values.
+        var_names: List of two variable names [axis_0, axis_1].
+        samples: Dict mapping variable name to 1D sample array.
         W_prior: Normalized prior importance weights.
         W_posterior: Normalized posterior importance weights.
-        CR_true, k_true: True parameter values for reference markers.
+        true_values: Dict mapping variable name to true value.
         n_bins: Number of histogram bins per axis.
 
     Returns:
         Matplotlib Figure.
     """
     from matplotlib.lines import Line2D
+    true_values = true_values or {}
+    v0, v1 = var_names[0], var_names[1]
+    s0, s1 = samples[v0], samples[v1]
+    t0, t1 = true_values.get(v0), true_values.get(v1)
 
     fig = plt.figure(figsize=(8, 8))
     fig.suptitle(f"JPDF samples at t = {time:.0f} days", fontsize=13, fontweight="bold")
@@ -724,47 +702,42 @@ def plot_jpdf_snapshot_samples(
     ax_top = fig.add_subplot(gs[0, 0], sharex=ax_main)
     ax_right = fig.add_subplot(gs[1, 1], sharey=ax_main)
 
-    # 2D weighted histogram (posterior)
-    ax_main.hist2d(CR_samples, k_samples, bins=n_bins, weights=W_posterior,
+    ax_main.hist2d(s0, s1, bins=n_bins, weights=W_posterior,
                    cmap="viridis", cmin=1e-30)
 
     legend_handles = []
-    if CR_true is not None:
-        ax_main.axvline(CR_true, color="red", linestyle="--", linewidth=1.5)
-    if k_true is not None:
-        ax_main.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
-    if CR_true is not None and k_true is not None:
-        ax_main.plot(CR_true, k_true, "rx", markersize=15, markeredgewidth=2.5, zorder=5)
+    if t0 is not None:
+        ax_main.axvline(t0, color="red", linestyle="--", linewidth=1.5)
+    if t1 is not None:
+        ax_main.axhline(t1, color="red", linestyle="--", linewidth=1.5)
+    if t0 is not None and t1 is not None:
+        ax_main.plot(t0, t1, "rx", markersize=15, markeredgewidth=2.5, zorder=5)
         legend_handles.append(Line2D([], [], color="red", marker="x", linestyle="--",
                                      linewidth=1.5, markersize=10, label="True"))
     if legend_handles:
         ax_main.legend(handles=legend_handles, loc="upper right", fontsize=8,
                        facecolor="black", framealpha=0.4, labelcolor="white")
-    ax_main.set_xlabel("CR [-]")
-    ax_main.set_ylabel("k [m/s]")
-    ax_main.set_xlim([0.025, 0.230])
-    ax_main.set_ylim([0, 8e-9])
+    ax_main.set_xlabel(v0)
+    ax_main.set_ylabel(v1)
     ax_main.grid(True, alpha=0.3)
 
-    # CR marginal (top)
-    ax_top.hist(CR_samples, bins=n_bins, weights=W_prior, density=True,
+    ax_top.hist(s0, bins=n_bins, weights=W_prior, density=True,
                 alpha=0.3, color="b", label="Prior")
-    ax_top.hist(CR_samples, bins=n_bins, weights=W_posterior, density=True,
+    ax_top.hist(s0, bins=n_bins, weights=W_posterior, density=True,
                 alpha=0.3, color="r", label="Posterior")
-    if CR_true is not None:
-        ax_top.axvline(CR_true, color="red", linestyle="--", linewidth=1.5)
+    if t0 is not None:
+        ax_top.axvline(t0, color="red", linestyle="--", linewidth=1.5)
     ax_top.set_ylabel("Density")
     ax_top.legend(fontsize=8)
     ax_top.grid(True, alpha=0.3)
     ax_top.tick_params(labelbottom=False)
 
-    # k marginal (right)
-    ax_right.hist(k_samples, bins=n_bins, weights=W_prior, density=True,
+    ax_right.hist(s1, bins=n_bins, weights=W_prior, density=True,
                   alpha=0.3, color="b", orientation="horizontal")
-    ax_right.hist(k_samples, bins=n_bins, weights=W_posterior, density=True,
+    ax_right.hist(s1, bins=n_bins, weights=W_posterior, density=True,
                   alpha=0.3, color="r", orientation="horizontal")
-    if k_true is not None:
-        ax_right.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
+    if t1 is not None:
+        ax_right.axhline(t1, color="red", linestyle="--", linewidth=1.5)
     ax_right.set_xlabel("Density")
     ax_right.grid(True, alpha=0.3)
     ax_right.tick_params(labelleft=False)
@@ -776,26 +749,29 @@ def plot_jpdf_snapshot_samples(
 
 
 def plot_jpdf_prior_samples(
-    CR_samples: NDArray,
-    k_samples: NDArray,
+    var_names: List[str],
+    samples: Dict[str, NDArray],
     W_prior: NDArray,
-    CR_true: float = None,
-    k_true: float = None,
+    true_values: Dict[str, float] = None,
     n_bins: int = 60,
 ) -> plt.Figure:
     """Corner plot for the sample-based prior JPDF.
 
     Args:
-        CR_samples: 1D array of CR sample values.
-        k_samples: 1D array of k sample values.
+        var_names: List of two variable names [axis_0, axis_1].
+        samples: Dict mapping variable name to 1D sample array.
         W_prior: Normalized prior importance weights.
-        CR_true, k_true: True parameter values.
+        true_values: Dict mapping variable name to true value.
         n_bins: Number of histogram bins per axis.
 
     Returns:
         Matplotlib Figure.
     """
     from matplotlib.lines import Line2D
+    true_values = true_values or {}
+    v0, v1 = var_names[0], var_names[1]
+    s0, s1 = samples[v0], samples[v1]
+    t0, t1 = true_values.get(v0), true_values.get(v1)
 
     fig = plt.figure(figsize=(8, 8))
     fig.suptitle("JPDF Prior (samples)", fontsize=13, fontweight="bold")
@@ -812,40 +788,38 @@ def plot_jpdf_prior_samples(
     ax_top = fig.add_subplot(gs[0, 0], sharex=ax_main)
     ax_right = fig.add_subplot(gs[1, 1], sharey=ax_main)
 
-    ax_main.hist2d(CR_samples, k_samples, bins=n_bins, weights=W_prior,
+    ax_main.hist2d(s0, s1, bins=n_bins, weights=W_prior,
                    cmap="viridis", cmin=1e-30)
 
     legend_handles = []
-    if CR_true is not None:
-        ax_main.axvline(CR_true, color="red", linestyle="--", linewidth=1.5)
-    if k_true is not None:
-        ax_main.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
-    if CR_true is not None and k_true is not None:
-        ax_main.plot(CR_true, k_true, "rx", markersize=15, markeredgewidth=2.5, zorder=5)
+    if t0 is not None:
+        ax_main.axvline(t0, color="red", linestyle="--", linewidth=1.5)
+    if t1 is not None:
+        ax_main.axhline(t1, color="red", linestyle="--", linewidth=1.5)
+    if t0 is not None and t1 is not None:
+        ax_main.plot(t0, t1, "rx", markersize=15, markeredgewidth=2.5, zorder=5)
         legend_handles.append(Line2D([], [], color="red", marker="x", linestyle="--",
                                      linewidth=1.5, markersize=10, label="True"))
     if legend_handles:
         ax_main.legend(handles=legend_handles, loc="upper right", fontsize=8,
                        facecolor="black", framealpha=0.4, labelcolor="white")
-    ax_main.set_xlabel("CR [-]")
-    ax_main.set_ylabel("k [m/s]")
-    ax_main.set_xlim([0.025, 0.230])
-    ax_main.set_ylim([0, 8e-9])
+    ax_main.set_xlabel(v0)
+    ax_main.set_ylabel(v1)
     ax_main.grid(True, alpha=0.3)
 
-    ax_top.hist(CR_samples, bins=n_bins, weights=W_prior, density=True,
+    ax_top.hist(s0, bins=n_bins, weights=W_prior, density=True,
                 alpha=0.3, color="b", label="Prior")
-    if CR_true is not None:
-        ax_top.axvline(CR_true, color="red", linestyle="--", linewidth=1.5)
+    if t0 is not None:
+        ax_top.axvline(t0, color="red", linestyle="--", linewidth=1.5)
     ax_top.set_ylabel("Density")
     ax_top.legend(fontsize=8)
     ax_top.grid(True, alpha=0.3)
     ax_top.tick_params(labelbottom=False)
 
-    ax_right.hist(k_samples, bins=n_bins, weights=W_prior, density=True,
+    ax_right.hist(s1, bins=n_bins, weights=W_prior, density=True,
                   alpha=0.3, color="b", orientation="horizontal")
-    if k_true is not None:
-        ax_right.axhline(k_true, color="red", linestyle="--", linewidth=1.5)
+    if t1 is not None:
+        ax_right.axhline(t1, color="red", linestyle="--", linewidth=1.5)
     ax_right.set_xlabel("Density")
     ax_right.grid(True, alpha=0.3)
     ax_right.tick_params(labelleft=False)
@@ -859,22 +833,22 @@ def plot_jpdf_prior_samples(
 def save_jpdf_plots_samples(
     results: Dict[float, Dict[str, Any]],
     output_dir: Path,
-    CR_samples: NDArray,
-    k_samples: NDArray,
+    var_names: List[str],
+    samples: Dict[str, NDArray],
     W_prior: NDArray,
     W_posterior_per_t: Dict[float, NDArray],
-    CR_true: float = None,
-    k_true: float = None,
+    true_values: Dict[str, float] = None,
 ) -> None:
     """Save sample-based JPDF corner plots: prior + one per observation time.
 
     Args:
         results: Pipeline results dict.
         output_dir: Directory for output files.
-        CR_samples, k_samples: 1D sample arrays.
+        var_names: List of variable names.
+        samples: Dict mapping variable name to 1D sample array.
         W_prior: Normalized prior weights.
         W_posterior_per_t: Dict mapping obs time to posterior weights.
-        CR_true, k_true: True parameter values.
+        true_values: Dict mapping variable name to true value.
     """
     png_dir = output_dir / "pdfs"
     png_dir.mkdir(parents=True, exist_ok=True)
@@ -883,8 +857,8 @@ def save_jpdf_plots_samples(
 
     with PdfPages(pdf_path) as pdf:
         fig_prior = plot_jpdf_prior_samples(
-            CR_samples=CR_samples, k_samples=k_samples,
-            W_prior=W_prior, CR_true=CR_true, k_true=k_true,
+            var_names=var_names, samples=samples,
+            W_prior=W_prior, true_values=true_values,
         )
         fig_prior.savefig(png_dir / "jpdf_prior.png", dpi=150, bbox_inches="tight")
         pdf.savefig(fig_prior)
@@ -892,9 +866,9 @@ def save_jpdf_plots_samples(
         for t in results:
             W_post = W_posterior_per_t[t]
             fig = plot_jpdf_snapshot_samples(
-                time=t, CR_samples=CR_samples, k_samples=k_samples,
+                time=t, var_names=var_names, samples=samples,
                 W_prior=W_prior, W_posterior=W_post,
-                CR_true=CR_true, k_true=k_true,
+                true_values=true_values,
             )
             fig.savefig(png_dir / f"jpdf_t{t:.0f}.png", dpi=150, bbox_inches="tight")
             pdf.savefig(fig)

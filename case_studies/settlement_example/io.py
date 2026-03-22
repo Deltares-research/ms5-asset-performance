@@ -1,7 +1,7 @@
 """
 I/O utilities for the D-Sheet piling case study.
 
-Reads/writes data from a remote folder specified in settlement_example.env.
+Reads/writes data from a remote folder specified in .env.
 """
 
 import json
@@ -25,12 +25,12 @@ def get_remote_path() -> Path:
     Raises:
         ValueError: If REMOTE_DATA_PATH not set in environment.
     """
-    env_path = Path(__file__).parent / "settlement_example.env"
+    env_path = Path(__file__).parent / ".env"
     load_dotenv(env_path)
 
     remote_path = os.environ.get("REMOTE_PATH")
     if remote_path is None:
-        raise ValueError("REMOTE_DATA_PATH not set in settlement_example.env")
+        raise ValueError("REMOTE_PATH not set in .env")
 
     return Path(remote_path)
 

@@ -9,10 +9,10 @@ import random
 
 if __name__ == "__main__":
 
-    load_dotenv("settlement_example.env")
+    load_dotenv(".env")
     os.environ["REMOTE_DATA_PATH"] = os.environ["REMOTE_PATH"] + r"/input"
-    specs_path = Path(os.environ["REMOTE_DATA_PATH"]) / "case_study_specifications_1loc.json"
-    setting_path = Path(os.environ["REMOTE_DATA_PATH"]) / "case_study_setting.json"
+    specs_path = Path(os.environ["REMOTE_DATA_PATH"]) / "settings_1loc.json"
+    setting_path = Path(os.environ["REMOTE_DATA_PATH"]) / "data.json"
 
     with open(specs_path, "r") as f:
         specs = json.load(f)

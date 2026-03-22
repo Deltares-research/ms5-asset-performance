@@ -13,10 +13,10 @@ from performance_function import Performance
 
 # initiate prior JPDF
 jpdf = JPDF()
-jpdf.set_prior_by_input_file(r"case_study_specifications.json")
+jpdf.set_prior_by_input_file(r"settings.json")
 jpdf.initiate_samples(N = 1_000_000)
 
-input = json.load(open('case_study_specifications.json','r'))
+input = json.load(open('settings.json','r'))
 
 performance = Performance(name = 'analytical example',parameters = input["parameters"])
 

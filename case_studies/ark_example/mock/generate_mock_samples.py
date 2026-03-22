@@ -122,7 +122,7 @@ def main():
     surrogate_dir.mkdir(parents=True, exist_ok=True)
 
     # Load parameter distributions
-    with open(data_dir / "case_study_specifications.json", "r") as f:
+    with open(data_dir / "settings.json", "r") as f:
         specs = json.load(f)
 
     variables = specs["variables"]

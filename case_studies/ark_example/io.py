@@ -290,7 +290,7 @@ def load_case_study_setting() -> Dict[str, Any]:
     Returns:
         Dictionary keyed by time with corrosion, moments, and other data.
     """
-    return load_json("case_study_setting.json")
+    return load_json("data.json")
 
 
 def save_case_study_setting(setting: Dict[str, Any]) -> None:
@@ -300,7 +300,7 @@ def save_case_study_setting(setting: Dict[str, Any]) -> None:
     Args:
         setting: Dictionary with time-series case study data.
     """
-    save_json(setting, "case_study_setting.json")
+    save_json(setting, "data.json")
 
 
 # -----------------------------------------------------------------------------

@@ -283,7 +283,7 @@ if __name__ == "__main__":
     jpdf = JPDF(name="test", config=config)
 
     # Load from mock specs
-    specs_path = Path(__file__).parent / "mock/data/case_study_specifications.json"
+    specs_path = Path(__file__).parent / "mock/data/settings.json"
     if specs_path.exists():
         jpdf.set_prior_from_specs(specs_path)
         print(f"Loaded {jpdf.nvar} variables: {jpdf.variable_names}")

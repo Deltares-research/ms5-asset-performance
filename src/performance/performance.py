@@ -39,6 +39,43 @@ class BasePerformance(ABC):
             x = [x]
         return self._grad(x, t)
 
+    def failure_probability(
+            self,
+            x: ArrayLike,
+            pdf: NDArray = None,
+            grids: list = None,
+            weights: NDArray = None,
+    ) -> float:
+        """Compute failure probability from the limit-state function.
+
+        Two modes controlled by which arguments are provided:
+
+        Grid-based (pdf, grids): integrates indicator x pdf over the N-D
+        parameter grid using the trapezoidal rule.
+
+        Sample-based (weights): computes Pf = sum(weights * indicator) where
+        weights are normalized importance sampling weights.
+
+        Args:
+            x: Model output array. Shape matching the grid for grid-based,
+                or (n_samples,) for sample-based.
+            pdf: Joint PDF array matching the grid shape. Grid-based only.
+            grids: List of 1D grid arrays, one per variable. Grid-based only.
+            weights: Normalized IS weights of shape (n_samples,). Sample-based only.
+
+        Returns:
+            Scalar failure probability.
+        """
+        if weights is not None:
+            indicator = self.lsf(x)
+            return float(np.sum(weights * indicator))
+        else:
+            indicator = self.lsf(x)
+            integrand = indicator * pdf
+            for i in reversed(range(len(grids))):
+                integrand = np.trapezoid(integrand, grids[i], axis=i)
+            return float(integrand)
+
     @abstractmethod
     def _lsf(self, x: ArrayLike, t: int | float) -> float | FloatArray:
         pass
