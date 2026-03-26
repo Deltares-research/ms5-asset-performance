@@ -55,7 +55,7 @@ class CaseStudyConfig:
     # TODO: separation between parameters
     # TODO: replace with simple dict
 
-    # TODO: Remove log-sum-exp trick? --> No
+    # TODO: Remove log-sum-exp trick? --> Keep
     # TODO: Update grid with volume was weights
     # TODO: Rename input files
 

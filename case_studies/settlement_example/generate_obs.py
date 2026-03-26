@@ -11,7 +11,7 @@ if __name__ == "__main__":
 
     load_dotenv(".env")
     os.environ["REMOTE_DATA_PATH"] = os.environ["REMOTE_PATH"] + r"/input"
-    specs_path = Path(os.environ["REMOTE_DATA_PATH"]) / "settings_1loc.json"
+    specs_path = Path(os.environ["REMOTE_DATA_PATH"]) / "settings.json"
     setting_path = Path(os.environ["REMOTE_DATA_PATH"]) / "data.json"
 
     with open(specs_path, "r") as f:

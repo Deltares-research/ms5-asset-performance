@@ -573,7 +573,7 @@ class ReliabilityPipeline:
         for t, data in self.results.items():
             results_json[str(t)] = data
 
-        load_dotenv("ark_example.env")
+        load_dotenv(".env")
         username = os.environ.get("USER", "unknown").lower()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
         output_folder = f"{username}_{timestamp}/{filename}"
@@ -692,7 +692,7 @@ class ReliabilityPipeline:
             return
 
         if output_dir is None:
-            load_dotenv("ark_example.env")
+            load_dotenv(".env")
             username = os.environ.get("USER", "unknown").lower()
             timestamp = datetime.now().strftime("%Y%m%d_%H%M")
             output_dir = io.get_remote_path() / f"output/results/{username}_{timestamp}/plots"
@@ -743,7 +743,7 @@ class ReliabilityPipeline:
             return
 
         if output_dir is None:
-            load_dotenv("ark_example.env")
+            load_dotenv(".env")
             username = os.environ.get("USER", "unknown").lower()
             timestamp = datetime.now().strftime("%Y%m%d_%H%M")
             output_dir = io.get_remote_path() / f"output/results/{username}_{timestamp}/plots"
@@ -826,7 +826,7 @@ class ReliabilityPipeline:
             return
 
         if output_dir is None:
-            load_dotenv("ark_example.env")
+            load_dotenv(".env")
             username = os.environ.get("USER", "unknown").lower()
             timestamp = datetime.now().strftime("%Y%m%d_%H%M")
             output_dir = io.get_remote_path() / f"output/results/{username}_{timestamp}/plots"
@@ -904,7 +904,7 @@ class ReliabilityPipeline:
             return
 
         if output_dir is None:
-            load_dotenv("ark_example.env")
+            load_dotenv(".env")
             username = os.environ.get("USER", "unknown").lower()
             timestamp = datetime.now().strftime("%Y%m%d_%H%M")
             output_dir = io.get_remote_path() / f"output/results/{username}_{timestamp}/plots"
@@ -926,7 +926,7 @@ class ReliabilityPipeline:
 
 def main():
     # Paths
-    load_dotenv("ark_example.env")
+    load_dotenv(".env")
     os.environ["REMOTE_DATA_PATH"] = os.environ["REMOTE_PATH"] + r"/input"
     specs_path = Path(os.environ["REMOTE_DATA_PATH"]) / "settings.json"
 

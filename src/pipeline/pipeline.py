@@ -89,9 +89,7 @@ class ReliabilityPipeline:
         self.jpdf.set_prior_from_specs(self.specs_path)
 
         if self.is_sample_based:
-            self.jpdf.init_prior_samples(
-                n_samples=self.n_samples, covar_IS=2.0, seed=seed
-            )
+            self.jpdf.init_prior_samples(n_samples=self.n_samples, covar_IS=2.0, seed=seed)
 
     # ------------------------------------------------------------------
     # Step 2: Model evaluation
@@ -109,9 +107,7 @@ class ReliabilityPipeline:
             forecast_times: 1D array of forecast evaluation times.
         """
         self.obs_times = obs_times
-        self.forecast_times = np.sort(np.unique(
-            np.concatenate([forecast_times, obs_times])
-        ))
+        self.forecast_times = np.sort(np.unique(np.concatenate([forecast_times, obs_times])))
 
     def init_model_output(
         self,
@@ -138,11 +134,7 @@ class ReliabilityPipeline:
         cache_obs = cache_dir / "output_obs.npy" if cache_dir else None
         cache_fcast = cache_dir / "output_forecast.npy" if cache_dir else None
 
-        if (
-            not force_rebuild
-            and cache_obs and cache_obs.exists()
-            and cache_fcast and cache_fcast.exists()
-        ):
+        if not force_rebuild and cache_obs and cache_obs.exists() and cache_fcast and cache_fcast.exists():
             output_obs = np.load(cache_obs)
             output_forecast = np.load(cache_fcast)
 
