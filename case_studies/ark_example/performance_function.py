@@ -21,7 +21,7 @@ import torch.nn as nn
 from numpy.typing import NDArray
 from scipy import stats
 
-from src.performance import BasePerformance
+from src import BasePerformance
 
 
 class FragilitySurfaceIndex:
