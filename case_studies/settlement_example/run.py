@@ -16,7 +16,6 @@ from argparse import ArgumentParser
 
 from src import ReliabilityPipeline
 from case_studies.settlement_example.io import load_json, get_remote_path
-from config import CaseStudyConfig
 from performance_function import Performance
 from settlement_engine import get_settlement
 from plotting import (save_jpdf_plots, save_jpdf_plots_samples,
@@ -49,24 +48,23 @@ def main(input_file: Optional[str] = None, analysis_method: Optional[str] = None
     output_dir = get_remote_path() / f"output/results/{username}_{timestamp}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load config
-    config = CaseStudyConfig.from_json(specs_path)
-    if analysis_method:
-        config.analysis_method = analysis_method
-
-    # Initialize performance function
+    # Load config from specs JSON
     with open(specs_path, "r") as f:
         specs = json.load(f)
-    params = specs.get("parameters", {})
-    performance = Performance(name="settlement", parameters=params)
+    config = specs.get("parameters", {})
+    if analysis_method:
+        config["analysis_method"] = analysis_method
+
+    # Initialize performance function
+    performance = Performance(name="settlement", parameters=config)
 
     # Initialize pipeline
     pipeline = ReliabilityPipeline(
         specs_path=specs_path,
         performance=performance,
-        analysis_method=config.analysis_method,
-        n_samples=config.n_samples,
-        obs_error=config.obs_error,
+        analysis_method=config.get("analysis_method", "semi-analytical"),
+        n_samples=config.get("n_samples", 100_000),
+        obs_error=config.get("obs_error", 0.1),
     )
 
     # =========================================================================
@@ -94,20 +92,20 @@ def main(input_file: Optional[str] = None, analysis_method: Optional[str] = None
     obs_values = np.array([float(v) for v in setting.values()])
 
     # Build forecast times
-    preload_removal_time = config.preload_removal_time
-    forecast_times = np.arange(0, preload_removal_time, config.forecast_interval)
-    forecast_times = np.append(forecast_times, [preload_removal_time, config.end_time])
+    preload_removal_time = config["preload_removal_time"]
+    forecast_times = np.arange(0, preload_removal_time, config.get("forecast_interval", 10))
+    forecast_times = np.append(forecast_times, [preload_removal_time, config["end_time"]])
     pipeline.init_times(obs_times=obs_times, forecast_times=forecast_times)
 
     # Settlement engine kwargs (domain-specific parameters)
     model_kwargs = dict(
-        RR=config.RR,
-        Ca=config.Ca,
-        h=config.layer_thickness,
-        sigma_0=config.sigma_0,
-        sigma_v=config.sigma_0 + config.preload,
-        sigma_p=config.sigma_p,
-        method=config.doc_method,
+        RR=config["RR"],
+        Ca=config["Ca"],
+        h=config["layer_thickness"],
+        sigma_0=config["sigma_0"],
+        sigma_v=config["sigma_0"] + config["preload"],
+        sigma_p=config["sigma_p"],
+        method=config.get("doc_method", "Terzaghi"),
     )
 
     cache_dir = get_remote_path() / "output/cache"
@@ -156,14 +154,14 @@ def main(input_file: Optional[str] = None, analysis_method: Optional[str] = None
     save_settlement_forecast_plots(
         results=results,
         output_dir=output_dir,
-        t_max=config.preload_removal_time + 5,
-        obs_error=config.obs_error,
+        t_max=preload_removal_time + 5,
+        obs_error=config.get("obs_error", 0.1),
         y_max=obs_values.max(),
     )
     save_settlement_residual_plots(
         results=results,
         output_dir=output_dir,
-        end_settlement_req=config.end_settlement_req,
+        end_settlement_req=config.get("end_settlement_req", 0.05),
     )
     save_beta_over_time_plot(results=results, output_dir=output_dir)
     make_gifs(output_dir)

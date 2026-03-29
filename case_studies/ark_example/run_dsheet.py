@@ -7,7 +7,6 @@ import json
 from typing import Dict, List
 from datetime import datetime
 
-from case_studies.ark_example.config import CaseStudyConfig
 from case_studies.ark_example.jpdf import JPDF
 from src.reliability_models.dsheetpiling.lsf import *
 
@@ -48,7 +47,9 @@ def main(n_samples: int, moment_capacity: float) -> None:
     output_folder.mkdir(exist_ok=True, parents=True)
     output_file = output_folder / f"{username}_{timestamp}.jsonl"
 
-    config = CaseStudyConfig.from_json(specs_path)
+    with open(specs_path, "r") as f:
+        specs = json.load(f)
+    config = specs.get("parameters", {})
     jpdf = JPDF(name="dsheet", config=config)
     jpdf.set_prior_from_specs(specs_path)
     jpdf.initiate_samples(n_samples, seed=42)
