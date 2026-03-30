@@ -16,7 +16,6 @@ import scipy.stats as st
 from numpy.typing import NDArray
 
 from src import JPDF as BaseJPDF
-from case_studies.ark_example.config import CaseStudyConfig
 
 
 class JPDF(BaseJPDF):
@@ -27,9 +26,9 @@ class JPDF(BaseJPDF):
     per-timestep result storage.
     """
 
-    def __init__(self, name: str = "", config: Optional[CaseStudyConfig] = None):
+    def __init__(self, name: str = "", config: Optional[Dict[str, Any]] = None):
         super().__init__(name=name)
-        self.config = config or CaseStudyConfig()
+        self.config = config or {}
 
         # Correlated sampling
         self.U_samples: Optional[NDArray] = None
@@ -105,7 +104,7 @@ class JPDF(BaseJPDF):
             C50_mu: Mean of C50.
             C50_std: Standard deviation of C50.
         """
-        n_grid = self.config.n_C50_grid
+        n_grid = self.config.get("n_C50_grid", 100)
         self.C50_grid = np.linspace(0.5, 2.5, n_grid)
 
         a_clip = (self.C50_grid.min() - C50_mu) / C50_std
@@ -134,9 +133,10 @@ class JPDF(BaseJPDF):
         if self.C50_pdf is None or self.C50_grid is None:
             raise ValueError("C50 not initialized. Call set_prior_from_specs first.")
 
-        C50_mu = self.config.C50_mu
-        corrosion_rate = self.config.corrosion_rate
-        obs_error_std = self.config.obs_error_std
+        C50_mu = self.config.get("C50_mu", 1.0)
+        corrosion_rate = self.config.get("corrosion_rate", 0.022)
+        obs_error_std = self.config.get("obs_error_std", 0.4)
+        t_ref = self.config.get("t_ref", 50.0)
 
         log_prior = np.log(self.C50_prior + 1e-10)
 
@@ -144,7 +144,7 @@ class JPDF(BaseJPDF):
         obs_times = np.asarray(obs_times)[np.newaxis, :]
         obs_values = np.asarray(obs_values)
 
-        corr_mu = C50_grid * (1 + corrosion_rate / C50_mu * (obs_times - self.config.t_ref))
+        corr_mu = C50_grid * (1 + corrosion_rate / C50_mu * (obs_times - t_ref))
         corr_deviations = (obs_values - corr_mu) / obs_error_std
         corr_deviations = np.concatenate(
             (corr_deviations[:, 0][:, np.newaxis], np.diff(corr_deviations, axis=1)),
@@ -161,11 +161,7 @@ class JPDF(BaseJPDF):
         self.C50_pdf = post.copy()
 
     def get_C50_stats(self) -> Dict[str, float]:
-        """Get statistics of current C50 distribution.
-
-        Returns:
-            Dict with mean, std, and quantiles.
-        """
+        """Get statistics of current C50 distribution."""
         if self.C50_pdf is None or self.C50_grid is None:
             return {}
 
@@ -185,15 +181,7 @@ class JPDF(BaseJPDF):
         }
 
     def initiate_samples(self, n_samples: int, seed: Optional[int] = None) -> None:
-        """Generate correlated MC samples via Nataf transform.
-
-        Samples in standard normal space with the correlation matrix, then
-        transforms to physical space via inverse CDF.
-
-        Args:
-            n_samples: Number of samples.
-            seed: Random seed.
-        """
+        """Generate correlated MC samples via Nataf transform."""
         if seed is not None:
             np.random.seed(seed)
 
@@ -213,66 +201,22 @@ class JPDF(BaseJPDF):
         self.Y_samples = {}
 
     def add_water_level(self, water_lvl: float = -1.0) -> None:
-        """Append deterministic water level column to X_samples.
-
-        Args:
-            water_lvl: Water level value [m].
-        """
+        """Append deterministic water level column to X_samples."""
         if self.X_samples is None:
             raise ValueError("Samples not initialized. Call initiate_samples first.")
-
         water_col = np.full((self.n_samples, 1), water_lvl)
         self.X_samples = np.hstack([self.X_samples, water_col])
         self.variable_names.append("water_lvl")
 
     def store_results(self, t: float, g: NDArray, metadata: Optional[Dict] = None) -> None:
-        """Store performance function results for a timestep.
-
-        Args:
-            t: Time [years].
-            g: Performance function values.
-            metadata: Additional metadata.
-        """
+        """Store performance function results for a timestep."""
         self.G_samples[t] = g
         self.Y_samples[t] = metadata or {}
 
     def get_samples_with_EI(self, EI_values: NDArray, ei_column_idx: int = -2) -> NDArray:
-        """Get X_samples with specified EI values (for degraded stiffness).
-
-        Args:
-            EI_values: EI values to use (n_samples,).
-            ei_column_idx: Index of EI column in samples.
-
-        Returns:
-            Modified X_samples with updated EI column.
-        """
+        """Get X_samples with specified EI values (for degraded stiffness)."""
         if self.X_samples is None:
             raise ValueError("Samples not initialized.")
-
         x = self.X_samples.copy()
         x[:, ei_column_idx] = EI_values
         return x
-
-
-if __name__ == "__main__":
-    config = CaseStudyConfig()
-    jpdf = JPDF(name="test", config=config)
-
-    specs_path = Path(__file__).parent / "mock/data/settings.json"
-    if specs_path.exists():
-        jpdf.set_prior_from_specs(specs_path)
-        print(f"Loaded {jpdf.nvar} variables: {jpdf.variable_names}")
-
-        jpdf.initiate_samples(n_samples=1000, seed=42)
-        jpdf.add_water_level(-1.0)
-        print(f"X_samples shape: {jpdf.X_samples.shape}")
-
-        stats = jpdf.get_C50_stats()
-        print(f"C50 prior: mean={stats['mean']:.3f}, std={stats['std']:.3f}")
-
-        obs_times = np.array([50.0, 55.0, 60.0])
-        obs_values = np.array([1.5, 1.8, 2.1])
-        jpdf.update_C50(obs_times, obs_values)
-
-        stats = jpdf.get_C50_stats()
-        print(f"C50 posterior: mean={stats['mean']:.3f}, std={stats['std']:.3f}")

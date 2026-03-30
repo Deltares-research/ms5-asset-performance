@@ -1,3 +1,13 @@
-from .pipeline import ReliabilityPipeline
+from .base import BasePipeline
+from .grid_model import GridModelPipeline
+from .fragility import FragilityPipeline
 
-__all__ = ["ReliabilityPipeline"]
+# Backward compatibility alias
+ReliabilityPipeline = GridModelPipeline
+
+__all__ = [
+    "BasePipeline",
+    "GridModelPipeline",
+    "FragilityPipeline",
+    "ReliabilityPipeline",
+]
