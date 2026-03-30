@@ -1,4 +1,3 @@
-import numpy as np
 from pathlib import Path
 from argparse import ArgumentParser
 from dotenv import load_dotenv
