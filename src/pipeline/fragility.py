@@ -33,11 +33,11 @@ class FragilityPipeline(BasePipeline):
 
     def __init__(
         self,
-        specs_path: Path | str,
+        settings_path: Path | str,
         performance,
         obs_error: float = 0.1,
     ) -> None:
-        super().__init__(specs_path, performance, obs_error)
+        super().__init__(settings_path, performance, obs_error)
 
         # Domain components (set externally by the case study)
         self.corrosion_model = None
@@ -48,18 +48,18 @@ class FragilityPipeline(BasePipeline):
     # ------------------------------------------------------------------
 
     def setup(self, seed: int = 42, **kwargs) -> None:
-        """Initialize JPDF from specs.
+        """Initialize JPDF from settings.
 
         The JPDF instance must be set on self.jpdf by the case study before
         calling setup(), since it requires a domain-specific subclass.
-        If self.jpdf is already set, this just loads the specs. Otherwise
+        If self.jpdf is already set, this just loads the settings. Otherwise
         it raises.
         """
         if self.jpdf is None:
             raise ValueError(
                 "Set self.jpdf to a domain-specific JPDF subclass before calling setup()."
             )
-        self.jpdf.set_prior_from_specs(self.specs_path)
+        self.jpdf.set_prior_from_settings(self.settings_path)
 
     def _reset_posterior(self) -> None:
         self.jpdf.reset_C50_to_prior()

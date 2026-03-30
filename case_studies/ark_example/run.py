@@ -38,7 +38,7 @@ class ReliabilityPipeline(FragilityPipeline):
     def __init__(
         self,
         config: Optional[Dict[str, Any]] = None,
-        specs_path: Optional[Path | str] = None,
+        settings_path: Optional[Path | str] = None,
     ):
         self.config = config or {}
 
@@ -51,7 +51,7 @@ class ReliabilityPipeline(FragilityPipeline):
         performance = Performance(name="dsheet_moment", parameters=perf_params)
 
         super().__init__(
-            specs_path=specs_path,
+            settings_path=settings_path,
             performance=performance,
             obs_error=self.config["obs_error_std"],
         )
@@ -73,16 +73,16 @@ class ReliabilityPipeline(FragilityPipeline):
         """
         # Initialize domain-specific JPDF
         self.jpdf = JPDF(name="dsheet", config=self.config)
-        self.jpdf.set_prior_from_specs(self.specs_path)
+        self.jpdf.set_prior_from_settings(self.settings_path)
 
         # Generate correlated MC samples
         self.jpdf.initiate_samples(n_samples=n_samples, seed=seed)
         self.jpdf.add_water_level(water_lvl=-1.0)
 
         # Initialize corrosion model
-        with open(self.specs_path, "r") as f:
-            specs = json.load(f)
-        params = specs.get("parameters", {})
+        with open(self.settings_path, "r") as f:
+            settings = json.load(f)
+        params = settings.get("parameters", {})
         C50_mu = params.get("C50_mu", 1.5)
         C50_std = params.get("C50_std", 0.75)
         self.corrosion_model = CorrosionModel(
@@ -91,7 +91,7 @@ class ReliabilityPipeline(FragilityPipeline):
             corrosion_rate=self.config["corrosion_rate"],
             start_thickness=self.config["start_thickness"],
             obs_error_std=self.config["obs_error_std"],
-            t_ref=self.config["t_ref"],
+            t_start=self.config["t_start"],
             n_grid=self.config["n_C50_grid"],
             n_corrosion_grid=self.config["n_grid"],
         )
@@ -485,15 +485,15 @@ class ReliabilityPipeline(FragilityPipeline):
         png_dir = output_dir / "corrosion"
         png_dir.mkdir(parents=True, exist_ok=True)
 
-        # Read specs for C50 prior parameters
-        with open(self.specs_path, "r") as f:
-            specs = json.load(f)
-        params = specs.get("parameters", {})
+        # Read settings for C50 prior parameters
+        with open(self.settings_path, "r") as f:
+            settings = json.load(f)
+        params = settings.get("parameters", {})
         C50_mu = params.get("C50_mu", 1.5)
         C50_std = params.get("C50_std", 0.75)
 
         corrosion_rate = self.config["corrosion_rate"]
-        t_ref = self.config["t_ref"]
+        t_start = self.config["t_start"]
         start_thickness = self.config["start_thickness"]
         obs_error_std = self.config["obs_error_std"]
 
@@ -649,7 +649,7 @@ class ReliabilityPipeline(FragilityPipeline):
         fig = plotting.plot_end_of_life(
             results=self.results,
             beta_req=self.config["beta_req"],
-            t_ref=self.config["t_ref"],
+            t_start=self.config["t_start"],
         )
         plotting.save_figure(fig, png_dir / "end_of_life.png")
 
@@ -661,13 +661,13 @@ def main():
     # Paths
     load_dotenv(".env")
     os.environ["REMOTE_DATA_PATH"] = os.environ["REMOTE_PATH"] + r"/input"
-    specs_path = Path(os.environ["REMOTE_DATA_PATH"]) / "settings.json"
+    settings_path = Path(os.environ["REMOTE_DATA_PATH"]) / "settings.json"
 
     # Initialize pipeline
-    with open(specs_path, "r") as f:
-        specs = json.load(f)
-    config = specs.get("parameters", {})
-    pipeline = ReliabilityPipeline(config=config, specs_path=specs_path)
+    with open(settings_path, "r") as f:
+        settings = json.load(f)
+    config = settings.get("parameters", {})
+    pipeline = ReliabilityPipeline(config=config, settings_path=settings_path)
 
     # =========================================================================
     # STEP 1: Setup
@@ -700,11 +700,15 @@ def main():
         verbose=True,
     )
 
-    # Load case study setting
-    setting = io.load_json("data.json")
+    # Load case study data
+    data = io.load_json("data.json")
+
+    obs_times = [int(float(key)) for key in data.keys()]
+    forecast_times = list(range(min(obs_times), max(obs_times)+1, 1))
+    pipeline.init_times(obs_times, forecast_times)
 
     # Run timeline analysis
-    results = pipeline.run_timeline(setting, verbose=True)
+    results = pipeline.run_timeline(data, verbose=True)
 
     # Save results
     pipeline.save_results()
@@ -717,9 +721,9 @@ def main():
     print("STEP 4: Generate plots")
     print("=" * 60)
     pipeline.plot_betas()
-    pipeline.plot_corrosion_forecasts(setting)
-    pipeline.plot_moment_forecasts(setting)
-    pipeline.plot_end_of_life()
+    # pipeline.plot_corrosion_forecasts(settings)
+    # pipeline.plot_moment_forecasts(settings)
+    # pipeline.plot_end_of_life()
     # pipeline.save_jpdf_snapshots(setting)
 
 

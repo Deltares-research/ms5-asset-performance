@@ -27,18 +27,18 @@ class BasePipeline(ABC):
 
     def __init__(
         self,
-        specs_path: Path | str,
+        settings_path: Path | str,
         performance: BasePerformance,
         obs_error: float = 0.1,
     ) -> None:
         """Initialize the base pipeline.
 
         Args:
-            specs_path: Path to the JSON specifications file.
+            settings_path: Path to the JSON specifications file.
             performance: Performance (limit-state) function instance.
             obs_error: Standard deviation of observation measurement error.
         """
-        self.specs_path = Path(specs_path)
+        self.settings_path = Path(settings_path)
         self.performance = performance
         self.obs_error = obs_error
 

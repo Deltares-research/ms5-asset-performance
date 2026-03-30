@@ -19,9 +19,9 @@ class CorrosionModel:
     Corrosion progression model for sheet pile walls.
 
     The model assumes corrosion thickness follows:
-        C(t) = C50 * (1 + rate/C50_mu * (t - t_ref))
+        C(t) = C50 * (1 + rate/C50_mu * (t - t_start))
 
-    where C50 is the corrosion at reference time t_ref (default 50 years).
+    where C50 is the corrosion at reference time t_start (default 50 years).
 
     Args:
         C50_mu: Mean of C50 prior distribution [mm].
@@ -29,7 +29,7 @@ class CorrosionModel:
         corrosion_rate: Annual corrosion rate coefficient.
         start_thickness: Initial wall thickness [mm].
         obs_error_std: Observation error standard deviation [mm].
-        t_ref: Reference time for C50 [years].
+        t_start: Reference time for C50 [years].
         n_grid: Grid size for C50 discretization.
         n_corrosion_grid: Grid size for corrosion discretization.
     """
@@ -41,7 +41,7 @@ class CorrosionModel:
         corrosion_rate: float = 0.022,
         start_thickness: float = 9.5,
         obs_error_std: float = 0.4,
-        t_ref: float = 50.0,
+        t_start: float = 50.0,
         n_grid: int = 100,
         n_corrosion_grid: int = 1000,
     ):
@@ -50,7 +50,7 @@ class CorrosionModel:
         self.corrosion_rate = corrosion_rate
         self.start_thickness = start_thickness
         self.obs_error_std = obs_error_std
-        self.t_ref = t_ref
+        self.t_start = t_start
         self.n_grid = n_grid
         self.n_corrosion_grid = n_corrosion_grid
 
@@ -80,7 +80,7 @@ class CorrosionModel:
         """
         t = np.atleast_1d(t)
         C50 = np.atleast_1d(C50)
-        return C50 * (1 + self.corrosion_rate / 1.5 * (t - self.t_ref))
+        return C50 * (1 + self.corrosion_rate / 1.5 * (t - self.t_start))
 
     def corrosion_params(
         self, t: float | NDArray, C50: float | NDArray
@@ -195,7 +195,7 @@ class CorrosionModel:
         obs_values = np.asarray(obs_values)  # (n_obs,)
 
         # Expected corrosion at each time for each C50
-        mu = C50_grid * (1 + self.corrosion_rate / self.C50_mu * (obs_times - self.t_ref))
+        mu = C50_grid * (1 + self.corrosion_rate / self.C50_mu * (obs_times - self.t_start))
 
         # Compute normalized deviations
         deviations = (obs_values - mu) / self.obs_error_std

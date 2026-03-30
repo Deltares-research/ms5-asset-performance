@@ -42,10 +42,10 @@ class JPDF(BaseJPDF):
         self.G_samples: Optional[Dict[float, NDArray]] = None
         self.Y_samples: Optional[Dict[float, Dict]] = None
 
-    def set_prior_from_specs(self, filepath: Path | str) -> None:
-        """Load variables from specs and initialize C50 prior.
+    def set_prior_from_settings(self, filepath: Path | str) -> None:
+        """Load variables from settings and initialize C50 prior.
 
-        Loads variable distributions and correlation matrix from the specs
+        Loads variable distributions and correlation matrix from the settings
         file. Skips grid/prior initialization (ark uses MC sampling, not
         grid-based integration). Then initializes the C50 prior.
 
@@ -53,14 +53,14 @@ class JPDF(BaseJPDF):
             filepath: Path to specifications JSON file.
         """
         with open(filepath, "r") as f:
-            specs = json.load(f)
+            settings = json.load(f)
 
-        self.nvar = specs.get("number_of_variables", 0)
+        self.nvar = settings.get("number_of_variables", 0)
         self.variable_names = []
         self.variables = {}
         self.grid_config = {}
 
-        for i, v in enumerate(specs.get("variables", [])):
+        for i, v in enumerate(settings.get("variables", [])):
             name = v.get("name", f"var_{i+1}")
             dist_type = v.get("distribution_type", "normal").lower()
 
@@ -85,14 +85,14 @@ class JPDF(BaseJPDF):
             self.variables[name] = var
 
         # Correlation matrix
-        corr = specs.get("correlation_in_u_space")
+        corr = settings.get("correlation_in_u_space")
         if corr is not None:
             self.correlation_matrix = np.array(corr)
         else:
             self.correlation_matrix = np.eye(self.nvar)
 
-        # Initialize C50 prior from specs parameters
-        params = specs.get("parameters", {})
+        # Initialize C50 prior from settings parameters
+        params = settings.get("parameters", {})
         C50_mu = params.get("C50_mu", 1.5)
         C50_std = params.get("C50_std", 0.75)
         self.init_C50_prior(C50_mu, C50_std)
@@ -131,7 +131,7 @@ class JPDF(BaseJPDF):
             obs_values: Observed corrosion values [mm].
         """
         if self.C50_pdf is None or self.C50_grid is None:
-            raise ValueError("C50 not initialized. Call set_prior_from_specs first.")
+            raise ValueError("C50 not initialized. Call set_prior_from_settings first.")
 
         C50_mu = self.config.get("C50_mu", 1.0)
         corrosion_rate = self.config.get("corrosion_rate", 0.022)
