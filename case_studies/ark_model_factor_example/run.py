@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
 from dotenv import load_dotenv
-from numpy.typing import NDArray
 import json
 from datetime import datetime
 from src import FragilityPipeline
@@ -75,9 +74,13 @@ class ReliabilityPipeline(FragilityPipeline):
         self.jpdf = JPDF(name="dsheet", config=self.config)
         self.jpdf.set_prior_from_settings(self.settings_path)
 
+        # Initiate C50 grid
+        self.jpdf.init_C50_prior(C50_mu=self.config["C50_mu"], C50_std=self.config["C50_std"])
+        self.jpdf.reset_C50_to_prior()
+
         # Generate correlated MC samples
-        self.jpdf.initiate_samples(n_samples=n_samples, seed=seed)
-        self.jpdf.add_water_level(water_lvl=-1.0)
+        # self.jpdf.initiate_samples(n_samples=n_samples, seed=seed)
+        # self.jpdf.add_water_level(water_lvl=-1.0)
 
         # Initialize corrosion model
         with open(self.settings_path, "r") as f:
