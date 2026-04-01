@@ -56,6 +56,8 @@ class DSheetPiling(GeoModelBase):
             for (soil_param_name, soil_param_value) in soil_params.items():
                 if hasattr(self.soils[soil_name], soil_param_name):
                     setattr(self.soils[soil_name], soil_param_name, float(soil_param_value))
+                    if soil_param_name == "soilphi":
+                        setattr(self.soils[soil_name], "soildelta", float(soil_param_value*2/3))
                 else:
                     raise AttributeError(f"Soil parameter {soil_param_name} not found in {soil_name}.")
         self.geomodel.input.input_data.soil_collection.soil = list(self.soils.values())
@@ -84,6 +86,9 @@ class DSheetPiling(GeoModelBase):
             else:
                 raise AttributeError(f"Uniform load name {load_name} not found in Uniform load list.")
         self.geomodel.input.input_data.uniform_loads.loads = list(self.uniform_loads.values())
+
+    def update_anchors(self, anchor_data_txt: str) -> None:
+        self.geomodel.datastructure.input_data.anchors = anchor_data_txt
 
     def get_wall(self) -> WallProperties:
 
@@ -115,6 +120,24 @@ class DSheetPiling(GeoModelBase):
         wall_data = "\n".join(wall_lines)
 
         self.geomodel.input.input_data.sheet_piling = wall_data
+
+    def update_bottom(self, bottom_params: Dict[str, float]) -> None:
+        min_bottom = min(start_bottom)
+        reduced_bottom = [max(bottom-bottom_lvl_reduction, min_bottom) for bottom in start_bottom]
+        idx_bottom = [i for i, line in enumerate(lines) if "bottom" in line][0]
+        bottom_lines = lines[idx_bottom: idx_bottom + 20]
+        coord_cnt = 0
+        for i, bottom_line in enumerate(bottom_lines[4:]):
+            try:
+                bottom_line = bottom_line.strip()
+                bottom_line = bottom_line.split("      ")
+                bottom_line[-1] = str(round(reduced_bottom[coord_cnt], 2))
+                bottom_line = "      ".join(bottom_line)
+                bottom_line += "\n"
+                lines[idx_bottom+4+i] = bottom_line
+                coord_cnt += 1
+            except:
+                break
 
     def apply_corrosion(self, corrosion: float, start_thickness: float) -> None:
 
@@ -222,6 +245,7 @@ class DSheetPiling(GeoModelBase):
                 moment=moments,
                 shear=shear_forces,
                 displacement=displacements,
+                anchor_force=stage.anchor_data.anchordata[0]["force"]
             )
             stage_result_lst.append(stage_result)
 

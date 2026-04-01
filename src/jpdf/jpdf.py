@@ -45,10 +45,10 @@ class JPDF:
         W_samples: 1D array of normalized posterior importance weights.
     """
 
-    def __init__(self, name: str = "") -> None:
+    def __init__(self, name: str = "", config: Optional[Dict[str, Any]] = None) -> None:
         self.name = name
 
-        # Variables (loaded from specs)
+        # Variables (loaded from settings)
         self.nvar: int = 0
         self.variable_names: List[str] = []
         self.variables: Dict[str, st.rv_continuous] = {}
@@ -75,25 +75,16 @@ class JPDF:
         self.W_prior_samples: Optional[NDArray] = None
         self.W_samples: Optional[NDArray] = None
 
-    def set_prior_from_specs(self, filepath: Path | str) -> None:
-        """Load variable definitions from a JSON specs file and initialize priors.
+    def set_variables(self, filepath: Path | str) -> None:
 
-        Reads distribution type, mean, standard deviation, grid size, and grid
-        type for each variable. Supported distributions: normal, lognormal,
-        uniform.
-
-        Args:
-            filepath: Path to the specifications JSON file.
-        """
         with open(filepath, "r") as f:
-            specs = json.load(f)
+            settings = json.load(f)
 
-        self.nvar = specs.get("number_of_variables", 0)
         self.variable_names = []
         self.variables = {}
         self.grid_config = {}
 
-        for i, v in enumerate(specs.get("variables", [])):
+        for i, v in enumerate(settings.get("variables", [])):
             name = v.get("name", f"var_{i+1}")
             dist_type = v.get("distribution_type", "normal").lower()
 
@@ -121,13 +112,25 @@ class JPDF:
                 "grid_type": v.get("grid_type", "linear"),
             }
 
+        self.nvar = len(self.variable_names)
+
         # Correlation matrix
-        corr = specs.get("correlation_in_u_space")
+        corr = settings.get("correlation_in_u_space")
         if corr is not None:
             self.correlation_matrix = np.array(corr)
         else:
             self.correlation_matrix = np.eye(self.nvar)
 
+    def set_prior_from_settings(self) -> None:
+        """Load variable definitions from a JSON settings file and initialize priors.
+
+        Reads distribution type, mean, standard deviation, grid size, and grid
+        type for each variable. Supported distributions: normal, lognormal,
+        uniform.
+
+        Args:
+            filepath: Path to the specifications JSON file.
+        """
         self.init_priors()
         self.pdf = self.get_prior()
         for name in self.variable_names:
@@ -321,7 +324,7 @@ class JPDF:
             # Grid-based: discrete Bayes
             if not self.grids or not self.marginals:
                 raise ValueError(
-                    "Variables not initialized. Call set_prior_from_specs first."
+                    "Variables not initialized. Call set_prior_from_settings first."
                 )
 
             loglikes = self.get_loglikes(obs_values, model_output, obs_error)

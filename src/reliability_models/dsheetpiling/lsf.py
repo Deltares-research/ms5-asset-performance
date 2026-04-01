@@ -58,6 +58,61 @@ def unpack_water_params(params: Dict[str, float], water_lvls: List[str]) -> Dict
     return water_data
 
 
+def unpack_load_params(params: Dict[str, float], load_names: List[str]) -> Dict[str, float]:
+    load_data = {}
+    for (key, val) in params.items():
+        try:
+            load_name = key.split("_")[0]
+        except:
+            continue
+        if not load_name in load_names:
+            continue
+        load_side = key.split("_")[-1]
+        if load_side == "left":
+            load_data[load_name] = (float(val), 0)
+        else:
+            load_side[load_name] = (0, float(val))
+    return load_data
+
+
+def unpack_anchor_params(params: Dict[str, float], anchor_txt: str) -> str:
+    lines = anchor_txt.splitlines()
+    data_values = lines[-1].split()
+    # data_values: [Nr, Level, E-mod, Cross_sect, Length, YieldF, Angle, Height, Side, Name]
+    # indices:       0    1      2        3          4       5       6      7      8     9
+
+    field_map = {
+        "Nr": 0, "Level": 1, "E-mod": 2, "Cross": 3,
+        "Length": 4, "YieldF": 5, "Angle": 6,
+        "Height": 7, "Side": 8,
+    }
+
+    for key, val in params.items():
+        parts = key.split("_")
+        if parts[0].lower() != "anchor":
+            continue
+        field = parts[-1]
+        if field in field_map:
+            # data_values[field_map[field]] = str(val)
+            data_values[field_map[field]] = f"{val:.2f}"
+
+    # Reconstruct matching original column spacing
+    lines[-1] = (
+        f"  {data_values[0]}"                    # Nr
+        f"  {data_values[1]:>5s}"                # Level
+        f"  {data_values[2]:>11s}"               # E-mod
+        f"  {data_values[3]:>11s}"               # Cross sect.
+        f"    {data_values[4]:>5s}"              # Length
+        f" {data_values[5]:>8s}"                 # YieldF
+        f"    {data_values[6]:>5s}"              # Angle
+        f"     {data_values[7]:>4s}"             # Height
+        f"      {data_values[8]}"                # Side
+        f" {data_values[9]}"                     # Name
+    )
+
+    return "\n".join(lines)
+
+
 def safety_fn(
         params: Dict[str, float],
         geomodel: DSheetPiling,

@@ -152,6 +152,7 @@ class DSheetPilingStageResults:
     moment: list | Annotated[NDArray[np.float64], ("n_points")]
     shear: list | Annotated[NDArray[np.float64], ("n_points")]
     displacement: list | Annotated[NDArray[np.float64], ("n_points")]
+    anchor_force: float
     max_moment: float = field(init=False)
     max_shear: float = field(init=False)
     max_displacement: float = field(init=False)
@@ -190,6 +191,7 @@ class DSheetPilingResults:
         self.max_moment = [stage_result.max_moment for stage_result in stage_results]
         self.max_shear = [stage_result.max_shear for stage_result in stage_results]
         self.max_displacement = [stage_result.max_displacement for stage_result in stage_results]
+        self.anchor_force = [stage_result.anchor_force for stage_result in stage_results]
 
     def to_dict(self) -> dict[str, list[float | int]]:
         stage_result_dicts = [asdict(stage_result) for stage_result in self.stage_results]

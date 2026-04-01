@@ -27,7 +27,7 @@ class JPDF(BaseJPDF):
     """
 
     def __init__(self, name: str = "", config: Optional[Dict[str, Any]] = None):
-        super().__init__(name=name)
+        super().__init__(name=name, config=config)
         self.config = config or {}
 
         # Correlated sampling
@@ -52,46 +52,7 @@ class JPDF(BaseJPDF):
         Args:
             filepath: Path to specifications JSON file.
         """
-        with open(filepath, "r") as f:
-            settings = json.load(f)
-
-        self.nvar = settings.get("number_of_variables", 0)
-        self.variable_names = []
-        self.variables = {}
-        self.grid_config = {}
-
-        for i, v in enumerate(settings.get("variables", [])):
-            name = v.get("name", f"var_{i+1}")
-            dist_type = v.get("distribution_type", "normal").lower()
-
-            if dist_type in ["normal", "norm", "n", "gaussian"]:
-                mean = v.get("mean", 0.0)
-                std = v.get("standard_deviation", 1.0)
-                var = st.norm(loc=mean, scale=std)
-            elif dist_type in ["lognormal", "lognorm"]:
-                mean = v.get("mean", 1.0)
-                std = v.get("standard_deviation", 0.5)
-                sigma = np.sqrt(np.log(1 + (std / mean) ** 2))
-                mu = np.log(mean) - 0.5 * sigma ** 2
-                var = st.lognorm(s=sigma, scale=np.exp(mu))
-            elif dist_type in ["uniform", "unif"]:
-                lower = v.get("lower_bound", 0.0)
-                upper = v.get("upper_bound", 1.0)
-                var = st.uniform(loc=lower, scale=upper - lower)
-            else:
-                raise ValueError(f"Unknown distribution type: {dist_type}")
-
-            self.variable_names.append(name)
-            self.variables[name] = var
-
-        # Correlation matrix
-        corr = settings.get("correlation_in_u_space")
-        if corr is not None:
-            self.correlation_matrix = np.array(corr)
-        else:
-            self.correlation_matrix = np.eye(self.nvar)
-
-        # Initialize C50 prior from settings parameters
+       # Initialize C50 prior from settings parameters
         params = settings.get("parameters", {})
         C50_mu = params.get("C50_mu", 1.5)
         C50_std = params.get("C50_std", 0.75)

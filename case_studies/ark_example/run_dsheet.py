@@ -10,25 +10,16 @@ from case_studies.ark_example.jpdf import JPDF
 from src.reliability_models.dsheetpiling.lsf import *
 
 
-RV_NAMES = [
-    'Klei_soilcohesion',
-    'Klei_soilphi',
-    'Klei_soilcurkb1',
-    'Zand_soilphi',
-    'Zand_soilcurkb1',
-    'Zandvast_soilphi',
-    'Zandvast_soilcurkb1',
-    'Zandlos_soilphi',
-    'Zandlos_soilcurkb1',
-    'Wall_SheetPilingElementEI'
-]
-
-
 def run_model(params: Dict[str, float], model: DSheetPiling) -> DSheetPilingResults:
     soil_data = unpack_soil_params(params, list(model.soils.keys()))
     water_data = unpack_water_params(params, [lvl.name for lvl in model.water.water_lvls])
+    load_data = unpack_load_params(params, list(model.geomodel.datastructure.input_data.uniform_loads.load_names))
+    anchor_data = unpack_anchor_params(params, model.geomodel.datastructure.input_data.anchors)
+    # bottom_data = unpack_bottom_params(params, [lvl.name for lvl in model.water.water_lvls])
     model.update_soils(soil_data)
     model.update_water(water_data)
+    model.update_uniform_loads(load_data)
+    model.update_anchors(anchor_data)
     model.execute()
     return model.results
 
@@ -37,8 +28,8 @@ def main(n_samples: int, moment_capacity: float) -> None:
 
     # Paths
     load_dotenv(".env")
-    os.environ["REMOTE_DATA_PATH"] = os.environ["REMOTE_PATH"] + r"/input"
-    specs_path = Path(os.environ["REMOTE_DATA_PATH"]) / "settings.json"
+    os.environ["REMOTE_DATA_PATH"] = os.environ["SENSITIVITY_REMOTE_PATH"] + r"/input"
+    settings_path = Path(os.environ["REMOTE_DATA_PATH"]) / "settings.json"
 
     username = os.environ.get("USER", "unknown").lower()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
@@ -46,11 +37,11 @@ def main(n_samples: int, moment_capacity: float) -> None:
     output_folder.mkdir(exist_ok=True, parents=True)
     output_file = output_folder / f"{username}_{timestamp}.jsonl"
 
-    with open(specs_path, "r") as f:
-        specs = json.load(f)
-    config = specs.get("parameters", {})
+    with open(settings_path, "r") as f:
+        settings = json.load(f)
+    config = settings.get("parameters", {})
     jpdf = JPDF(name="dsheet", config=config)
-    jpdf.set_prior_from_specs(specs_path)
+    jpdf.set_variables(settings_path)
     jpdf.initiate_samples(n_samples, seed=42)
 
     geomodel_path = os.environ["DSHEET_MODEL_PATH"]
@@ -60,11 +51,10 @@ def main(n_samples: int, moment_capacity: float) -> None:
 
     all_results = []
     for i, X_sample in enumerate(jpdf.X_samples, start=1):
-        sample = {rv: x.item() for (rv, x) in zip(RV_NAMES, X_sample)}
+        sample = {rv: x.item() for (rv, x) in zip(jpdf.variable_names, X_sample)}
         res = run_model(sample, geomodel)
         res = res.to_dict()
         row = {**{"simulation_number": i}, **sample, **res}
-        row["moment_fos"] = [moment_capacity / m for m in row["max_moment"]]
         all_results.append(row)
 
     with open(output_file, "w") as f:
