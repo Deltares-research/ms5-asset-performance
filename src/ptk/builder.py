@@ -197,6 +197,7 @@ class FragilityCurveBuilder:
 
     def _save_manifest(self, cache_dir: Path, grid: Dict[str, list], completed: List[int]) -> None:
         manifest = {
+            "lsf_name": getattr(self.lsf, "__name__", str(self.lsf)),
             "deterministic_vars": self.deterministic_vars,
             "stochastic_vars": self.stochastic_vars,
             "grid": {k: [float(x) for x in v] for k, v in grid.items()},

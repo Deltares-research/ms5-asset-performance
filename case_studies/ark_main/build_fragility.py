@@ -170,7 +170,7 @@ def main(use_api: bool = False, force_rebuild: bool = False):
     stochastic_vars = build_stochastic_vars(_settings["variables"])
 
     builder = FragilityCurveBuilder(
-        lsf=lsf,
+        lsf=lsf_wall,
         stochastic_vars=stochastic_vars,
         deterministic_vars=["corrosion_rate"],
         form_params={
@@ -182,8 +182,10 @@ def main(use_api: bool = False, force_rebuild: bool = False):
     )
 
     grid = {"corrosion_rate": np.linspace(0.0, 1.0, n_fc_grid)}
-    cache_dir = _remote / "output" / "fragility_curve"
+    lsf_name = lsf_wall.__name__
+    cache_dir = _remote / "output" / f"fragility_curve_{lsf_name}"
 
+    print(f"LSF: {lsf_name}")
     print(f"Grid: {n_fc_grid} points from 0.0 to 1.0")
     print(f"Cache: {cache_dir}\n")
 
