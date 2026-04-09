@@ -2,13 +2,26 @@
 Fragility curve builder with per-point caching and FORM/IS fallback.
 
 Supports N deterministic variables forming a grid. Each grid point is
-computed independently and cached to disk, allowing long-running jobs
-to be stopped and resumed.
+computed independently and cached as a plain JSON dict, allowing
+long-running jobs to be stopped and resumed.
+
+Results are plain dicts — no custom data classes. Each point is::
+
+    {
+        "index": 0,
+        "point": {"corrosion_rate": 0.1},
+        "pf": 1.2e-4,
+        "beta": 3.67,
+        "logpf": -9.03,
+        "convergence": true,
+        "method": "form",
+        "design_point": {"phi_sand": 22.1, "su_clay": 16.3},
+        "alphas": {"phi_sand": -0.82, "su_clay": -0.57}
+    }
 """
 
 import json
 import math
-import itertools
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -17,17 +30,15 @@ from numpy.typing import NDArray
 from scipy import stats
 from scipy.integrate import trapezoid
 
-from .fragility import FragilityPoint, FragilityCurve
-
 
 class FragilityCurveBuilder:
     """Build a fragility curve over an N-D grid of deterministic variables.
 
     For each grid point:
-    1. Set deterministic variables to fixed values.
+    1. Set deterministic variables to constant (deterministic) values.
     2. Run FORM on the remaining stochastic variables.
     3. If FORM doesn't converge, fall back to importance sampling.
-    4. Cache the result to disk.
+    4. Cache the result as a plain JSON dict.
 
     Usage::
 
@@ -35,14 +46,14 @@ class FragilityCurveBuilder:
             lsf=my_lsf,
             stochastic_vars={
                 "phi_sand": {"distribution": "normal", "mean": 25, "variation": 0.10},
-                "su_clay":  {"distribution": "log_normal", "mean": 20, "variation": 0.10},
             },
             deterministic_vars=["corrosion_rate"],
         )
-        fc = builder.build(
+        results = builder.build(
             grid={"corrosion_rate": np.linspace(0, 1, 11)},
             cache_dir=Path("cache/fragility"),
         )
+        # results is a list of dicts
     """
 
     def __init__(
@@ -52,21 +63,6 @@ class FragilityCurveBuilder:
         deterministic_vars: List[str],
         form_params: Optional[Dict[str, float]] = None,
     ) -> None:
-        """Initialize the builder.
-
-        Args:
-            lsf: Limit state function callable. Arguments must include all
-                stochastic + deterministic variable names.
-            stochastic_vars: Dict of stochastic variable definitions::
-
-                {"var_name": {"distribution": "normal", "mean": 0, "deviation": 1, ...}}
-
-                Supported keys per variable: distribution, mean, deviation,
-                variation, minimum, maximum, shape, shape_b.
-            deterministic_vars: Names of variables that form the grid.
-            form_params: FORM solver settings. Keys: relaxation_factor,
-                maximum_iterations, variation_coefficient, step_size.
-        """
         self.lsf = lsf
         self.stochastic_vars = stochastic_vars
         self.deterministic_vars = deterministic_vars
@@ -77,71 +73,67 @@ class FragilityCurveBuilder:
             "step_size": 0.05,
         }
 
+    # ------------------------------------------------------------------
+    # ptk project setup
+    # ------------------------------------------------------------------
+
     def _setup_project(self):
         """Create and configure a ptk ReliabilityProject."""
         import probabilistic_library as ptk
         self._ptk = ptk
-        project = self._ptk.ReliabilityProject()
+
+        project = ptk.ReliabilityProject()
         project.model = self.lsf
 
-        # Configure stochastic variables
         dist_map = {
-            "normal": self._ptk.DistributionType.normal,
-            "log_normal": self._ptk.DistributionType.log_normal,
-            "lognormal": self._ptk.DistributionType.log_normal,
-            "uniform": self._ptk.DistributionType.uniform,
-            "beta": self._ptk.DistributionType.beta,
-            "gumbel": self._ptk.DistributionType.gumbel,
+            "normal": ptk.DistributionType.normal,
+            "log_normal": ptk.DistributionType.log_normal,
+            "lognormal": ptk.DistributionType.log_normal,
+            "uniform": ptk.DistributionType.uniform,
+            "beta": ptk.DistributionType.beta,
+            "gumbel": ptk.DistributionType.gumbel,
         }
 
         for name, defn in self.stochastic_vars.items():
             dist_type = defn.get("distribution", "normal").lower()
             project.variables[name].distribution = dist_map.get(
-                dist_type, self._ptk.DistributionType.normal
+                dist_type, ptk.DistributionType.normal
             )
             for attr in ("mean", "deviation", "variation", "minimum", "maximum", "shape", "shape_b"):
                 if attr in defn:
                     setattr(project.variables[name], attr, defn[attr])
 
-        # Configure deterministic variables (placeholder — overwritten per point)
+        # Deterministic variables — set as constants, overwritten per point
         for name in self.deterministic_vars:
-            project.variables[name].distribution = self._ptk.DistributionType.deterministic
+            project.variables[name].distribution = ptk.DistributionType.deterministic
             project.variables[name].mean = 0.0
 
-        # FORM settings
-        project.settings.reliability_method = self._ptk.ReliabilityMethod.form
+        project.settings.reliability_method = ptk.ReliabilityMethod.form
         for key, val in self.form_params.items():
             setattr(project.settings, key, val)
 
         return project
 
+    # ------------------------------------------------------------------
+    # Single point computation
+    # ------------------------------------------------------------------
+
     def _compute_point(
-        self,
-        project,
-        point: Dict[str, float],
-        index: int,
-        verbose: bool = True,
-    ) -> FragilityPoint:
-        """Compute one fragility point: FORM first, IS fallback.
+        self, project, point: Dict[str, float], index: int, verbose: bool = True
+    ) -> dict:
+        """Compute one fragility point. Returns a plain dict.
 
-        Args:
-            project: Configured ptk project.
-            point: Dict mapping deterministic var names to values.
-            index: Grid point index (for logging).
-            verbose: Print progress.
-
-        Returns:
-            FragilityPoint with results.
+        Sets each deterministic variable to a constant value, runs FORM,
+        falls back to IS if FORM doesn't converge.
         """
-        point_values = [point[name] for name in self.deterministic_vars]
         point_str = ", ".join(f"{k}={v:.4g}" for k, v in point.items())
 
-        # Set deterministic values
+        # Fix deterministic variables to their grid values
         for name, val in point.items():
             project.variables[name].distribution = self._ptk.DistributionType.deterministic
             project.variables[name].mean = float(val)
 
-        # Try FORM
+        # FORM
         if verbose:
             print(f"  [{index:04d}] FORM at {point_str} ...", end="", flush=True)
 
@@ -154,58 +146,59 @@ class FragilityCurveBuilder:
             if verbose:
                 print(f" converged. beta={dp.reliability_index:.3f}, Pf={dp.probability_failure:.3e}")
         else:
-            # Fall back to importance sampling
+            # Importance sampling fallback
             if verbose:
                 print(f" not converged. Running IS ...", end="", flush=True)
-
             project.settings.reliability_method = self._ptk.ReliabilityMethod.importance_sampling
             project.run()
             dp = project.design_point
             method = "importance_sampling"
-
             if verbose:
                 print(f" beta={dp.reliability_index:.3f}, Pf={dp.probability_failure:.3e}")
 
         pf = dp.probability_failure
-        logpf = math.log(pf) if pf > 0 else -np.inf
+        det_names = set(self.deterministic_vars)
 
-        return FragilityPoint(
-            point=point_values,
-            pf=pf,
-            beta=dp.reliability_index,
-            design_point={
+        return {
+            "index": index,
+            "point": point,
+            "pf": pf,
+            "beta": dp.reliability_index,
+            "logpf": math.log(pf) if pf > 0 else -math.inf,
+            "convergence": dp.is_converged,
+            "method": method,
+            "design_point": {
                 a.variable.name: a.x for a in dp.alphas
-                if a.variable.name not in self.deterministic_vars
+                if a.variable.name not in det_names
             },
-            alphas={
+            "alphas": {
                 a.variable.name: a.alpha for a in dp.alphas
-                if a.variable.name not in self.deterministic_vars
+                if a.variable.name not in det_names
             },
-            logpf=logpf,
-            convergence=dp.is_converged,
-            method=method,
-        )
+        }
 
-    def _save_point(self, fp: FragilityPoint, cache_dir: Path, index: int) -> None:
-        """Save a single fragility point to disk."""
+    # ------------------------------------------------------------------
+    # Cache I/O
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _save_point(result: dict, cache_dir: Path, index: int) -> None:
         path = cache_dir / f"point_{index:04d}.json"
         with open(path, "w") as f:
-            json.dump(fp._asdict(), f, indent=2)
+            json.dump(result, f, indent=2)
 
-    def _load_point(self, cache_dir: Path, index: int) -> Optional[FragilityPoint]:
-        """Load a single fragility point from disk. Returns None if not found."""
+    @staticmethod
+    def _load_point(cache_dir: Path, index: int) -> Optional[dict]:
         path = cache_dir / f"point_{index:04d}.json"
         if not path.exists():
             return None
         with open(path, "r") as f:
-            data = json.load(f)
-        return FragilityPoint(**data)
+            return json.load(f)
 
     def _save_manifest(self, cache_dir: Path, grid: Dict[str, list], completed: List[int]) -> None:
-        """Save manifest with grid definition and completion status."""
         manifest = {
             "deterministic_vars": self.deterministic_vars,
-            "stochastic_vars": {k: v for k, v in self.stochastic_vars.items()},
+            "stochastic_vars": self.stochastic_vars,
             "grid": {k: [float(x) for x in v] for k, v in grid.items()},
             "form_params": self.form_params,
             "n_total": int(np.prod([len(v) for v in grid.values()])),
@@ -215,21 +208,29 @@ class FragilityCurveBuilder:
         with open(cache_dir / "manifest.json", "w") as f:
             json.dump(manifest, f, indent=2)
 
-    def _load_manifest(self, cache_dir: Path) -> Optional[Dict]:
-        """Load manifest from cache dir."""
+    @staticmethod
+    def _load_manifest(cache_dir: Path) -> Optional[dict]:
         path = cache_dir / "manifest.json"
         if not path.exists():
             return None
         with open(path, "r") as f:
             return json.load(f)
 
-    def _build_grid_points(self, grid: Dict[str, NDArray]) -> List[Dict[str, float]]:
-        """Build flat list of grid point dicts from N-D grid."""
+    # ------------------------------------------------------------------
+    # Grid construction
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_grid_points(grid: Dict[str, NDArray]) -> List[Dict[str, float]]:
         names = list(grid.keys())
-        arrays = [grid[name] for name in names]
+        arrays = [grid[n] for n in names]
         meshes = np.meshgrid(*arrays, indexing="ij")
         flat = np.column_stack([m.ravel() for m in meshes])
-        return [{name: float(row[i]) for i, name in enumerate(names)} for row in flat]
+        return [{n: float(row[i]) for i, n in enumerate(names)} for row in flat]
+
+    # ------------------------------------------------------------------
+    # Build
+    # ------------------------------------------------------------------
 
     def build(
         self,
@@ -237,17 +238,17 @@ class FragilityCurveBuilder:
         cache_dir: Path,
         force_rebuild: bool = False,
         verbose: bool = True,
-    ) -> FragilityCurve:
+    ) -> List[dict]:
         """Build fragility curve over N-D grid with per-point caching.
 
         Args:
             grid: Dict mapping deterministic var names to 1D arrays.
             cache_dir: Directory for per-point JSON cache files.
-            force_rebuild: If True, recompute all points.
-            verbose: Print progress messages.
+            force_rebuild: Recompute all points.
+            verbose: Print progress.
 
         Returns:
-            FragilityCurve with all computed points.
+            List of result dicts, one per grid point.
         """
         cache_dir = Path(cache_dir)
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -255,7 +256,6 @@ class FragilityCurveBuilder:
         points = self._build_grid_points(grid)
         n_total = len(points)
 
-        # Check existing cache
         if force_rebuild:
             completed = set()
         else:
@@ -263,99 +263,84 @@ class FragilityCurveBuilder:
             completed = set(manifest["completed_indices"]) if manifest else set()
 
         if verbose:
-            n_skip = len(completed)
-            n_remaining = n_total - n_skip
-            print(f"Fragility curve: {n_total} points, {n_skip} cached, {n_remaining} to compute")
+            print(f"Fragility curve: {n_total} points, {len(completed)} cached, "
+                  f"{n_total - len(completed)} to compute")
 
-        # Setup ptk project
         project = self._setup_project()
 
-        # Compute missing points
         for i, point in enumerate(points):
             if i in completed:
                 continue
-
-            fp = self._compute_point(project, point, i, verbose=verbose)
-            self._save_point(fp, cache_dir, i)
+            result = self._compute_point(project, point, i, verbose=verbose)
+            self._save_point(result, cache_dir, i)
             completed.add(i)
             self._save_manifest(cache_dir, grid, sorted(completed))
 
-        # Compile all points
         return self.load(cache_dir)
 
-    def load(self, cache_dir: Path) -> FragilityCurve:
-        """Load a fragility curve from cached point files.
+    def load(self, cache_dir: Path) -> List[dict]:
+        """Load fragility curve results from cached point files.
 
         Args:
             cache_dir: Directory containing point_NNNN.json files.
 
         Returns:
-            FragilityCurve with all valid points.
+            List of result dicts, sorted by index.
         """
         cache_dir = Path(cache_dir)
         manifest = self._load_manifest(cache_dir)
         if manifest is None:
             raise FileNotFoundError(f"No manifest.json in {cache_dir}")
 
-        fps = []
+        results = []
         for i in sorted(manifest["completed_indices"]):
-            fp = self._load_point(cache_dir, i)
-            if fp is not None and not math.isnan(fp.pf):
-                fps.append(fp)
+            pt = self._load_point(cache_dir, i)
+            if pt is not None and not math.isnan(pt["pf"]):
+                results.append(pt)
+        return results
 
-        if not fps:
-            raise ValueError("No valid fragility points found in cache.")
-
-        return FragilityCurve(fragility_points=fps)
+    # ------------------------------------------------------------------
+    # Integration
+    # ------------------------------------------------------------------
 
     @staticmethod
     def integrate(
-        fragility_curve: FragilityCurve,
+        results: List[dict],
         distributions: Dict[str, Any],
         det_var_names: List[str],
     ) -> Tuple[float, float]:
-        """Integrate fragility curve over distributions of deterministic variables.
+        """Integrate fragility results over distributions.
 
         Marginalizes out the deterministic variables by integrating
         Pf(x) * f(x) over the grid using the trapezoidal rule.
 
         Args:
-            fragility_curve: Computed fragility curve.
-            distributions: Dict mapping variable name to scipy.stats distribution
-                (frozen, e.g. ``stats.beta(a, b)``).
-            det_var_names: Ordered list of deterministic variable names
-                (must match the order in fragility_curve.points columns).
+            results: List of result dicts from build() or load().
+            distributions: Dict mapping variable name to a frozen
+                scipy.stats distribution (e.g. ``stats.beta(a, b)``).
+            det_var_names: Ordered list of deterministic variable names.
 
         Returns:
             Tuple of (pf, beta).
         """
-        points = fragility_curve.points
-        logpfs = fragility_curve.logpfs
+        points = np.array([[r["point"][n] for n in det_var_names] for r in results])
+        logpfs = np.array([r["logpf"] for r in results])
 
-        # Compute log-PDF of the joint distribution at each point
         log_pdf = np.zeros(len(points))
         for i, name in enumerate(det_var_names):
             if name in distributions:
                 log_pdf += distributions[name].logpdf(points[:, i])
 
-        # Pf * f(x) in log space
-        log_integrand = logpfs + log_pdf
-        integrand = np.exp(log_integrand)
+        integrand = np.exp(logpfs + log_pdf)
 
-        # Integrate over each dimension
-        # Reshape to N-D grid for multi-dim trapezoid
-        grids = []
-        for i in range(points.shape[1]):
-            grids.append(np.sort(np.unique(points[:, i])))
-
+        # Reshape to N-D for multi-dim trapezoid
+        grids = [np.sort(np.unique(points[:, i])) for i in range(points.shape[1])]
         shapes = tuple(len(g) for g in grids)
         integrand_nd = integrand.reshape(shapes)
 
         for i in reversed(range(len(grids))):
             integrand_nd = trapezoid(integrand_nd, grids[i], axis=i)
 
-        pf = float(integrand_nd)
-        pf = np.clip(pf, 1e-30, 1 - 1e-10)
+        pf = float(np.clip(integrand_nd, 1e-30, 1 - 1e-10))
         beta = float(stats.norm.ppf(1 - pf))
-
         return pf, beta
