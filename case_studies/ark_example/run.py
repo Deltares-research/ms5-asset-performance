@@ -40,12 +40,11 @@ class ReliabilityPipeline(FragilityPipeline):
         config: Optional[Dict[str, Any]] = None,
         settings_path: Optional[Path | str] = None,
     ):
-        self.config = config or {}
+        config = config or {}
 
-        # Initialize performance function
         perf_params = {
-            "moment_cap": self.config["moment_cap"],
-            "EI_start": self.config["EI_start"],
+            "moment_cap": config["moment_cap"],
+            "EI_start": config["EI_start"],
             "ei_column_idx": -2,
         }
         performance = Performance(name="dsheet_moment", parameters=perf_params)
@@ -53,10 +52,9 @@ class ReliabilityPipeline(FragilityPipeline):
         super().__init__(
             settings_path=settings_path,
             performance=performance,
-            obs_error=self.config["obs_error_std"],
+            config=config,
         )
 
-        # Domain components
         self.fragility: Optional[FragilityCurve] = None
 
     def setup(
@@ -80,14 +78,9 @@ class ReliabilityPipeline(FragilityPipeline):
         self.jpdf.add_water_level(water_lvl=-1.0)
 
         # Initialize corrosion model
-        with open(self.settings_path, "r") as f:
-            settings = json.load(f)
-        params = settings.get("parameters", {})
-        C50_mu = params.get("C50_mu", 1.5)
-        C50_std = params.get("C50_std", 0.75)
         self.corrosion_model = CorrosionModel(
-            C50_mu=C50_mu,
-            C50_std=C50_std,
+            C50_mu=self.config.get("C50_mu", 1.5),
+            C50_std=self.config.get("C50_std", 0.75),
             corrosion_rate=self.config["corrosion_rate"],
             start_thickness=self.config["start_thickness"],
             obs_error_std=self.config["obs_error_std"],

@@ -35,9 +35,20 @@ class FragilityPipeline(BasePipeline):
         self,
         settings_path: Path | str,
         performance,
-        obs_error: float = 0.1,
+        config: Optional[Dict[str, Any]] = None,
+        obs_error: float = None,
     ) -> None:
-        super().__init__(settings_path, performance, obs_error)
+        """Initialize the fragility pipeline.
+
+        Args:
+            settings_path: Path to the JSON settings file.
+            performance: Performance function instance.
+            config: Parameters dict. Reads obs_error automatically.
+            obs_error: Override for observation error std.
+        """
+        self.config = config or {}
+        _obs_error = obs_error or self.config.get("obs_error_std", self.config.get("obs_error", 0.1))
+        super().__init__(settings_path, performance, _obs_error)
 
         # Domain components (set externally by the case study)
         self.corrosion_model = None

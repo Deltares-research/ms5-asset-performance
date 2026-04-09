@@ -46,13 +46,17 @@ class JPDF(BaseJPDF):
         """Load variables from settings and initialize C50 prior.
 
         Loads variable distributions and correlation matrix from the settings
-        file. Skips grid/prior initialization (ark uses MC sampling, not
-        grid-based integration). Then initializes the C50 prior.
+        file via the parent's set_variables(). Then initializes the C50 prior
+        from the parameters block. Skips grid/prior initialization since
+        ark uses MC sampling, not grid-based integration.
 
         Args:
             filepath: Path to specifications JSON file.
         """
-       # Initialize C50 prior from settings parameters
+        self.set_variables(filepath)
+
+        with open(filepath, "r") as f:
+            settings = json.load(f)
         params = settings.get("parameters", {})
         C50_mu = params.get("C50_mu", 1.5)
         C50_std = params.get("C50_std", 0.75)

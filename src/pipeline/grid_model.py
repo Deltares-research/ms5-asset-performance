@@ -4,16 +4,13 @@ Grid/sample-based reliability pipeline.
 Pre-evaluates a model on the JPDF parameter space (grid or IS samples),
 then performs sequential Bayesian updating of the full joint distribution
 and computes Pf by integrating indicator x PDF or via weighted sums.
-
-This is the "settlement" pattern — applicable to any case study where the
-model can be pre-evaluated on a parameter grid or sample set.
 """
 
 import numpy as np
 from scipy import stats as st
 from numpy.typing import NDArray
 from pathlib import Path
-from typing import Optional, Dict, Tuple, Any, Callable
+from typing import Optional, Dict, Tuple, Any, Callable, List
 
 from ..jpdf import JPDF
 from .base import BasePipeline
@@ -23,21 +20,50 @@ class GridModelPipeline(BasePipeline):
     """Pipeline that pre-evaluates a model on the JPDF parameter space.
 
     Supports both grid-based (semi-analytical) and sample-based (importance
-    sampling) modes. The physical model is supplied as a callable, and JPDF
-    variable names are mapped to model parameters via a var_map dict.
+    sampling) modes.
+
+    Usage::
+
+        pipeline = GridModelPipeline(
+            settings_path="settings.json",
+            performance=my_performance,
+            config=config_dict,          # auto-extracts analysis_method, n_samples, obs_error
+        )
+        pipeline.setup(seed=42)
+        pipeline.init_model_output(model_fn=my_model, model_kwargs={...})
+        results = pipeline.run(obs_values=obs_values)
     """
 
     def __init__(
         self,
-        specs_path: Path | str,
+        settings_path: Path | str,
         performance,
-        analysis_method: str = "semi-analytical",
-        n_samples: int = 100_000,
-        obs_error: float = 0.1,
+        config: Optional[Dict[str, Any]] = None,
+        analysis_method: str = None,
+        n_samples: int = None,
+        obs_error: float = None,
     ) -> None:
-        super().__init__(specs_path, performance, obs_error)
-        self.analysis_method = analysis_method
-        self.n_samples = n_samples
+        """Initialize the grid model pipeline.
+
+        Config values are read from the ``config`` dict if provided.
+        Explicit keyword arguments override config values.
+
+        Args:
+            settings_path: Path to the JSON settings file.
+            performance: Performance (limit-state) function instance.
+            config: Parameters dict (e.g. from settings["parameters"]).
+                Reads analysis_method, n_samples, obs_error, forecast_interval,
+                end_time automatically.
+            analysis_method: Override for analysis method.
+            n_samples: Override for number of IS samples.
+            obs_error: Override for observation error std.
+        """
+        self.config = config or {}
+        _obs_error = obs_error or self.config.get("obs_error", 0.1)
+        super().__init__(settings_path, performance, _obs_error)
+
+        self.analysis_method = analysis_method or self.config.get("analysis_method", "semi-analytical")
+        self.n_samples = n_samples or self.config.get("n_samples", 100_000)
 
         # Model output arrays (set by init_model_output)
         self.output_at_obs_times: Optional[NDArray] = None
@@ -56,9 +82,10 @@ class GridModelPipeline(BasePipeline):
     # ------------------------------------------------------------------
 
     def setup(self, seed: int = 42, **kwargs) -> None:
-        """Initialize JPDF from specs and optionally draw IS samples."""
+        """Initialize JPDF from settings and optionally draw IS samples."""
         self.jpdf = JPDF(name="pipeline")
-        self.jpdf.set_prior_from_specs(self.specs_path)
+        self.jpdf.set_variables(self.settings_path)
+        self.jpdf.set_prior_from_settings()
 
         if self.is_sample_based:
             self.jpdf.init_prior_samples(
@@ -162,14 +189,77 @@ class GridModelPipeline(BasePipeline):
         }
 
     # ------------------------------------------------------------------
+    # Convenience: setup + run in one call
+    # ------------------------------------------------------------------
+
+    def run(
+        self,
+        obs_times: NDArray,
+        obs_values: NDArray,
+        model_fn: Callable,
+        var_map: Optional[Dict[str, str]] = None,
+        model_kwargs: Optional[Dict[str, Any]] = None,
+        forecast_times: Optional[NDArray] = None,
+        cache_dir: Optional[Path] = None,
+        force_rebuild: bool = False,
+        seed: int = 42,
+        verbose: bool = True,
+    ) -> Dict[float, Dict[str, Any]]:
+        """Run the full pipeline: setup, model evaluation, timeline.
+
+        Combines setup(), init_times(), init_model_output(), and
+        run_timeline() into a single call for convenience.
+
+        Args:
+            obs_times: Observation times.
+            obs_values: Observed values (one per obs_time).
+            model_fn: Model callable.
+            var_map: JPDF-to-model variable name mapping. Defaults to
+                identity mapping from JPDF variable names.
+            model_kwargs: Extra kwargs for model_fn.
+            forecast_times: Forecast time array. If None, built from
+                config keys "forecast_interval" and "end_time".
+            cache_dir: Cache directory for model output.
+            force_rebuild: Force recomputation of cached output.
+            seed: Random seed.
+            verbose: Print progress.
+
+        Returns:
+            Results dict.
+        """
+        self.setup(seed=seed)
+
+        # Default var_map: identity
+        if var_map is None:
+            var_map = {name: name for name in self.jpdf.variable_names}
+
+        # Default forecast_times from config
+        if forecast_times is None:
+            interval = self.config.get("forecast_interval", 10)
+            end_time = self.config.get("end_time", obs_times[-1])
+            forecast_times = np.arange(0, end_time + interval, interval)
+
+        self.init_times(obs_times=obs_times, forecast_times=forecast_times)
+
+        self.init_model_output(
+            model_fn=model_fn,
+            var_map=var_map,
+            model_kwargs=model_kwargs,
+            cache_dir=cache_dir,
+            force_rebuild=force_rebuild,
+        )
+
+        return self.run_timeline(obs_values=obs_values, verbose=verbose)
+
+    # ------------------------------------------------------------------
     # Model evaluation
     # ------------------------------------------------------------------
 
     def init_model_output(
         self,
         model_fn: Callable,
-        var_map: Dict[str, str],
-        model_kwargs: Dict[str, Any] = None,
+        var_map: Optional[Dict[str, str]] = None,
+        model_kwargs: Optional[Dict[str, Any]] = None,
         cache_dir: Optional[Path] = None,
         force_rebuild: bool = False,
     ) -> None:
@@ -178,11 +268,14 @@ class GridModelPipeline(BasePipeline):
         Args:
             model_fn: Callable with signature
                 ``model_fn(t=..., **var_arrays, grid_based=..., **model_kwargs)``.
-            var_map: Dict mapping JPDF variable names to model parameter names.
+            var_map: JPDF-to-model variable name mapping. Defaults to
+                identity mapping.
             model_kwargs: Additional keyword arguments passed to model_fn.
             cache_dir: Directory for .npy caches.
             force_rebuild: If True, recompute even if cache exists.
         """
+        if var_map is None:
+            var_map = {name: name for name in self.jpdf.variable_names}
         model_kwargs = model_kwargs or {}
 
         cache_obs = cache_dir / "output_obs.npy" if cache_dir else None
