@@ -62,6 +62,7 @@ _geomodel_path = _remote / "input" / "model.shi"
 _base_model = None
 
 MOMENT_CAP = _config["moment_cap"]
+ANCHOR_CAPACITY = _config["anchor_capacity"]
 START_THICKNESS = _config["start_thickness"]
 
 
@@ -163,7 +164,7 @@ def lsf_anchor(
         Corrosion ratio [-], 0 (intact) to 1 (fully corroded).
     """
     factor = 1.0 - corrosion_rate
-    f_yield = _base_model.anchor.YieldF * factor
+    f_yield = ANCHOR_CAPACITY * factor
 
     # Deep-copy and update model via payload
     model = deepcopy(_base_model)
@@ -220,7 +221,7 @@ def main(lsf_name: str = "lsf_wall", use_api: bool = False, force_rebuild: bool 
 
     init_model(use_api=use_api)
     lsf_fn = LSF_REGISTRY[lsf_name]
-    n_fc_grid = _config.get("n_fc_grid", 11)
+    n_cr_grid = _config.get("n_cr_grid", 11)
 
     print("=" * 60)
     print("Building fragility curve for D-SheetPiling")
@@ -240,11 +241,11 @@ def main(lsf_name: str = "lsf_wall", use_api: bool = False, force_rebuild: bool 
         },
     )
 
-    grid = {"corrosion_rate": np.linspace(0.0, 1.0, n_fc_grid)}
+    grid = {"corrosion_rate": np.linspace(0.0, 1.0, n_cr_grid)}
     cache_dir = _remote / "output" / f"fragility_curve_{lsf_name}"
 
     print(f"LSF: {lsf_name}")
-    print(f"Grid: {n_fc_grid} points from 0.0 to 1.0")
+    print(f"Grid: {n_cr_grid} points from 0.0 to 1.0")
     print(f"Cache: {cache_dir}\n")
 
     results = builder.build(
