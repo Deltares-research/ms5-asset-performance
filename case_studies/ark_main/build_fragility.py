@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 
 from src.io import get_remote_path
 from src.geotechnical_models.dsheetpiling.model import DSheetPiling
+from src.reliability_models.dsheetpiling import build_payload, apply_payload
 from src.ptk import FragilityCurveBuilder
 
 
@@ -53,19 +54,26 @@ def load_settings() -> dict:
 # Model & LSF
 # ---------------------------------------------------------------------------
 
-# Load model once — shared across all LSF evaluations
+# Load settings once — model creation deferred to init_model()
 _settings = load_settings()
 _config = _settings["parameters"]
-_api_key = load_api_key()
 _remote = get_remote_path(_ENV)
 _geomodel_path = _remote / "input" / "model.shi"
-_base_model = DSheetPiling(str(_geomodel_path), api_key=_api_key)
+_base_model = None
 
 MOMENT_CAP = _config["moment_cap"]
 START_THICKNESS = _config["start_thickness"]
 
 
-def lsf(
+def init_model(use_api: bool = False) -> None:
+    """Create the base D-SheetPiling model (called once before LSF evaluations)."""
+    global _base_model
+    api_key = load_api_key() if use_api else None
+    _base_model = DSheetPiling(str(_geomodel_path), api_key=api_key)
+    print(f"Execution: {'API' if api_key else 'local'}")
+
+
+def lsf_wall(
     Klei_soilphi,
     Klei_soilcohesion,
     Klei_soilcurkb1,
@@ -108,21 +116,13 @@ def lsf(
     # Degraded section properties
     factor = 1.0 - corrosion_rate
     m_capacity = MOMENT_CAP * factor
-    ei = Wall_SheetPilingElementEI * factor
 
-    # Deep-copy and update model
+    # Deep-copy and update model via payload
     model = deepcopy(_base_model)
-
-    # Update soil parameters
-    model.update_soils({
-        "Klei": {"soilphi": Klei_soilphi, "soilcohesion": Klei_soilcohesion, "soilcurkb1": Klei_soilcurkb1},
-        "Zand": {"soilphi": Zand_soilphi, "soilcurkb1": Zand_soilcurkb1},
-        "Zandvast": {"soilphi": Zandvast_soilphi, "soilcurkb1": Zandvast_soilcurkb1},
-        "Zandlos": {"soilphi": Zandlos_soilphi, "soilcurkb1": Zandlos_soilcurkb1},
-    })
-
-    # Update wall stiffness (degraded by corrosion)
-    model.update_wall({"SheetPilingElementEI": ei})
+    params = {k: v for k, v in locals().items() if k not in ("corrosion_rate", "factor", "m_capacity", "model")}
+    params["Wall_SheetPilingElementEI"] = Wall_SheetPilingElementEI * factor  # degraded EI
+    payload = build_payload(params, model)
+    apply_payload(model, payload)
 
     # Execute
     model.execute()
@@ -159,12 +159,13 @@ def build_stochastic_vars(variables: list) -> dict:
 # Main
 # ---------------------------------------------------------------------------
 
-def main(n_grid: int = 11, force_rebuild: bool = False):
+def main(use_api: bool = False, force_rebuild: bool = False):
+    init_model(use_api=use_api)
+    n_fc_grid = _config.get("n_fc_grid", 11)
+
     print("=" * 60)
     print("Building fragility curve for D-SheetPiling")
     print("=" * 60)
-    print(f"API: {'yes' if _api_key else 'no (local)'}")
-    print(f"Work dir: {WORK_DIR}")
 
     stochastic_vars = build_stochastic_vars(_settings["variables"])
 
@@ -180,10 +181,11 @@ def main(n_grid: int = 11, force_rebuild: bool = False):
         },
     )
 
-    grid = {"corrosion_rate": np.linspace(0.0, 1.0, n_grid)}
+    grid = {"corrosion_rate": np.linspace(0.0, 1.0, n_fc_grid)}
     cache_dir = _remote / "output" / "fragility_curve"
 
-    print(f"Grid: {n_grid} points, cache: {cache_dir}\n")
+    print(f"Grid: {n_fc_grid} points from 0.0 to 1.0")
+    print(f"Cache: {cache_dir}\n")
 
     results = builder.build(
         grid=grid,
@@ -202,7 +204,7 @@ def main(n_grid: int = 11, force_rebuild: bool = False):
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--n_grid", type=int, default=11)
-    parser.add_argument("--force_rebuild", action="store_true")
+    parser.add_argument("--use_api", action="store_true", help="Use the D-SheetPiling compute API")
+    parser.add_argument("--force_rebuild", action="store_true", help="Recompute all points")
     args = parser.parse_args()
-    main(n_grid=args.n_grid, force_rebuild=args.force_rebuild)
+    main(use_api=args.use_api, force_rebuild=args.force_rebuild)
