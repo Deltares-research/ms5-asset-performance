@@ -124,20 +124,75 @@ def lsf_wall(
     payload = build_payload(params, model)
     apply_payload(model, payload)
 
-    # Execute
-    model.execute()
+    try:
+        # Execute
+        model.execute()
 
-    # Limit state: capacity - demand
-    max_moment = model.results.max_moment
-    if isinstance(max_moment, (list, np.ndarray)):
-        max_moment = max_moment[0]
+        # Limit state: capacity - demand
+        max_moment = model.results.max_moment
+        if isinstance(max_moment, (list, np.ndarray)):
+            max_moment = max_moment[0]
 
-    return m_capacity - abs(max_moment)
+        return m_capacity - abs(max_moment)
+    except:
+        return -99999.0
+
+def lsf_anchor(
+    Klei_soilphi,
+    Klei_soilcohesion,
+    Klei_soilcurkb1,
+    Zand_soilphi,
+    Zand_soilcurkb1,
+    Zandvast_soilphi,
+    Zandvast_soilcurkb1,
+    Zandlos_soilphi,
+    Zandlos_soilcurkb1,
+    Wall_SheetPilingElementEI,
+    corrosion_rate,
+):
+    """Limit state function: g = F_yield(r) - |F_anchor|
+
+    Anchor yield force degrades linearly with corrosion.
+    The sheet pile stiffness also degrades, affecting the anchor force
+    distribution computed by D-SheetPiling.
+
+    Parameters
+    ----------
+    (same soil/wall parameters as lsf_wall)
+    corrosion_rate : float
+        Corrosion ratio [-], 0 (intact) to 1 (fully corroded).
+    """
+    factor = 1.0 - corrosion_rate
+    f_yield = _base_model.anchor.YieldF * factor
+
+    # Deep-copy and update model via payload
+    model = deepcopy(_base_model)
+    params = {k: v for k, v in locals().items() if k not in ("corrosion_rate", "factor", "f_yield", "model")}
+    params["Wall_SheetPilingElementEI"] = Wall_SheetPilingElementEI * factor
+    payload = build_payload(params, model)
+    apply_payload(model, payload)
+
+    try:
+        model.execute()
+
+        anchor_force = model.results.anchor_force
+        if isinstance(anchor_force, (list, np.ndarray)):
+            anchor_force = anchor_force[0]
+
+        return f_yield - abs(anchor_force)
+    except:
+        return -99999.0
 
 
 # ---------------------------------------------------------------------------
-# Stochastic variable definitions
+# LSF registry — add new LSFs here
 # ---------------------------------------------------------------------------
+
+LSF_REGISTRY = {
+    "lsf_wall": lsf_wall,
+    "lsf_anchor": lsf_anchor,
+}
+
 
 def build_stochastic_vars(variables: list) -> dict:
     """Convert settings variable defs to FragilityCurveBuilder format."""
@@ -159,8 +214,12 @@ def build_stochastic_vars(variables: list) -> dict:
 # Main
 # ---------------------------------------------------------------------------
 
-def main(use_api: bool = False, force_rebuild: bool = False):
+def main(lsf_name: str = "lsf_wall", use_api: bool = False, force_rebuild: bool = False):
+    if lsf_name not in LSF_REGISTRY:
+        raise ValueError(f"Unknown LSF '{lsf_name}'. Available: {list(LSF_REGISTRY.keys())}")
+
     init_model(use_api=use_api)
+    lsf_fn = LSF_REGISTRY[lsf_name]
     n_fc_grid = _config.get("n_fc_grid", 11)
 
     print("=" * 60)
@@ -170,7 +229,7 @@ def main(use_api: bool = False, force_rebuild: bool = False):
     stochastic_vars = build_stochastic_vars(_settings["variables"])
 
     builder = FragilityCurveBuilder(
-        lsf=lsf_wall,
+        lsf=lsf_fn,
         stochastic_vars=stochastic_vars,
         deterministic_vars=["corrosion_rate"],
         form_params={
@@ -182,7 +241,6 @@ def main(use_api: bool = False, force_rebuild: bool = False):
     )
 
     grid = {"corrosion_rate": np.linspace(0.0, 1.0, n_fc_grid)}
-    lsf_name = lsf_wall.__name__
     cache_dir = _remote / "output" / f"fragility_curve_{lsf_name}"
 
     print(f"LSF: {lsf_name}")
@@ -206,7 +264,9 @@ def main(use_api: bool = False, force_rebuild: bool = False):
 
 if __name__ == "__main__":
     parser = ArgumentParser()
+    parser.add_argument("--lsf", type=str, default="lsf_wall",
+                        help=f"LSF to use. Available: {list(LSF_REGISTRY.keys())}")
     parser.add_argument("--use_api", action="store_true", help="Use the D-SheetPiling compute API")
     parser.add_argument("--force_rebuild", action="store_true", help="Recompute all points")
     args = parser.parse_args()
-    main(use_api=args.use_api, force_rebuild=args.force_rebuild)
+    main(lsf_name=args.lsf, use_api=args.use_api, force_rebuild=args.force_rebuild)
