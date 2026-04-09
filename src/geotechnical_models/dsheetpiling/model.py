@@ -13,8 +13,16 @@ from datetime import datetime
 
 class DSheetPiling(GeoModelBase):
 
-    def __init__(self, model_path: str | Path, exe_path: Optional[str | Path] = None) -> None:
+    API_URL = "https://computedsheet.deltares.nl"
+
+    def __init__(
+        self,
+        model_path: str | Path,
+        exe_path: Optional[str | Path] = None,
+        api_key: Optional[str] = None,
+    ) -> None:
         super(GeoModelBase, self).__init__()
+        self.api_key = api_key
         self.parse_model_path(model_path)
         self.parse_exe_path(exe_path)
         self.parse_model(self.model_path)
@@ -202,17 +210,33 @@ class DSheetPiling(GeoModelBase):
         self.geomodel.input.input_data.anchors = updated_anchor_data
 
     def execute(self, result_path: Optional[str | Path] = None, i_run: Optional[int] = None) -> None:
+        """Execute the model locally or via API.
+
+        If ``self.api_key`` is set, uses the Deltares compute API.
+        Otherwise runs D-SheetPiling locally via geolib.
+        """
         if i_run is None:
             now = datetime.now()
             timestamp = now.strftime("%Y%m%d_%H%M%S")
             file_name = self.file_name + "_executed_" + timestamp + self.file_suffix
         else:
             file_name = self.file_name + f"_executed_run{i_run:d}" + self.file_suffix
+
         exe_path = self.exe_path / file_name
         geomodel = deepcopy(self.geomodel)
-        geomodel.serialize(exe_path)  # _executed model is used from now on.
-        geomodel.execute()  # Make sure to add 'geolib.env' in run directory
-        self.results = self.read_dsheet_results(geomodel)
+        geomodel.serialize(exe_path)
+
+        if self.api_key is not None:
+            self._execute_api(exe_path)
+        else:
+            geomodel.execute()
+            self.results = self.read_dsheet_results(geomodel)
+
+        # Cleanup temp files
+        for ext in [".log", ".shi", ".shd"]:
+            tmp = exe_path.with_suffix(ext)
+            if tmp.exists():
+                tmp.unlink()
 
         if result_path is not None:
             if not isinstance(result_path, Path): result_path = Path(Path(result_path).as_posix())
@@ -223,6 +247,53 @@ class DSheetPiling(GeoModelBase):
             self.save_results(result_path)
             log_path = result_path.parent / "log.json"
             self.log_input(log_path)
+
+    def _execute_api(self, input_file: Path) -> None:
+        """Execute via the Deltares D-SheetPiling compute API.
+
+        Uploads the .shi file, waits for the result, downloads and parses
+        the output .shd file.
+
+        Args:
+            input_file: Path to the serialized .shi input file.
+        """
+        import requests
+
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+
+        # Upload and start job
+        with open(input_file, "rb") as f:
+            files = {"file": (input_file.name, f)}
+            response = requests.post(
+                f"{self.API_URL}/run", files=files, headers=headers
+            )
+
+        if response.status_code != 200:
+            raise RuntimeError(f"API upload failed: {response.text}")
+
+        job_id = response.json()["job_id"]
+
+        # Download result
+        response = requests.get(
+            f"{self.API_URL}/result/{job_id}", headers=headers
+        )
+
+        if response.status_code != 200:
+            raise RuntimeError(f"API result fetch failed: {response.text}")
+
+        content_type = response.headers.get("content-type", "")
+        if "application/octet-stream" not in content_type:
+            status = response.json()
+            raise RuntimeError(f"API returned status instead of file: {status}")
+
+        # Save and parse output
+        output_file = input_file.with_suffix(".shd")
+        with open(output_file, "wb") as f:
+            f.write(response.content)
+
+        output_geomodel = DSheetPilingModel()
+        output_geomodel.parse(output_file)
+        self.results = self.read_dsheet_results(output_geomodel)
 
     def read_dsheet_results(self, geomodel: Optional[DSheetPilingModel] = None) -> DSheetPilingResults:
 

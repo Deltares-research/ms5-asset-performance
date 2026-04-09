@@ -84,7 +84,7 @@ def load_parameter_distributions() -> pd.DataFrame:
     Returns:
         DataFrame with parameter distribution definitions.
     """
-    filepath = get_remote_path() / "parameter_distributions.csv"
+    filepath = get_remote_path() / "input/parameter_distributions.csv"
     return pd.read_csv(filepath)
 
 
@@ -95,7 +95,7 @@ def save_parameter_distributions(df: pd.DataFrame) -> None:
     Args:
         df: DataFrame with columns: parameter, mean, std, lower, upper
     """
-    filepath = get_remote_path() / "parameter_distributions.csv"
+    filepath = get_remote_path() / "input/parameter_distributions.csv"
     filepath.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(filepath, index=False)
 
@@ -115,7 +115,7 @@ def load_mc_samples(fmt: str = "npy") -> NDArray:
         Sample array.
     """
     if fmt == "csv":
-        filepath = get_remote_path() / "samples/mc_samples.csv"
+        filepath = get_remote_path() / "input/samples/mc_samples.csv"
         return pd.read_csv(filepath).values
     return load_npy("samples/mc_samples.npy")
 
@@ -129,7 +129,7 @@ def save_mc_samples(samples: NDArray, fmt: str = "npy") -> None:
         fmt: File format, "npy" or "csv".
     """
     if fmt == "csv":
-        filepath = get_remote_path() / "samples/mc_samples.csv"
+        filepath = get_remote_path() / "input/samples/mc_samples.csv"
         filepath.parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(samples).to_csv(filepath, index=False)
     else:
@@ -147,7 +147,7 @@ def load_surrogate_samples(fmt: str = "npy") -> NDArray:
         Sample array.
     """
     if fmt == "csv":
-        filepath = get_remote_path() / "samples/surrogate_samples.csv"
+        filepath = get_remote_path() / "input/samples/surrogate_samples.csv"
         return pd.read_csv(filepath).values
     return load_npy("samples/surrogate_samples.npy")
 
@@ -161,7 +161,7 @@ def save_surrogate_samples(samples: NDArray, fmt: str = "npy") -> None:
         fmt: File format, "npy" or "csv".
     """
     if fmt == "csv":
-        filepath = get_remote_path() / "samples/surrogate_samples.csv"
+        filepath = get_remote_path() / "input/samples/surrogate_samples.csv"
         filepath.parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(samples).to_csv(filepath, index=False)
     else:
@@ -179,7 +179,7 @@ def load_surrogate_data() -> pd.DataFrame:
     Returns:
         DataFrame with input parameters and displacement/moment columns.
     """
-    filepath = get_remote_path() / "surrogate/surrogate_data.csv"
+    filepath = get_remote_path() / "input/surrogate/surrogate_data.csv"
     return pd.read_csv(filepath)
 
 
@@ -190,7 +190,7 @@ def save_surrogate_data(df: pd.DataFrame) -> None:
     Args:
         df: DataFrame with input parameters and displacement/moment columns.
     """
-    filepath = get_remote_path() / "surrogate/surrogate_data.csv"
+    filepath = get_remote_path() / "input/surrogate/surrogate_data.csv"
     filepath.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(filepath, index=False)
 
@@ -243,7 +243,7 @@ def save_surrogate_model(
         scaler_x: Fitted input scaler.
         scaler_y: Fitted output scaler.
     """
-    model_dir = get_remote_path() / "surrogate/model"
+    model_dir = get_remote_path() / "input/surrogate/model"
     model_dir.mkdir(parents=True, exist_ok=True)
 
     torch.save(model.state_dict(), model_dir / "torch_weights.pth")
@@ -293,8 +293,8 @@ def load_fragility_curve(name: str = "fragility"):
     from case_studies.dsheet_example.performance_function import FragilityCurve
 
     # Try npz first (has cached moments), then json
-    npz_path = get_remote_path() / f"output/{name}.npz"
-    json_path = get_remote_path() / f"output/{name}.json"
+    npz_path = get_remote_path() / f"output/results/{name}.npz"
+    json_path = get_remote_path() / f"output/results/{name}.json"
 
     if npz_path.exists():
         return FragilityCurve.load(npz_path)
@@ -313,15 +313,15 @@ def save_fragility_curve(fragility, name: str = "fragility") -> None:
         name: Base name of fragility file (without extension).
         fmt: Format - "npz" (with cached moments) or "json" (portable summary).
     """
-    filepath = get_remote_path() / f"output/{name}.json"
+    filepath = get_remote_path() / f"output/results/{name}.json"
     filepath.parent.mkdir(parents=True, exist_ok=True)
     fragility.save(filepath, fmt=fmt)
 
 
 def fragility_exists(name: str = "fragility") -> bool:
     """Check if a fragility curve exists in the remote folder."""
-    npz_path = get_remote_path() / f"output/{name}.npz"
-    json_path = get_remote_path() / f"output/{name}.json"
+    npz_path = get_remote_path() / f"output/results/{name}.npz"
+    json_path = get_remote_path() / f"output/results/{name}.json"
     return npz_path.exists() or json_path.exists()
 
 
@@ -342,7 +342,7 @@ def load_fragility_surface(name: str = "fragility_surface"):
         FragilitySurfaceIndex instance.
     """
 
-    surface_dir = get_remote_path() / f"output/{name}"
+    surface_dir = get_remote_path() / f"output/results/{name}"
     if not surface_dir.exists():
         raise FileNotFoundError(f"Fragility surface not found: {surface_dir}")
 
@@ -359,13 +359,13 @@ def save_fragility_surface(surface, name: str = "fragility_surface") -> None:
         surface: FragilitySurfaceIndex instance.
         name: Name of fragility surface directory.
     """
-    surface_dir = get_remote_path() / f"output/{name}"
+    surface_dir = get_remote_path() / f"output/results/{name}"
     surface.save(surface_dir)
 
 
 def fragility_surface_exists(name: str = "fragility_surface") -> bool:
     """Check if a fragility surface exists in the remote folder."""
-    surface_dir = get_remote_path() / f"output/{name}"
+    surface_dir = get_remote_path() / f"output/results/{name}"
     manifest_path = surface_dir / "manifest.json"
     return manifest_path.exists()
 

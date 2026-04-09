@@ -4,7 +4,7 @@ from pathlib import Path
 from src.geotechnical_models.dsheetpiling.model import DSheetPiling
 from src.rvs.state import MvnRV, GaussianState
 from src.reliability_models.dsheetpiling.lsf import package_lsf
-from src.reliability_models.dsheetpiling.reliability import ReliabilityFragilityCurve
+from src.ptk import FragilityCurveBuilder as ReliabilityFragilityCurve
 
 
 if __name__ == "__main__":

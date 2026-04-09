@@ -8,7 +8,6 @@ as the physical model. Handles file I/O, configuration, and plotting.
 import numpy as np
 from pathlib import Path
 from typing import Optional
-from dotenv import load_dotenv
 import os
 import json
 from datetime import datetime
@@ -16,25 +15,28 @@ from argparse import ArgumentParser
 
 from src import ReliabilityPipeline
 from src.plotting import save_jpdf_plots, make_gifs
-from case_studies.settlement_example.io import load_json, get_remote_path
+from src.io import get_remote_path, load_json
 from performance_function import Performance
 from settlement_engine import get_settlement
 from plotting import (save_settlement_forecast_plots, save_settlement_residual_plots,
                       save_beta_over_time_plot)
 
 
+_ENV = Path(__file__).parent / ".env"
+
+
 def main(input_file: Optional[str] = None, analysis_method: Optional[str] = None, force_rebuild: bool = False):
     # Paths
-    load_dotenv(".env")
-    os.environ["REMOTE_DATA_PATH"] = str(get_remote_path() / "input")
+    remote = get_remote_path(_ENV)
+    input_dir = remote / "input"
     if input_file:
-        settings_path = Path(os.environ["REMOTE_DATA_PATH"]) / f"{input_file}.json"
+        settings_path = input_dir / f"{input_file}.json"
     else:
-        settings_path = Path(os.environ["REMOTE_DATA_PATH"]) / "settings.json"
+        settings_path = input_dir / "settings.json"
 
     username = os.environ.get("USER", "unknown").lower()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    output_dir = get_remote_path() / f"output/results/{username}_{timestamp}"
+    output_dir = remote / f"output/results/{username}_{timestamp}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load config
@@ -45,7 +47,7 @@ def main(input_file: Optional[str] = None, analysis_method: Optional[str] = None
         config["analysis_method"] = analysis_method
 
     # Load observations
-    setting_raw = load_json("data.json")
+    setting_raw = load_json("data.json", remote_path=remote)
     if isinstance(setting_raw, list):
         setting = {row["time"]: row["settlement_1"] for row in setting_raw}
     else:
@@ -82,7 +84,7 @@ def main(input_file: Optional[str] = None, analysis_method: Optional[str] = None
         var_map={"CR": "CR", "k": "k"},
         model_kwargs=model_kwargs,
         forecast_times=forecast_times,
-        cache_dir=get_remote_path() / "output/cache",
+        cache_dir=remote / "output/cache",
         force_rebuild=force_rebuild,
     )
 

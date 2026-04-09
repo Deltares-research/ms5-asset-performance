@@ -1,169 +1,174 @@
-from src.geotechnical_models.dsheetpiling.model import *
-from src.rvs.state import *
-from typing import Type, Tuple, Dict, Callable
-
-
-LSFInputType = Annotated[Tuple[float,...] | List[float] | NDArray[np.float64], "lsf_input"]
-LSFType = Callable[[LSFInputType], float]
-
-
-def build_lsf(arg_names, body_func):
-    """
-    Creates a new function with named arguments, that internally calls `body_func(**kwargs)`.
-    """
-    args_str = ", ".join(arg_names)
-    dict_pack = ", ".join([f"'{arg}': {arg}" for arg in arg_names])
-
-    func_code = f"""
-def lsf({args_str}):
-    params = {{{dict_pack}}}
-    return body_func(params) - 1
 """
-    namespace = {'body_func': body_func}
-    exec(func_code, namespace)
-    fn = namespace['lsf']
-    fn._generated_source = func_code
-    return fn
+D-SheetPiling limit state function assembly.
 
+Builds an LSF callable from a DSheetPiling model, a GaussianState,
+and a performance configuration. Uses a payload dict to communicate
+parameter updates to the model.
 
-def unpack_soil_params(params: Dict[str, float], soil_layers: List[str]) -> Dict[str, Dict[str, float]]:
-    soil_data = {}
-    for (key, val) in params.items():
-        try:
-            soil_name = key.split("_")[0]
-            param_name = key.split("_")[1]
-        except:
-            continue
-        if not soil_name in soil_layers:
-            continue
-        param_value = val
-        if not soil_name in list(soil_data.keys()):
-            soil_data[soil_name] = {param_name: float(param_value)}
-        else:
-            if not param_name in list(soil_data[soil_name].keys()):
-                soil_data[soil_name][param_name] = float(param_value)
-    return soil_data
+Payload format::
 
-
-def unpack_water_params(params: Dict[str, float], water_lvls: List[str]) -> Dict[str, float]:
-    water_data = {}
-    for (key, val) in params.items():
-        try:
-            water_lvl_name = key.split("_")[-1]
-        except:
-            continue
-        if not water_lvl_name in water_lvls:
-            continue
-        water_data[water_lvl_name] = float(val)
-    return water_data
-
-
-def unpack_load_params(params: Dict[str, float], load_names: List[str]) -> Dict[str, float]:
-    load_data = {}
-    for (key, val) in params.items():
-        try:
-            load_name = key.split("_")[0]
-        except:
-            continue
-        if not load_name in load_names:
-            continue
-        load_side = key.split("_")[-1]
-        if load_side == "left":
-            load_data[load_name] = (float(val), 0)
-        else:
-            load_side[load_name] = (0, float(val))
-    return load_data
-
-
-def unpack_anchor_params(params: Dict[str, float], anchor_txt: str) -> str:
-    lines = anchor_txt.splitlines()
-    data_values = lines[-1].split()
-    # data_values: [Nr, Level, E-mod, Cross_sect, Length, YieldF, Angle, Height, Side, Name]
-    # indices:       0    1      2        3          4       5       6      7      8     9
-
-    field_map = {
-        "Nr": 0, "Level": 1, "E-mod": 2, "Cross": 3,
-        "Length": 4, "YieldF": 5, "Angle": 6,
-        "Height": 7, "Side": 8,
+    {
+        "soil":   {"Sand": {"soilphi": 30.0}, "Clay": {"soilcohesion": 20.0}},
+        "water":  {"WL_left": -1.5},
+        "loads":  {"Surcharge": (10.0, 0.0)},
+        "anchor": {"Level": -2.0},
+        "wall":   {"corrosion": 0.3, "start_thickness": 9.5},
     }
 
-    for key, val in params.items():
-        parts = key.split("_")
-        if parts[0].lower() != "anchor":
-            continue
-        field = parts[-1]
-        if field in field_map:
-            # data_values[field_map[field]] = str(val)
-            data_values[field_map[field]] = f"{val:.2f}"
+Each key is optional. Only present keys trigger the corresponding update.
+"""
 
-    # Reconstruct matching original column spacing
-    lines[-1] = (
-        f"  {data_values[0]}"                    # Nr
-        f"  {data_values[1]:>5s}"                # Level
-        f"  {data_values[2]:>11s}"               # E-mod
-        f"  {data_values[3]:>11s}"               # Cross sect.
-        f"    {data_values[4]:>5s}"              # Length
-        f" {data_values[5]:>8s}"                 # YieldF
-        f"    {data_values[6]:>5s}"              # Angle
-        f"     {data_values[7]:>4s}"             # Height
-        f"      {data_values[8]}"                # Side
-        f" {data_values[9]}"                     # Name
-    )
+from typing import Type, Tuple, Callable, Dict, List, Optional, Any
+import numpy as np
+from numpy.typing import NDArray
 
-    return "\n".join(lines)
+from src.geotechnical_models.dsheetpiling.model import DSheetPiling
+from src.rvs.state import StateBase
+from src.ptk.lsf import build_lsf, LSFType
+from .params import (
+    unpack_soil_params,
+    unpack_water_params,
+    unpack_load_params,
+    unpack_anchor_params,
+)
+
+
+def build_payload(
+    params: Dict[str, float],
+    geomodel: DSheetPiling,
+) -> Dict[str, Any]:
+    """Build a payload dict from a flat parameter dict.
+
+    Applies the naming conventions (SoilName_paramName, water_LevelName, etc.)
+    to route each parameter to the correct model update function.
+
+    Args:
+        params: Flat dict of parameter values, e.g.
+            {"Sand_soilphi": 30.0, "water_WL_left": -1.5, "corrosion": 0.3}.
+        geomodel: DSheetPiling model (used to get valid soil/water names).
+
+    Returns:
+        Payload dict with keys: soil, water, loads, anchor, wall.
+        Only keys with non-empty data are included.
+    """
+    payload = {}
+
+    soil = unpack_soil_params(params, list(geomodel.soils.keys()))
+    if soil:
+        payload["soil"] = soil
+
+    water = unpack_water_params(params, [lvl.name for lvl in geomodel.water.water_lvls])
+    if water:
+        payload["water"] = water
+
+    load_names = list(geomodel.uniform_loads.keys()) if geomodel.uniform_loads else []
+    loads = unpack_load_params(params, load_names)
+    if loads:
+        payload["loads"] = loads
+
+    # Wall / corrosion: look for "corrosion" key
+    if "corrosion" in params:
+        payload["wall"] = {
+            "corrosion": params["corrosion"],
+            "start_thickness": params.get("start_thickness", 9.5),
+        }
+
+    return payload
+
+
+def apply_payload(geomodel: DSheetPiling, payload: Dict[str, Any]) -> None:
+    """Apply a payload dict to the D-SheetPiling model.
+
+    Only calls update functions for keys present in the payload.
+
+    Args:
+        geomodel: DSheetPiling model to update.
+        payload: Payload dict with optional keys: soil, water, loads, anchor, wall.
+    """
+    if "soil" in payload:
+        geomodel.update_soils(payload["soil"])
+
+    if "water" in payload:
+        geomodel.update_water(payload["water"])
+
+    if "loads" in payload:
+        geomodel.update_uniform_loads(payload["loads"])
+
+    if "anchor" in payload:
+        anchor_txt = geomodel.geomodel.input.input_data.anchors
+        updated_txt = unpack_anchor_params(payload["anchor"], anchor_txt)
+        geomodel.update_anchors(updated_txt)
+
+    if "wall" in payload:
+        wall = payload["wall"]
+        if "corrosion" in wall:
+            geomodel.apply_corrosion(
+                wall["corrosion"], wall.get("start_thickness", 9.5)
+            )
 
 
 def safety_fn(
-        params: Dict[str, float],
-        geomodel: DSheetPiling,
-        state: Type[StateBase],
-        performance_config: Tuple[str, Callable[[float | List[float]], float]],
-        standardized_rv: bool = False
+    params: Dict[str, float],
+    geomodel: DSheetPiling,
+    state: Type[StateBase],
+    performance_config: Tuple[str, Callable],
+    standardized_rv: bool = False,
 ) -> float:
+    """Compute safety factor by running the D-SheetPiling model.
 
-    """
-    NOTE: Soil layer name and soil parameter name must be split by a lowerdash("_").
-    TODO: Use something less common that _?
-    """
+    Builds a payload from the flat params dict, applies it to the model,
+    executes, and evaluates the performance function.
 
-    rvs = {key: param for (key, param) in params.items() if key in state.names}
+    Args:
+        params: Flat dict of parameter values keyed by variable name.
+        geomodel: D-SheetPiling model wrapper.
+        state: Gaussian state with variable definitions.
+        performance_config: Tuple of (measure_name, performance_fn).
+        standardized_rv: If True, transform from standard normal domain.
+
+    Returns:
+        Safety factor (>1 = safe).
+    """
+    rvs = {key: val for key, val in params.items() if key in state.names}
     if standardized_rv:
         x_st = np.asarray(list(rvs.values()))
         x = state.transform(x_st)
-        rvs = {key: val for (key, val) in zip(rvs.keys(), x)}
+        rvs = {key: val for key, val in zip(rvs.keys(), x)}
 
-    soil_data = unpack_soil_params(rvs, list(geomodel.soils.keys()))
-    water_data = unpack_water_params(rvs, [lvl.name for lvl in geomodel.water.water_lvls])
+    # Merge transformed RVs with any extra params (e.g. corrosion)
+    all_params = {**rvs, **{k: v for k, v in params.items() if k not in state.names}}
 
-    geomodel.update_soils(soil_data)
-    geomodel.update_water(water_data)
+    payload = build_payload(all_params, geomodel)
+    apply_payload(geomodel, payload)
     geomodel.execute()
-    results = geomodel.results
 
     measure_name, performance_fn = performance_config
-    measure = getattr(results, measure_name)
-    sf = performance_fn(measure)
-
-    return sf
+    measure = getattr(geomodel.results, measure_name)
+    return performance_fn(measure)
 
 
 def package_lsf(
-        geomodel: DSheetPiling,
-        state: Type[StateBase],
-        performance_config: Tuple[str, Callable[[float | List[float]], float]],
-        standardized_rv: bool = False
+    geomodel: DSheetPiling,
+    state: Type[StateBase],
+    performance_config: Tuple[str, Callable],
+    standardized_rv: bool = False,
 ) -> LSFType:
+    """Create an LSF callable from a D-SheetPiling model and state.
 
-    model_parsed = hasattr(geomodel, "geomodel")
-    if not model_parsed:
+    Args:
+        geomodel: Parsed D-SheetPiling model.
+        state: Gaussian state with variable definitions.
+        performance_config: Tuple of (measure_name, performance_fn).
+        standardized_rv: If True, LSF receives standard normal values.
+
+    Returns:
+        LSF callable with positional args matching state.names.
+    """
+    if not hasattr(geomodel, "geomodel"):
         raise ValueError("Geotechnical model has not yet been parsed.")
 
-    lsf = build_lsf(state.names, lambda x: safety_fn(x, geomodel, state, performance_config, standardized_rv))
-
+    lsf = build_lsf(
+        state.names,
+        lambda x: safety_fn(x, geomodel, state, performance_config, standardized_rv),
+    )
     return lsf
-
-
-if __name__ == "__main__":
-
-    pass
-
