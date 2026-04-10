@@ -103,7 +103,7 @@ def plot_corrosion_forecast_at_time(
     obs_values: Sequence[float] = None,
     obs_error_std: float = 0.4,
     alpha: float = 0.05,
-    start_thickness: float = 9.5,
+    wall_thickness: float = 9.5,
     xlim: tuple = (50, 80),
     ylim: tuple = (0, 9.5),
 ) -> plt.Figure:
@@ -119,11 +119,11 @@ def plot_corrosion_forecast_at_time(
     cr_pr_q95 = cr_grid[np.argmin(np.abs(cr_pr_cdf - (1 - alpha)), axis=1)]
 
     times_pr = np.asarray(list(cr_forecast_prior.keys()))
-    ax.fill_between(times_pr, cr_pr_q05 * start_thickness, cr_pr_q95 * start_thickness,
+    ax.fill_between(times_pr, cr_pr_q05 * wall_thickness, cr_pr_q95 * wall_thickness,
                     color="b", alpha=0.15)
-    ax.plot(times_pr, cr_pr_q05 * start_thickness, color="b", linewidth=0.5)
-    ax.plot(times_pr, cr_pr_q95 * start_thickness, color="b", linewidth=0.5)
-    ax.plot(times_pr, cr_pr_mean * start_thickness, color="b", linewidth=1.5, label="Prior")
+    ax.plot(times_pr, cr_pr_q05 * wall_thickness, color="b", linewidth=0.5)
+    ax.plot(times_pr, cr_pr_q95 * wall_thickness, color="b", linewidth=0.5)
+    ax.plot(times_pr, cr_pr_mean * wall_thickness, color="b", linewidth=1.5, label="Prior")
 
     # Posterior
     cr_po = np.vstack(list(cr_forecast_posterior.values()))
@@ -133,11 +133,11 @@ def plot_corrosion_forecast_at_time(
     cr_po_q95 = cr_grid[np.argmin(np.abs(cr_po_cdf - (1 - alpha)), axis=1)]
 
     times_po = np.asarray(list(cr_forecast_posterior.keys()))
-    ax.fill_between(times_po, cr_po_q05 * start_thickness, cr_po_q95 * start_thickness,
+    ax.fill_between(times_po, cr_po_q05 * wall_thickness, cr_po_q95 * wall_thickness,
                     color="r", alpha=0.15)
-    ax.plot(times_po, cr_po_q05 * start_thickness, color="r", linewidth=0.5)
-    ax.plot(times_po, cr_po_q95 * start_thickness, color="r", linewidth=0.5)
-    ax.plot(times_po, cr_po_mean * start_thickness, color="r", linewidth=1.5, label="Posterior")
+    ax.plot(times_po, cr_po_q05 * wall_thickness, color="r", linewidth=0.5)
+    ax.plot(times_po, cr_po_q95 * wall_thickness, color="r", linewidth=0.5)
+    ax.plot(times_po, cr_po_mean * wall_thickness, color="r", linewidth=1.5, label="Posterior")
 
     # Observations
     if obs_times is not None and obs_values is not None:
@@ -166,7 +166,7 @@ def plot_moment_forecast_at_time(
     cr_grid: Sequence[float],
     cr_forecast_prior: Dict[float, Sequence[float]],
     cr_forecast_posterior: Dict[float, Sequence[float]],
-    moment_cap: float = 750.0,
+    wall_moment_capacity: float = 750.0,
     obs_times: Sequence[float] = None,
     obs_moment_cap: Sequence[float] = None,
     alpha: float = 0.05,
@@ -175,7 +175,7 @@ def plot_moment_forecast_at_time(
 ) -> plt.Figure:
     """Plot moment capacity forecast derived from corrosion ratio PDFs.
 
-    moment = moment_cap * (1 - cr). No survived moment logic.
+    moment = wall_moment_capacity * (1 - cr). No survived moment logic.
     """
     cr_grid = np.asarray(cr_grid)
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -187,9 +187,9 @@ def plot_moment_forecast_at_time(
     cr_pr_q05 = cr_grid[np.argmin(np.abs(cr_pr_cdf - alpha), axis=1)]
     cr_pr_q95 = cr_grid[np.argmin(np.abs(cr_pr_cdf - (1 - alpha)), axis=1)]
 
-    m_pr_mean = moment_cap * (1 - cr_pr_mean)
-    m_pr_q95 = moment_cap * (1 - cr_pr_q05)  # low cr → high moment
-    m_pr_q05 = moment_cap * (1 - cr_pr_q95)
+    m_pr_mean = wall_moment_capacity * (1 - cr_pr_mean)
+    m_pr_q95 = wall_moment_capacity * (1 - cr_pr_q05)  # low cr → high moment
+    m_pr_q05 = wall_moment_capacity * (1 - cr_pr_q95)
 
     times_pr = np.asarray(list(cr_forecast_prior.keys()))
     ax.fill_between(times_pr, m_pr_q05, m_pr_q95, color="b", alpha=0.15)
@@ -204,9 +204,9 @@ def plot_moment_forecast_at_time(
     cr_po_q05 = cr_grid[np.argmin(np.abs(cr_po_cdf - alpha), axis=1)]
     cr_po_q95 = cr_grid[np.argmin(np.abs(cr_po_cdf - (1 - alpha)), axis=1)]
 
-    m_po_mean = moment_cap * (1 - cr_po_mean)
-    m_po_q95 = moment_cap * (1 - cr_po_q05)
-    m_po_q05 = moment_cap * (1 - cr_po_q95)
+    m_po_mean = wall_moment_capacity * (1 - cr_po_mean)
+    m_po_q95 = wall_moment_capacity * (1 - cr_po_q05)
+    m_po_q05 = wall_moment_capacity * (1 - cr_po_q95)
 
     times_po = np.asarray(list(cr_forecast_posterior.keys()))
     ax.fill_between(times_po, m_po_q05, m_po_q95, color="r", alpha=0.15)

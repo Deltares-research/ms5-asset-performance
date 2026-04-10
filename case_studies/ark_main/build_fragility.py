@@ -61,9 +61,9 @@ _remote = get_remote_path(_ENV)
 _geomodel_path = _remote / "input" / "model.shi"
 _base_model = None
 
-MOMENT_CAP = _config["moment_cap"]
+WALL_MOMENT_CAPACITY = _config["wall_moment_capacity"]
 ANCHOR_CAPACITY = _config["anchor_capacity"]
-START_THICKNESS = _config["start_thickness"]
+WALL_THICKNESS = _config["wall_thickness"]
 
 
 def init_model(use_api: bool = False) -> None:
@@ -116,7 +116,7 @@ def lsf_wall(
     """
     # Degraded section properties
     factor = 1.0 - corrosion_rate
-    m_capacity = MOMENT_CAP * factor
+    m_capacity = WALL_MOMENT_CAPACITY * factor
 
     # Deep-copy and update model via payload
     model = deepcopy(_base_model)

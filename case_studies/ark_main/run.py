@@ -53,7 +53,7 @@ def init_corrosion_model():
         C50_mu=_config.get("C50_mu", 1.0),
         C50_std=_config.get("C50_std", 0.75),
         corrosion_rate=_config["corrosion_rate"],
-        start_thickness=_config["start_thickness"],
+        wall_thickness=_config["wall_thickness"],
         obs_error_std=_config["obs_error_std"],
         t_start=_config["t_start"],
         n_grid=_config["n_C50_grid"],
@@ -184,9 +184,9 @@ def main(lsf_name: str = "lsf_wall"):
             obs_corrosion_list.append(data[key]["corrosion"])
 
     t_first, t_last = times[0], times[-1]
-    moment_cap = _config["moment_cap"]
-    start_thickness = _config["start_thickness"]
-    obs_moment_cap = [moment_cap * (1 - c / start_thickness) for c in obs_corrosion_list]
+    wall_moment_capacity = _config["wall_moment_capacity"]
+    wall_thickness = _config["wall_thickness"]
+    obs_moment_cap = [wall_moment_capacity * (1 - c / wall_thickness) for c in obs_corrosion_list]
 
     # Build CR forecast PDFs for corrosion/moment plots
     cr_grid_plot = np.linspace(0.0, 1.0, n_cr_grid)
@@ -232,9 +232,9 @@ def main(lsf_name: str = "lsf_wall"):
             obs_times=[t for t in obs_times_list if t <= current_t],
             obs_values=[c for t, c in zip(obs_times_list, obs_corrosion_list) if t <= current_t],
             obs_error_std=_config["obs_error_std"],
-            start_thickness=start_thickness,
+            wall_thickness=wall_thickness,
             xlim=(t_first, t_last),
-            ylim=(0, start_thickness),
+            ylim=(0, wall_thickness),
         )
         save_figure(fig, png_dir / f"corrosion_t{int(current_t):03d}.png")
     collect_pngs_to_pdf(png_dir, plot_dir / "corrosion.pdf")
@@ -249,11 +249,11 @@ def main(lsf_name: str = "lsf_wall"):
             cr_grid=cr_grid_plot,
             cr_forecast_prior=cr_pr,
             cr_forecast_posterior=cr_po,
-            moment_cap=moment_cap,
+            wall_moment_capacity=wall_moment_capacity,
             obs_times=[t for t in obs_times_list if t <= current_t],
             obs_moment_cap=[m for t, m in zip(obs_times_list, obs_moment_cap) if t <= current_t],
             xlim=(t_first, t_last),
-            ylim=(0, moment_cap * 1.1),
+            ylim=(0, wall_moment_capacity * 1.1),
         )
         save_figure(fig, png_dir / f"moment_t{int(current_t):03d}.png")
     collect_pngs_to_pdf(png_dir, plot_dir / "moment.pdf")

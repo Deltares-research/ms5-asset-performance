@@ -12,7 +12,7 @@ Payload format::
         "water":  {"WL_left": -1.5},
         "loads":  {"Surcharge": (10.0, 0.0)},
         "anchor": {"Level": -2.0},
-        "wall":   {"corrosion": 0.3, "start_thickness": 9.5},
+        "wall":   {"corrosion": 0.3, "wall_thickness": 9.5},
     }
 
 Each key is optional. Only present keys trigger the corresponding update.
@@ -70,7 +70,7 @@ def build_payload(
     if "corrosion" in params:
         payload["wall"] = {
             "corrosion": params["corrosion"],
-            "start_thickness": params.get("start_thickness", 9.5),
+            "wall_thickness": params.get("wall_thickness", 9.5),
         }
 
     return payload
@@ -103,7 +103,7 @@ def apply_payload(geomodel: DSheetPiling, payload: Dict[str, Any]) -> None:
         wall = payload["wall"]
         if "corrosion" in wall:
             geomodel.apply_corrosion(
-                wall["corrosion"], wall.get("start_thickness", 9.5)
+                wall["corrosion"], wall.get("wall_thickness", 9.5)
             )
 
 

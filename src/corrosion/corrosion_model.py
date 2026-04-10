@@ -8,25 +8,25 @@ class CorrosionModel:
     """
     According to EC:
     C_t = C50 * (1 + 0.022 * (t - 50))    {50 <= t <= 100}                          {1}
-    C50 ~ TruncN(1.5[mm], (1.5*0.5)**2 [mm**2], a=0, b=start_thickness)            {2}
+    C50 ~ TruncN(1.5[mm], (1.5*0.5)**2 [mm**2], a=0, b=wall_thickness)            {2}
     {1} + {2} -->
     mu = 1.5 * (1 + 0.022 / 1.5 * (t - 50))
     std = (1.5 * (1 + 0.022 / 1.5 * (t - 50)) * 0.5 [mm**2]
-    C_t ~ TruncN(mu, std ** 2, , a=0, b=start_thickness)  {3}
+    C_t ~ TruncN(mu, std ** 2, , a=0, b=wall_thickness)  {3}
 
     "param" is the mean of corrosion distribution (as a function of time).
     """
 
-    def __init__(self, corrosion_rate: float = 0.022, start_thickness: float = 9.5) -> None:
+    def __init__(self, corrosion_rate: float = 0.022, wall_thickness: float = 9.5) -> None:
         self.corrosion_rate = corrosion_rate
-        self.start_thickness = start_thickness
+        self.wall_thickness = wall_thickness
 
     def corrosion_model_params(self, C50: float=1.5):
         C50 = C50[..., np.newaxis]
         mu = C50 * (1 + self.corrosion_rate / 1.5 * (times - 50))
         scale = mu * 0.5
         lower_trunc = (0 - mu) / scale
-        upper_trunc = (self.start_thickness - mu) / scale
+        upper_trunc = (self.wall_thickness - mu) / scale
         return mu, scale, lower_trunc, upper_trunc
 
     def prob(self, x: NDArray[np.float32], t: NDArray[np.float32], C50: float=1.5) -> NDArray[np.float32]:

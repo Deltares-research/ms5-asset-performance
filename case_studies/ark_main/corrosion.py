@@ -20,7 +20,7 @@ class CorrosionModel:
         C50_mu: float = 1.0,
         C50_std: float = 0.75,
         corrosion_rate: float = 0.022,
-        start_thickness: float = 9.5,
+        wall_thickness: float = 9.5,
         obs_error_std: float = 0.4,
         t_start: float = 50.0,
         n_grid: int = 100,
@@ -29,7 +29,7 @@ class CorrosionModel:
         self.C50_mu = C50_mu
         self.C50_std = C50_std
         self.corrosion_rate = corrosion_rate
-        self.start_thickness = start_thickness
+        self.wall_thickness = wall_thickness
         self.obs_error_std = obs_error_std
         self.t_start = t_start
         self.n_grid = n_grid
@@ -48,7 +48,7 @@ class CorrosionModel:
         mu = self.mean_corrosion(t, C50)
         scale = np.maximum(mu * 0.5, 1e-10)
         a = (0 - mu) / scale
-        b = (self.start_thickness - mu) / scale
+        b = (self.wall_thickness - mu) / scale
         return mu, scale, a, b
 
     def corrosion_ratio_pdf(
@@ -62,8 +62,8 @@ class CorrosionModel:
         if C50_pdf is None:
             C50_pdf = self.C50_prior
 
-        corrosion_grid = np.linspace(0, self.start_thickness, self.n_corrosion_grid)
-        ratio_grid = corrosion_grid / self.start_thickness
+        corrosion_grid = np.linspace(0, self.wall_thickness, self.n_corrosion_grid)
+        ratio_grid = corrosion_grid / self.wall_thickness
 
         C50_grid = self.C50_grid[:, np.newaxis, np.newaxis]
 
@@ -73,7 +73,7 @@ class CorrosionModel:
             mu = last_obs + d_mu
             scale = self.obs_error_std + d_mu * 0.5
             a = (0 - mu) / scale
-            b = (self.start_thickness - mu) / scale
+            b = (self.wall_thickness - mu) / scale
         else:
             mu, scale, a, b = self.corrosion_params(t, C50_grid)
 
@@ -82,6 +82,6 @@ class CorrosionModel:
         pdf = np.trapezoid(corrosion_pdf, self.C50_grid, axis=0)
         pdf /= np.trapezoid(pdf, corrosion_grid, axis=-1)
 
-        ratio_pdf = pdf * self.start_thickness
+        ratio_pdf = pdf * self.wall_thickness
 
         return ratio_grid, ratio_pdf.squeeze()

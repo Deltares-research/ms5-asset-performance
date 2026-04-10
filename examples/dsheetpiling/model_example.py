@@ -15,7 +15,7 @@ if __name__ == "__main__":
 
     C50 = 1.5
     time = 65.
-    corrosion_model = CorrosionModel(corrosion_rate=0.022, start_thickness=9.5)
+    corrosion_model = CorrosionModel(corrosion_rate=0.022, wall_thickness=9.5)
     corrosion = corrosion_model.generate_observations(time, C50).squeeze()
 
     geomodel = DSheetPiling(geomodel_path)
@@ -23,7 +23,7 @@ if __name__ == "__main__":
     geomodel.update_water(water_data)
     geomodel.update_uniform_loads(load_data)
     geomodel.update_wall(wall_data)
-    geomodel.apply_corrosion(corrosion, corrosion_model.start_thickness)
+    geomodel.apply_corrosion(corrosion, corrosion_model.wall_thickness)
     geomodel.update_anchor(anchor_data)
     geomodel.execute(result_path)
 

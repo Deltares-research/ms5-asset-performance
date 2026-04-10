@@ -40,8 +40,8 @@ def setup_pipeline(config: Dict[str, Any], settings_path: Path, n_samples: int =
     performance = Performance(
         name="dsheet_moment",
         parameters={
-            "moment_cap": config["moment_cap"],
-            "EI_start": config["EI_start"],
+            "wall_moment_capacity": config["wall_moment_capacity"],
+            "wall_EI": config["wall_EI"],
             "ei_column_idx": -2,
         },
     )
@@ -63,7 +63,7 @@ def setup_pipeline(config: Dict[str, Any], settings_path: Path, n_samples: int =
         C50_mu=config.get("C50_mu", 1.5),
         C50_std=config.get("C50_std", 0.75),
         corrosion_rate=config["corrosion_rate"],
-        start_thickness=config["start_thickness"],
+        wall_thickness=config["wall_thickness"],
         obs_error_std=config["obs_error_std"],
         t_start=config["t_start"],
         n_grid=config["n_C50_grid"],
@@ -171,9 +171,9 @@ def plot_corrosion_forecasts(pipeline: FragilityPipeline, config: Dict, setting:
             obs_times=[t for t in obs_times if t <= current_t],
             obs_values=[c for t, c in zip(obs_times, obs_corrosion) if t <= current_t],
             obs_error_std=config["obs_error_std"],
-            start_thickness=config["start_thickness"],
+            start_thickness=config["wall_thickness"],
             xlim=(t_start, t_end),
-            ylim=(0, config["start_thickness"]),
+            ylim=(0, config["wall_thickness"]),
         )
         plotting.save_figure(fig, png_dir / f"corrosion_t{int(current_t):03d}.png")
     plotting.collect_pngs_to_pdf(png_dir, output_dir / "corrosion.pdf")
@@ -185,8 +185,8 @@ def plot_moment_forecasts(pipeline: FragilityPipeline, config: Dict, setting: Di
     png_dir = output_dir / "moment"
     png_dir.mkdir(parents=True, exist_ok=True)
 
-    start_thickness = config["start_thickness"]
-    moment_cap = config["moment_cap"]
+    wall_thickness = config["wall_thickness"]
+    wall_moment_capacity = config["wall_moment_capacity"]
 
     times = sorted([float(k) for k in setting.keys() if k != "metadata"])
     obs_times, obs_moment_cap = [], []
@@ -195,8 +195,8 @@ def plot_moment_forecasts(pipeline: FragilityPipeline, config: Dict, setting: Di
         key = str(t) if str(t) in setting else f"{t:.1f}"
         if key in setting and "corrosion" in setting[key]:
             obs_times.append(t)
-            cr = setting[key].get("corrosion_ratio", setting[key]["corrosion"] / start_thickness)
-            obs_moment_cap.append(moment_cap * (1 - cr))
+            cr = setting[key].get("corrosion_ratio", setting[key]["corrosion"] / wall_thickness)
+            obs_moment_cap.append(wall_moment_capacity * (1 - cr))
             ms = setting[key].get("moment_survived")
             if ms is not None:
                 survived_times.append(t)
@@ -208,13 +208,13 @@ def plot_moment_forecasts(pipeline: FragilityPipeline, config: Dict, setting: Di
             cr_grid=pipeline.fragility_surface.corrosion_ratios,
             cr_forecast_prior=pipeline.results[t_start]["prior"]["cr_forecast"],
             cr_forecast_posterior=pipeline.results[current_t]["posterior"]["cr_forecast"],
-            moment_cap=moment_cap,
+            moment_cap=wall_moment_capacity,
             survived_times=survived_times or None,
             survived_moments=survived_moments or None,
             obs_times=[t for t in obs_times if t <= current_t],
             obs_moment_cap=[m for t, m in zip(obs_times, obs_moment_cap) if t <= current_t],
             xlim=(t_start, t_end),
-            ylim=(0, moment_cap * 1.1),
+            ylim=(0, wall_moment_capacity * 1.1),
         )
         plotting.save_figure(fig, png_dir / f"moment_t{int(current_t):03d}.png")
     plotting.collect_pngs_to_pdf(png_dir, output_dir / "moment.pdf")

@@ -728,8 +728,8 @@ class Performance(BasePerformance):
         x_ = np.atleast_2d(x)
 
         # Get parameters
-        moment_cap = self.parameters.get("moment_cap", 750.0)
-        start_thickness = self.parameters.get("start_thickness", 10.0)
+        moment_cap = self.parameters.get("wall_moment_capacity", 750.0)
+        start_thickness = self.parameters.get("wall_thickness", 10.0)
         corrosion_rate = self.parameters.get("corrosion_rate", 0.1)
 
         # Compute corrosion ratio from time
@@ -806,7 +806,7 @@ class Performance(BasePerformance):
             # moment_cap = 750, corrosion degrades capacity
             # At t=50 (cr=0.116): cap=663, at t=80 (cr=0.185): cap=611
             # Need max_moment ~ N(600, 80) for Pf ~ 0.01-0.10 range
-            EI_start = self.parameters.get("EI_start", 48800.0)
+            EI_start = self.parameters.get("wall_EI", 48800.0)
             ei_ratio = np.clip(EI_degraded / EI_start, 0, 1)
             # Base moment with variability from soil params
             phi_effect = 10 * (x[:, 1] - 30)  # Klei_soilphi: ~N(0, 73)
@@ -842,7 +842,7 @@ class Performance(BasePerformance):
             Tuple of (g, max_moment) arrays.
         """
         x_ = np.atleast_2d(x)
-        moment_cap = self.parameters.get("moment_cap", 750.0)
+        moment_cap = self.parameters.get("wall_moment_capacity", 750.0)
         moment_cap_degraded = moment_cap * (1 - corrosion_ratio)
 
         # Compute max_moment
@@ -974,7 +974,7 @@ class Performance(BasePerformance):
         """
         x = np.atleast_2d(x)
         n_samples = x.shape[0]
-        moment_cap = self.parameters.get("moment_cap", 750.0)
+        moment_cap = self.parameters.get("wall_moment_capacity", 750.0)
 
         # Set up corrosion ratio grid
         if corrosion_ratios is None:
@@ -1108,8 +1108,8 @@ class Performance(BasePerformance):
         if fragility is None or fragility.max_moments is None:
             raise ValueError("Fragility curve with cached max_moments required.")
 
-        moment_cap = self.parameters.get("moment_cap", 750.0)
-        start_thickness = self.parameters.get("start_thickness", 10.0)
+        moment_cap = self.parameters.get("wall_moment_capacity", 750.0)
+        start_thickness = self.parameters.get("wall_thickness", 10.0)
         corrosion_rate = self.parameters.get("corrosion_rate", 0.1)
 
         # Corrosion ratio at survival time
@@ -1154,7 +1154,7 @@ class Performance(BasePerformance):
         if fragility is None or fragility.max_moments is None:
             raise ValueError("Fragility curve with cached max_moments required.")
 
-        moment_cap = self.parameters.get("moment_cap", 750.0)
+        moment_cap = self.parameters.get("wall_moment_capacity", 750.0)
         moment_cap_degraded = moment_cap * (1 - cr_survived)
 
         # Interpolate max_moments at cr_survived (for each sample)
@@ -1202,7 +1202,7 @@ class Performance(BasePerformance):
         if fragility is None:
             raise ValueError("Fragility curve required.")
 
-        moment_cap = self.parameters.get("moment_cap", 750.0)
+        moment_cap = self.parameters.get("wall_moment_capacity", 750.0)
 
         # Get proven strength weights
         weights = self.proven_strength_weights(t_survived, fragility)
@@ -1245,10 +1245,10 @@ if __name__ == "__main__":
 
     # Parameters from case study
     params = {
-        "moment_cap": 750.0,
-        "start_thickness": 9.5,
+        "wall_moment_capacity": 750.0,
+        "wall_thickness": 9.5,
         "corrosion_rate": 0.022,
-        "EI_start": 48800.92,  # From case_study.json true_params
+        "wall_EI": 48800.92,  # From case_study.json true_params
         "ei_column_idx": 9,    # Wall_SheetPilingElementEI
     }
 
@@ -1314,7 +1314,7 @@ if __name__ == "__main__":
     print(f"  Samples consistent with survival: {n_surviving}/{len(w_proven)} ({100*n_surviving/len(w_proven):.1f}%)")
 
     # Method 2: Or use fragility.recompute_pf directly
-    pf_recomputed = fragility.recompute_pf(params["moment_cap"], w_proven)
+    pf_recomputed = fragility.recompute_pf(params["wall_moment_capacity"], w_proven)
 
     # Compare fragility curves
     print(f"\n  Fragility curve Pf (prior vs proven strength):")

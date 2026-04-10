@@ -147,12 +147,12 @@ class DSheetPiling(GeoModelBase):
             except:
                 break
 
-    def apply_corrosion(self, corrosion: float, start_thickness: float) -> None:
+    def apply_corrosion(self, corrosion: float, wall_thickness: float) -> None:
 
         if isinstance(corrosion, np.ndarray): corrosion = corrosion.item()
         if isinstance(corrosion, list) or isinstance(corrosion, tuple): corrosion = corrosion[0]
 
-        reduction_factor = corrosion / start_thickness
+        reduction_factor = corrosion / wall_thickness
         EI = self.wall.SheetPilingElementEI * (1 - reduction_factor)
         M = self.wall.SheetPilingElementResistingMoment * (1 - reduction_factor)
         width = self.wall.SheetPilingPileWidth - corrosion
