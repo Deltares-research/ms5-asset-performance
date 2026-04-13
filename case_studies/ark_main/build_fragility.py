@@ -215,18 +215,19 @@ def build_stochastic_vars(variables: list) -> dict:
 # Main
 # ---------------------------------------------------------------------------
 
-def main(lsf_name: str = "lsf_wall", use_api: bool = False, force_rebuild: bool = False):
-    if lsf_name not in LSF_REGISTRY:
-        raise ValueError(f"Unknown LSF '{lsf_name}'. Available: {list(LSF_REGISTRY.keys())}")
+def build_dev_fragility(lsf_name: str, n_cr_grid: int, use_api: bool) -> list[dict]:
+    """Build a fast development fragility curve.
+
+    Only computes FORM at cr=0. The rest is extrapolated:
+        beta(cr) = beta(0) * (1 - cr)
+        Pf(cr) = Phi(-beta(cr))
+
+    All extrapolated points are marked with method='development'.
+    """
+    from scipy.stats import norm as sp_norm
 
     init_model(use_api=use_api)
     lsf_fn = LSF_REGISTRY[lsf_name]
-    n_cr_grid = _config.get("n_cr_grid", 11)
-
-    print("=" * 60)
-    print("Building fragility curve for D-SheetPiling")
-    print("=" * 60)
-
     stochastic_vars = build_stochastic_vars(_settings["variables"])
 
     builder = FragilityCurveBuilder(
@@ -241,26 +242,111 @@ def main(lsf_name: str = "lsf_wall", use_api: bool = False, force_rebuild: bool 
         },
     )
 
-    grid = {"corrosion_rate": np.linspace(0.0, 1.0, n_cr_grid)}
-    cache_dir = _remote / "output" / f"fragility_curve_{lsf_name}"
+    # Only compute cr=0
+    cache_dir = _remote / "output" / f"fragility_curve_{lsf_name}_dev"
+    print(f"DEV MODE: computing FORM only at cr=0, extrapolating the rest")
 
-    print(f"LSF: {lsf_name}")
-    print(f"Grid: {n_cr_grid} points from 0.0 to 1.0")
-    print(f"Cache: {cache_dir}\n")
-
-    results = builder.build(
-        grid=grid,
+    results_cr0 = builder.build(
+        grid={"corrosion_rate": np.array([0.0])},
         cache_dir=cache_dir,
-        force_rebuild=force_rebuild,
+        force_rebuild=False,
         verbose=True,
     )
 
+    beta_0 = results_cr0[0]["beta"]
+    cr_grid = np.linspace(0.0, 1.0, n_cr_grid)
+
+    results = []
+    for i, cr in enumerate(cr_grid):
+        if cr == 0.0:
+            results.append(results_cr0[0])
+        else:
+            beta_cr = beta_0 * (1.0 - cr)
+            pf_cr = float(sp_norm.cdf(-beta_cr))
+            results.append({
+                "index": i,
+                "point": {"corrosion_rate": float(cr)},
+                "pf": pf_cr,
+                "beta": beta_cr,
+                "logpf": float(np.log(pf_cr)) if pf_cr > 0 else -np.inf,
+                "convergence": True,
+                "method": "development",
+                "design_point": {},
+                "alphas": {},
+            })
+
+    return results
+
+
+def main(lsf_name: str = "lsf_wall", use_api: bool = False, force_rebuild: bool = False, dev_frag: bool = False):
+    if lsf_name not in LSF_REGISTRY:
+        raise ValueError(f"Unknown LSF '{lsf_name}'. Available: {list(LSF_REGISTRY.keys())}")
+
+    n_cr_grid = _config.get("n_cr_grid", 11)
+
+    print("=" * 60)
+    print("Building fragility curve for D-SheetPiling")
+    print("=" * 60)
+
+    if dev_frag:
+        results = build_dev_fragility(lsf_name, n_cr_grid, use_api)
+        # Save to the standard cache location so run.py can load it
+        cache_dir = _remote / "output" / f"fragility_curve_{lsf_name}"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        for r in results:
+            path = cache_dir / f"point_{r['index']:04d}.json"
+            with open(path, "w") as f:
+                json.dump(r, f, indent=2)
+        # Write manifest
+        manifest = {
+            "lsf_name": lsf_name,
+            "deterministic_vars": ["corrosion_rate"],
+            "stochastic_vars": build_stochastic_vars(_settings["variables"]),
+            "grid": {"corrosion_rate": np.linspace(0.0, 1.0, n_cr_grid).tolist()},
+            "form_params": {},
+            "n_total": n_cr_grid,
+            "n_completed": n_cr_grid,
+            "completed_indices": list(range(n_cr_grid)),
+        }
+        with open(cache_dir / "manifest.json", "w") as f:
+            json.dump(manifest, f, indent=2)
+    else:
+        init_model(use_api=use_api)
+        lsf_fn = LSF_REGISTRY[lsf_name]
+        stochastic_vars = build_stochastic_vars(_settings["variables"])
+
+        builder = FragilityCurveBuilder(
+            lsf=lsf_fn,
+            stochastic_vars=stochastic_vars,
+            deterministic_vars=["corrosion_rate"],
+            form_params={
+                "relaxation_factor": 0.15,
+                "maximum_iterations": 100,
+                "variation_coefficient": 0.05,
+                "step_size": 0.05,
+            },
+        )
+
+        grid = {"corrosion_rate": np.linspace(0.0, 1.0, n_cr_grid)}
+        cache_dir = _remote / "output" / f"fragility_curve_{lsf_name}"
+
+        print(f"LSF: {lsf_name}")
+        print(f"Grid: {n_cr_grid} points from 0.0 to 1.0")
+        print(f"Cache: {cache_dir}\n")
+
+        results = builder.build(
+            grid=grid,
+            cache_dir=cache_dir,
+            force_rebuild=force_rebuild,
+            verbose=True,
+        )
+
     # Summary
-    print(f"\n{'r':>8s} {'beta':>8s} {'Pf':>12s} {'method':>8s} {'ok':>5s}")
-    print("-" * 45)
+    print(f"\n{'r':>8s} {'beta':>8s} {'Pf':>12s} {'method':>12s} {'ok':>5s}")
+    print("-" * 50)
     for r in results:
         cr = r["point"]["corrosion_rate"]
-        print(f"{cr:>8.3f} {r['beta']:>8.3f} {r['pf']:>12.3e} {r['method']:>8s} {str(r['convergence']):>5s}")
+        print(f"{cr:>8.3f} {r['beta']:>8.3f} {r['pf']:>12.3e} {r['method']:>12s} {str(r['convergence']):>5s}")
 
 
 if __name__ == "__main__":
@@ -269,5 +355,7 @@ if __name__ == "__main__":
                         help=f"LSF to use. Available: {list(LSF_REGISTRY.keys())}")
     parser.add_argument("--use_api", action="store_true", help="Use the D-SheetPiling compute API")
     parser.add_argument("--force_rebuild", action="store_true", help="Recompute all points")
+    parser.add_argument("--dev_frag", action="store_true",
+                        help="Fast dev mode: FORM at cr=0 only, extrapolate rest as beta(cr)=beta(0)*(1-cr)")
     args = parser.parse_args()
-    main(lsf_name=args.lsf, use_api=args.use_api, force_rebuild=args.force_rebuild)
+    main(lsf_name=args.lsf, use_api=args.use_api, force_rebuild=args.force_rebuild, dev_frag=args.dev_frag)

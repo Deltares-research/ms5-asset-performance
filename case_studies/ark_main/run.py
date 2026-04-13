@@ -158,7 +158,7 @@ def main(lsf_name: str = "lsf_wall"):
     # =========================================================================
     username = os.environ.get("USER", "unknown").lower()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    output_dir = _remote / f"output/results/{username}_{timestamp}"
+    output_dir = _remote / f"output/results/{lsf_name}/{username}_{timestamp}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     results_path = output_dir / "reliability_results.json"
