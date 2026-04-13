@@ -24,6 +24,7 @@ from src.ptk import FragilityCurveBuilder
 from jpdf import JPDF
 from corrosion import CorrosionModel
 from plotting import save_all_plots
+from build_fragility import main as build_fragility
 
 
 # ---------------------------------------------------------------------------
@@ -101,13 +102,11 @@ def main(lsf_name: str = "lsf_wall"):
     print("D-SheetPiling Reliability Pipeline")
     print("=" * 60)
 
-    # Load fragility curve
+    # Load fragility curve (build if missing)
     cache_dir = _remote / "output" / f"fragility_curve_{lsf_name}"
     if not cache_dir.exists() or not (cache_dir / "manifest.json").exists():
-        raise FileNotFoundError(
-            f"Fragility curve cache not found at {cache_dir}.\n"
-            f"Run build_fragility.py --lsf {lsf_name} first."
-        )
+        print(f"Fragility curve not found for '{lsf_name}'. Building (dev mode)...")
+        build_fragility(lsf_name=lsf_name, dev_frag=True)
     builder = FragilityCurveBuilder.__new__(FragilityCurveBuilder)
     fc_points = builder.load(cache_dir)
     n_cr_grid = _config.get("n_corrosion_grid", _config.get("n_grid", 1000))
