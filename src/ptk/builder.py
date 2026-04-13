@@ -289,6 +289,8 @@ class FragilityCurveBuilder:
             List of result dicts, sorted by index.
         """
         cache_dir = Path(cache_dir)
+        if not cache_dir.exists():
+            raise FileNotFoundError(f"Cache directory not found: {cache_dir}")
         manifest = self._load_manifest(cache_dir)
         if manifest is None:
             raise FileNotFoundError(f"No manifest.json in {cache_dir}")
