@@ -97,7 +97,10 @@ def build_state(jpdf):
 # Main
 # ---------------------------------------------------------------------------
 
-def main(lsf_name: str = "lsf_wall"):
+def main(
+        lsf_name: str = "lsf_wall",
+        dev_frag: bool = False,
+):
     print("=" * 60)
     print("D-SheetPiling Reliability Pipeline")
     print("=" * 60)
@@ -106,7 +109,7 @@ def main(lsf_name: str = "lsf_wall"):
     cache_dir = _remote / "output" / f"fragility_curve_{lsf_name}"
     if not cache_dir.exists() or not (cache_dir / "manifest.json").exists():
         print(f"Fragility curve not found for '{lsf_name}'. Building (dev mode)...")
-        build_fragility(lsf_name=lsf_name, dev_frag=True)
+        build_fragility(lsf_name=lsf_name, dev_frag=dev_frag)
     builder = FragilityCurveBuilder.__new__(FragilityCurveBuilder)
     fc_points = builder.load(cache_dir)
     n_cr_grid = _config.get("n_corrosion_grid", _config.get("n_grid", 1000))
@@ -189,7 +192,12 @@ def main(lsf_name: str = "lsf_wall"):
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--lsf", type=str, default="lsf_wall",
-                        help="LSF name (selects fragility_curve_{lsf}/)")
+    parser.add_argument("--lsf-name", type=str, default="lsf_wall_anchor", help="LSF name (selects fragility_curve_{lsf}/)")
+    parser.add_argument( "--dev-frag", action="store_false")
     args = parser.parse_args()
-    main(lsf_name=args.lsf)
+
+    main(
+        lsf_name=args.lsf_name,
+        dev_frag=args.dev_frag,
+    )
+

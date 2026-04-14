@@ -164,7 +164,7 @@ def lsf_anchor(
         Corrosion ratio [-], 0 (intact) to 1 (fully corroded).
     """
     factor = 1.0 - corrosion_rate
-    f_yield = ANCHOR_CAPACITY * factor
+    f_yield = ANCHOR_CAPACITY
 
     # Deep-copy and update model via payload
     model = deepcopy(_base_model)
@@ -185,6 +185,79 @@ def lsf_anchor(
         return -99999.0
 
 
+def lsf_wall_anchor(
+    Klei_soilphi,
+    Klei_soilcohesion,
+    Klei_soilcurkb1,
+    Zand_soilphi,
+    Zand_soilcurkb1,
+    Zandvast_soilphi,
+    Zandvast_soilcurkb1,
+    Zandlos_soilphi,
+    Zandlos_soilcurkb1,
+    Wall_SheetPilingElementEI,
+    corrosion_rate,
+):
+    """Limit state function: g = M_capacity(r) - |M_max|
+
+    Parameters
+    ----------
+    Klei_soilphi : float
+        Friction angle of clay layer [deg].
+    Klei_soilcohesion : float
+        Cohesion of clay layer [kPa].
+    Klei_soilcurkb1 : float
+        Subgrade reaction modulus of clay [kN/m3].
+    Zand_soilphi : float
+        Friction angle of sand layer [deg].
+    Zand_soilcurkb1 : float
+        Subgrade reaction modulus of sand [kN/m3].
+    Zandvast_soilphi : float
+        Friction angle of dense sand layer [deg].
+    Zandvast_soilcurkb1 : float
+        Subgrade reaction modulus of dense sand [kN/m3].
+    Zandlos_soilphi : float
+        Friction angle of loose sand layer [deg].
+    Zandlos_soilcurkb1 : float
+        Subgrade reaction modulus of loose sand [kN/m3].
+    Wall_SheetPilingElementEI : float
+        Elastic stiffness of the sheet pile [kNm2/m].
+    corrosion_rate : float
+        Corrosion ratio [-], 0 (intact) to 1 (fully corroded).
+    """
+    # Degraded section properties
+    factor = 1.0 - corrosion_rate
+    m_capacity = WALL_MOMENT_CAPACITY * factor
+    f_yield = ANCHOR_CAPACITY
+
+    # Deep-copy and update model via payload
+    model = deepcopy(_base_model)
+    params = {k: v for k, v in locals().items() if k not in ("corrosion_rate", "factor", "m_capacity", "model")}
+    params["Wall_SheetPilingElementEI"] = Wall_SheetPilingElementEI * factor  # degraded EI
+    payload = build_payload(params, model)
+    apply_payload(model, payload)
+
+    try:
+        # Execute
+        model.execute()
+
+        # Limit state: capacity - demand
+        max_moment = model.results.max_moment
+        if isinstance(max_moment, (list, np.ndarray)):
+            max_moment = max_moment[0]
+
+        anchor_force = model.results.anchor_force
+        if isinstance(anchor_force, (list, np.ndarray)):
+            anchor_force = anchor_force[0]
+
+        g_moment = m_capacity - abs(max_moment)
+        g_anchor = f_yield - abs(anchor_force)
+        g = abs(g_moment*g_anchor) * np.sign(max(g_moment, g_anchor))
+        return g
+    except:
+        return -99999.0
+
+
 # ---------------------------------------------------------------------------
 # LSF registry — add new LSFs here
 # ---------------------------------------------------------------------------
@@ -192,6 +265,7 @@ def lsf_anchor(
 LSF_REGISTRY = {
     "lsf_wall": lsf_wall,
     "lsf_anchor": lsf_anchor,
+    "lsf_wall_anchor": lsf_wall_anchor,
 }
 
 
