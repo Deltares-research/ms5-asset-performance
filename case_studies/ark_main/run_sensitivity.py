@@ -72,9 +72,16 @@ def main(
 
     # Baseline: all variables at mean
     baseline_kwargs = {v["name"]: v["mean"] for v in variables}
+    baseline_kwargs["Wall_SheetPilingElementEI"] =  _settings["parameters"]["EI_start"]
     baseline_kwargs["corrosion_rate"] = corrosion_rate
+    if lsf_name == "lsf_wall_anchor":
+        baseline_kwargs["return_separate"] = True
     g_baseline = lsf_fn(**baseline_kwargs)
-    print(f"\nBaseline (all at mean): g = {g_baseline:.2f}\n")
+    if not lsf_name == "lsf_wall_anchor":
+        print(f"\nBaseline (all at mean): g = {g_baseline:.2f}\n")
+    else:
+        print(f"\nBaseline - Wall (all at mean): g = {g_baseline[0]:.2f}\n")
+        print(f"\nBaseline - Anchor (all at mean): g = {g_baseline[1]:.2f}\n")
 
     # Sensitivity per variable
     results = []
@@ -89,12 +96,22 @@ def main(
         g_vals = {}
         for p, val in pcts.items():
             kwargs = {vv["name"]: vv["mean"] for vv in variables}
+            kwargs["Wall_SheetPilingElementEI"] = _settings["parameters"]["EI_start"]
             kwargs["corrosion_rate"] = corrosion_rate
+            if lsf_name == "lsf_wall_anchor":
+                kwargs["return_separate"] = True
             kwargs[name] = val
-            g_vals[p] = lsf_fn(**kwargs)
+            g = lsf_fn(**kwargs)
+            if not isinstance(g, tuple):
+                g = (g,)
+            g_vals[p] = g
 
-        dg = g_vals[0.99] - g_vals[0.01]
-        print(f"{name:<30s} {pcts[0.01]:>12.4f} {g_vals[0.01]:>10.2f} {pcts[0.99]:>12.4f} {g_vals[0.99]:>10.2f} {dg:>10.2f}")
+        dg = [p99 - p01 for (p01, p99) in zip(g_vals[0.01], g_vals[0.99])]
+        if lsf_name != "lsf_wall_anchor":
+            print(f"{name:<30s} {pcts[0.01]:>12.4f} {g_vals[0.01][0]:>10.2f} {pcts[0.99]:>12.4f} {g_vals[0.99][0]:>10.2f} {dg[0]:>10.2f}")
+        else:
+            print(f"{name:<30s} - Wall {pcts[0.01]:>12.4f} {g_vals[0.01][0]:>10.2f} {pcts[0.99]:>12.4f} {g_vals[0.99][0]:>10.2f} {dg[0]:>10.2f}")
+            print(f"{name:<30s} - Anchor {pcts[0.01]:>12.4f} {g_vals[0.01][0]:>10.2f} {pcts[0.99]:>12.4f} {g_vals[0.99][1]:>10.2f} {dg[1]:>10.2f}")
 
         results.append({
             "variable": name,
@@ -106,14 +123,6 @@ def main(
             "g_baseline": g_baseline,
             "dg": dg,
         })
-
-    # Sort by |dg| descending
-    results.sort(key=lambda r: abs(r["dg"]), reverse=True)
-
-    print(f"\nRanking by |dg|:")
-    for i, r in enumerate(results, 1):
-        print(f"  {i}. {r['variable']:<30s}  |dg| = {abs(r['dg']):.2f}")
-
     # Save
     cache_dir = _remote / "output" / f"sensitivity_{lsf_name}"
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -131,8 +140,7 @@ def main(
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--lsf", type=str, default="lsf_wall",
-                        help=f"LSF to use. Available: {list(LSF_REGISTRY.keys())}")
+    parser.add_argument("--lsf", type=str, default="lsf_wall_anchor", help=f"LSF to use. Available: {list(LSF_REGISTRY.keys())}")
     parser.add_argument("--corrosion_rate", type=float, default=0.0)
     parser.add_argument("--use_api", action="store_true")
     args = parser.parse_args()

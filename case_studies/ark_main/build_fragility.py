@@ -78,13 +78,25 @@ def lsf_wall(
     Klei_soilphi,
     Klei_soilcohesion,
     Klei_soilcurkb1,
+    Klei_soilgamdry,
+    Klei_soilgamwet,
     Zand_soilphi,
     Zand_soilcurkb1,
+    Zand_soilgamdry,
+    Zand_soilgamwet,
     Zandvast_soilphi,
     Zandvast_soilcurkb1,
+    Zandvast_soilgamdry,
+    Zandvast_soilgamwet,
     Zandlos_soilphi,
     Zandlos_soilcurkb1,
+    Zandlos_soilgamdry,
+    Zandlos_soilgamwet,
     Wall_SheetPilingElementEI,
+    model_factor,
+    phreatic_level,
+    canal_level,
+    uniform_load_left,
     corrosion_rate,
 ):
     """Limit state function: g = M_capacity(r) - |M_max|
@@ -136,19 +148,31 @@ def lsf_wall(
 
         return m_capacity - abs(max_moment)
     except:
-        return -99999.0
+        return -99999.
 
 def lsf_anchor(
     Klei_soilphi,
     Klei_soilcohesion,
     Klei_soilcurkb1,
+    Klei_soilgamdry,
+    Klei_soilgamwet,
     Zand_soilphi,
     Zand_soilcurkb1,
+    Zand_soilgamdry,
+    Zand_soilgamwet,
     Zandvast_soilphi,
     Zandvast_soilcurkb1,
+    Zandvast_soilgamdry,
+    Zandvast_soilgamwet,
     Zandlos_soilphi,
     Zandlos_soilcurkb1,
+    Zandlos_soilgamdry,
+    Zandlos_soilgamwet,
     Wall_SheetPilingElementEI,
+    model_factor,
+    phreatic_level,
+    canal_level,
+    uniform_load_left,
     corrosion_rate,
 ):
     """Limit state function: g = F_yield(r) - |F_anchor|
@@ -182,21 +206,34 @@ def lsf_anchor(
 
         return f_yield - abs(anchor_force)
     except:
-        return -99999.0
+        return -99999.
 
 
 def lsf_wall_anchor(
     Klei_soilphi,
     Klei_soilcohesion,
     Klei_soilcurkb1,
+    Klei_soilgamdry,
+    Klei_soilgamwet,
     Zand_soilphi,
     Zand_soilcurkb1,
+    Zand_soilgamdry,
+    Zand_soilgamwet,
     Zandvast_soilphi,
     Zandvast_soilcurkb1,
+    Zandvast_soilgamdry,
+    Zandvast_soilgamwet,
     Zandlos_soilphi,
     Zandlos_soilcurkb1,
+    Zandlos_soilgamdry,
+    Zandlos_soilgamwet,
     Wall_SheetPilingElementEI,
+    model_factor,
+    phreatic_level,
+    canal_level,
+    uniform_load_left,
     corrosion_rate,
+    return_separate: bool = False,
 ):
     """Limit state function: g = M_capacity(r) - |M_max|
 
@@ -250,12 +287,21 @@ def lsf_wall_anchor(
         if isinstance(anchor_force, (list, np.ndarray)):
             anchor_force = anchor_force[0]
 
-        g_moment = m_capacity - abs(max_moment)
+        g_wall = m_capacity - abs(max_moment)
         g_anchor = f_yield - abs(anchor_force)
-        g = abs(g_moment*g_anchor) * np.sign(max(g_moment, g_anchor))
-        return g
+        g = abs(g_wall*g_anchor) * np.sign(max(g_wall, g_anchor))
+
+        if return_separate:
+            return g_wall, g_anchor
+        else:
+            return g
+
     except:
-        return -99999.0
+
+        if return_separate:
+            return -99999., -99999.
+        else:
+            return -99999.
 
 
 # ---------------------------------------------------------------------------

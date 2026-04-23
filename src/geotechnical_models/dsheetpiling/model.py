@@ -64,6 +64,7 @@ class DSheetPiling(GeoModelBase):
             for (soil_param_name, soil_param_value) in soil_params.items():
                 if hasattr(self.soils[soil_name], soil_param_name):
                     setattr(self.soils[soil_name], soil_param_name, float(soil_param_value))
+                    # Auto-assign delta=2/3*phi
                     if soil_param_name == "soilphi":
                         setattr(self.soils[soil_name], "soildelta", float(soil_param_value*2/3))
                 else:

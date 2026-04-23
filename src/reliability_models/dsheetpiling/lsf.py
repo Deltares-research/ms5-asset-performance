@@ -102,9 +102,7 @@ def apply_payload(geomodel: DSheetPiling, payload: Dict[str, Any]) -> None:
     if "wall" in payload:
         wall = payload["wall"]
         if "corrosion" in wall:
-            geomodel.apply_corrosion(
-                wall["corrosion"], wall.get("wall_thickness", 9.5)
-            )
+            geomodel.apply_corrosion(wall["corrosion"], wall.get("wall_thickness", 9.5))
 
 
 def safety_fn(

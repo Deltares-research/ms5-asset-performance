@@ -50,10 +50,9 @@ def unpack_water_params(params: Dict[str, float], water_lvls: List[str]) -> Dict
     """
     water_data = {}
     for key, val in params.items():
-        water_lvl_name = key.split("_")[-1]
-        if water_lvl_name not in water_lvls:
+        if key not in water_lvls:
             continue
-        water_data[water_lvl_name] = float(val)
+        water_data[key] = float(val)
     return water_data
 
 
@@ -74,7 +73,7 @@ def unpack_load_params(params: Dict[str, float], load_names: List[str]) -> Dict[
         parts = key.split("_")
         if len(parts) < 2:
             continue
-        load_name = parts[0]
+        load_name = key
         if load_name not in load_names:
             continue
         load_side = parts[-1]
