@@ -93,38 +93,17 @@ def lsf_wall(
     Zandlos_soilgamdry,
     Zandlos_soilgamwet,
     Wall_SheetPilingElementEI,
-    model_factor,
+    model_factor_M,
+    model_factor_F,
     phreatic_level,
     canal_level,
     uniform_load_left,
     corrosion_rate,
 ):
-    """Limit state function: g = M_capacity(r) - |M_max|
+    """Limit state function: g = M_capacity(r) - theta_M * |M_max|
 
-    Parameters
-    ----------
-    Klei_soilphi : float
-        Friction angle of clay layer [deg].
-    Klei_soilcohesion : float
-        Cohesion of clay layer [kPa].
-    Klei_soilcurkb1 : float
-        Subgrade reaction modulus of clay [kN/m3].
-    Zand_soilphi : float
-        Friction angle of sand layer [deg].
-    Zand_soilcurkb1 : float
-        Subgrade reaction modulus of sand [kN/m3].
-    Zandvast_soilphi : float
-        Friction angle of dense sand layer [deg].
-    Zandvast_soilcurkb1 : float
-        Subgrade reaction modulus of dense sand [kN/m3].
-    Zandlos_soilphi : float
-        Friction angle of loose sand layer [deg].
-    Zandlos_soilcurkb1 : float
-        Subgrade reaction modulus of loose sand [kN/m3].
-    Wall_SheetPilingElementEI : float
-        Elastic stiffness of the sheet pile [kNm2/m].
-    corrosion_rate : float
-        Corrosion ratio [-], 0 (intact) to 1 (fully corroded).
+    model_factor_M : multiplies wall-moment demand (lognormal, mean 1).
+    model_factor_F : accepted for signature compatibility (unused here).
     """
     # Degraded section properties
     factor = 1.0 - corrosion_rate
@@ -132,7 +111,9 @@ def lsf_wall(
 
     # Deep-copy and update model via payload
     model = deepcopy(_base_model)
-    params = {k: v for k, v in locals().items() if k not in ("corrosion_rate", "factor", "m_capacity", "model")}
+    params = {k: v for k, v in locals().items()
+              if k not in ("corrosion_rate", "factor", "m_capacity", "model",
+                           "model_factor_M", "model_factor_F")}
     params["Wall_SheetPilingElementEI"] = Wall_SheetPilingElementEI * factor  # degraded EI
     payload = build_payload(params, model)
     apply_payload(model, payload)
@@ -141,12 +122,12 @@ def lsf_wall(
         # Execute
         model.execute()
 
-        # Limit state: capacity - demand
+        # Limit state: capacity - model uncertainty * demand
         max_moment = model.results.max_moment
         if isinstance(max_moment, (list, np.ndarray)):
             max_moment = max_moment[0]
 
-        return m_capacity - abs(max_moment)
+        return m_capacity / (model_factor_M * abs(max_moment))
     except:
         return -99999.
 
@@ -169,30 +150,26 @@ def lsf_anchor(
     Zandlos_soilgamdry,
     Zandlos_soilgamwet,
     Wall_SheetPilingElementEI,
-    model_factor,
+    model_factor_M,
+    model_factor_F,
     phreatic_level,
     canal_level,
     uniform_load_left,
     corrosion_rate,
 ):
-    """Limit state function: g = F_yield(r) - |F_anchor|
+    """Limit state function: g = F_yield(r) - theta_F * |F_anchor|
 
-    Anchor yield force degrades linearly with corrosion.
-    The sheet pile stiffness also degrades, affecting the anchor force
-    distribution computed by D-SheetPiling.
-
-    Parameters
-    ----------
-    (same soil/wall parameters as lsf_wall)
-    corrosion_rate : float
-        Corrosion ratio [-], 0 (intact) to 1 (fully corroded).
+    model_factor_F : multiplies anchor-force demand (lognormal, mean 1).
+    model_factor_M : accepted for signature compatibility (unused here).
     """
     factor = 1.0 - corrosion_rate
     f_yield = ANCHOR_CAPACITY
 
     # Deep-copy and update model via payload
     model = deepcopy(_base_model)
-    params = {k: v for k, v in locals().items() if k not in ("corrosion_rate", "factor", "f_yield", "model")}
+    params = {k: v for k, v in locals().items()
+              if k not in ("corrosion_rate", "factor", "f_yield", "model",
+                           "model_factor_M", "model_factor_F")}
     params["Wall_SheetPilingElementEI"] = Wall_SheetPilingElementEI * factor
     payload = build_payload(params, model)
     apply_payload(model, payload)
@@ -204,7 +181,7 @@ def lsf_anchor(
         if isinstance(anchor_force, (list, np.ndarray)):
             anchor_force = anchor_force[0]
 
-        return f_yield - abs(anchor_force)
+        return f_yield / (model_factor_F * abs(anchor_force))
     except:
         return -99999.
 
@@ -228,39 +205,21 @@ def lsf_wall_anchor(
     Zandlos_soilgamdry,
     Zandlos_soilgamwet,
     Wall_SheetPilingElementEI,
-    model_factor,
+    model_factor_M,
+    model_factor_F,
     phreatic_level,
     canal_level,
     uniform_load_left,
     corrosion_rate,
     return_separate: bool = False,
 ):
-    """Limit state function: g = M_capacity(r) - |M_max|
+    """Limit state function for combined wall + anchor (normalized form).
 
-    Parameters
-    ----------
-    Klei_soilphi : float
-        Friction angle of clay layer [deg].
-    Klei_soilcohesion : float
-        Cohesion of clay layer [kPa].
-    Klei_soilcurkb1 : float
-        Subgrade reaction modulus of clay [kN/m3].
-    Zand_soilphi : float
-        Friction angle of sand layer [deg].
-    Zand_soilcurkb1 : float
-        Subgrade reaction modulus of sand [kN/m3].
-    Zandvast_soilphi : float
-        Friction angle of dense sand layer [deg].
-    Zandvast_soilcurkb1 : float
-        Subgrade reaction modulus of dense sand [kN/m3].
-    Zandlos_soilphi : float
-        Friction angle of loose sand layer [deg].
-    Zandlos_soilcurkb1 : float
-        Subgrade reaction modulus of loose sand [kN/m3].
-    Wall_SheetPilingElementEI : float
-        Elastic stiffness of the sheet pile [kNm2/m].
-    corrosion_rate : float
-        Corrosion ratio [-], 0 (intact) to 1 (fully corroded).
+    g_wall   = M_capacity / (theta_M * |M_max|)   - 1
+    g_anchor = F_yield    / (theta_F * |F_anchor|) - 1
+
+    model_factor_M : model uncertainty on wall moments (lognormal, mean 1).
+    model_factor_F : model uncertainty on anchor force (lognormal, mean 1).
     """
     # Degraded section properties
     factor = 1.0 - corrosion_rate
@@ -269,7 +228,9 @@ def lsf_wall_anchor(
 
     # Deep-copy and update model via payload
     model = deepcopy(_base_model)
-    params = {k: v for k, v in locals().items() if k not in ("corrosion_rate", "factor", "m_capacity", "model")}
+    params = {k: v for k, v in locals().items()
+              if k not in ("corrosion_rate", "factor", "m_capacity", "f_yield", "model",
+                           "model_factor_M", "model_factor_F", "return_separate")}
     params["Wall_SheetPilingElementEI"] = Wall_SheetPilingElementEI * factor  # degraded EI
     payload = build_payload(params, model)
     apply_payload(model, payload)
@@ -278,7 +239,6 @@ def lsf_wall_anchor(
         # Execute
         model.execute()
 
-        # Limit state: capacity - demand
         max_moment = model.results.max_moment
         if isinstance(max_moment, (list, np.ndarray)):
             max_moment = max_moment[0]
@@ -287,8 +247,8 @@ def lsf_wall_anchor(
         if isinstance(anchor_force, (list, np.ndarray)):
             anchor_force = anchor_force[0]
 
-        g_wall = m_capacity - abs(max_moment)
-        g_anchor = f_yield - abs(anchor_force)
+        g_wall = m_capacity / (abs(max_moment) * model_factor_M) - 1
+        g_anchor = f_yield / (abs(anchor_force) * model_factor_F) - 1
         g = abs(g_wall*g_anchor) * np.sign(max(g_wall, g_anchor))
 
         if return_separate:
