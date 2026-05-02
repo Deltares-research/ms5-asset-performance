@@ -21,7 +21,7 @@ from copy import deepcopy
 from pathlib import Path
 from argparse import ArgumentParser
 from dotenv import load_dotenv
-
+from time import time
 from src.io import get_remote_path
 from src.geotechnical_models.dsheetpiling.model import DSheetPiling
 from src.reliability_models.dsheetpiling import build_payload, apply_payload
@@ -122,13 +122,22 @@ def lsf_wall(
         # Execute
         model.execute()
 
-        # Limit state: capacity - model uncertainty * demand
+        # Limit state: capacity / (model uncertainty * demand) - 1
+        # (g > 0 safe, g < 0 failure)
         max_moment = model.results.max_moment
         if isinstance(max_moment, (list, np.ndarray)):
             max_moment = max_moment[0]
-
-        return m_capacity / (model_factor_M * abs(max_moment))
-    except:
+        g = m_capacity / (model_factor_M * abs(max_moment)) - 1
+        _internals = {"factor", "m_capacity", "model", "params", "payload",
+                      "max_moment", "g"}
+        inputs = [(k, v) for k, v in locals().items() if k not in _internals]
+        # print(f"\nTime:{time():.1f} | LSF={g:.3f} | {inputs}")
+        return g
+    except Exception as e:
+        _internals = {"factor", "m_capacity", "model", "params", "payload",
+                      "max_moment", "g"}
+        inputs = [(k, v) for k, v in locals().items() if k not in _internals]
+        print(f"LSF crashed at: {inputs} err={e}")
         return -99999.
 
 def lsf_anchor(
@@ -181,8 +190,9 @@ def lsf_anchor(
         if isinstance(anchor_force, (list, np.ndarray)):
             anchor_force = anchor_force[0]
 
-        return f_yield / (model_factor_F * abs(anchor_force))
-    except:
+        return f_yield / (model_factor_F * abs(anchor_force)) - 1
+    except Exception as e:
+        print(f"LSF crashed at: {[(k, v) for k, v in locals().items() if k != 'model'][:5]}... err={e}")
         return -99999.
 
 
@@ -249,15 +259,14 @@ def lsf_wall_anchor(
 
         g_wall = m_capacity / (abs(max_moment) * model_factor_M) - 1
         g_anchor = f_yield / (abs(anchor_force) * model_factor_F) - 1
-        g = abs(g_wall*g_anchor) * np.sign(max(g_wall, g_anchor))
 
         if return_separate:
             return g_wall, g_anchor
-        else:
-            return g
+        return min(g_wall, g_anchor)
 
-    except:
+    except Exception as e:
 
+        print(f"LSF crashed at: {[(k, v) for k, v in locals().items() if k != 'model'][:5]}... err={e}")
         if return_separate:
             return -99999., -99999.
         else:
@@ -275,10 +284,23 @@ LSF_REGISTRY = {
 }
 
 
+_DETERMINISTIC_TYPES = ("deterministic", "constant", "fixed")
+
+
+def _is_deterministic(v: dict) -> bool:
+    return v.get("distribution_type", "normal").lower() in _DETERMINISTIC_TYPES
+
+
 def build_stochastic_vars(variables: list) -> dict:
-    """Convert settings variable defs to FragilityCurveBuilder format."""
+    """Convert settings variable defs to FragilityCurveBuilder format.
+
+    Variables flagged as deterministic in settings.json are excluded — they
+    must be bound separately via ``wrap_lsf_with_deterministic``.
+    """
     stochastic = {}
     for v in variables:
+        if _is_deterministic(v):
+            continue
         name = v["name"]
         dist = v.get("distribution_type", "normal").lower()
         defn = {"distribution": dist, "mean": v["mean"]}
@@ -289,6 +311,119 @@ def build_stochastic_vars(variables: list) -> dict:
             defn["deviation"] = std
         stochastic[name] = defn
     return stochastic
+
+
+def wrap_lsf_with_deterministic(lsf_fn, variables: list):
+    """Pre-bind all deterministic variables to their means.
+
+    PTK calls the LSF positionally based on the inspected signature: it
+    samples the stochastic vars, passes the grid value for ``corrosion_rate``,
+    and falls back to 0 for any signature param it doesn't recognise (which
+    is how ``Wall_SheetPilingElementEI`` was silently zeroed before this
+    wrapper existed).
+
+    The wrapper exposes the same signature as ``lsf_fn`` (so PTK still
+    inspects 24 params), then overrides the deterministic positions with
+    their means before delegating. PTK still passes through 24 values per
+    call, but only the 9 stochastic dimensions are perturbed by FD because
+    only those appear in ``stochastic_vars`` — the rest are fixed.
+    """
+    import inspect
+
+    deterministic_kwargs = {v["name"]: v["mean"] for v in variables if _is_deterministic(v)}
+    sig = inspect.signature(lsf_fn)
+    param_names = list(sig.parameters.keys())
+
+    def wrapped(*args, **kwargs):
+        # Map positional -> kwargs so we can override uniformly.
+        bound = dict(zip(param_names, args))
+        bound.update(kwargs)
+        # Deterministic preset wins over whatever PTK supplied (0 / mean / etc.)
+        bound.update(deterministic_kwargs)
+        return lsf_fn(**bound)
+
+    wrapped.__signature__ = sig
+    wrapped.__name__ = f"{lsf_fn.__name__}_form_wrapper"
+    wrapped.__wrapped__ = lsf_fn
+    wrapped.deterministic_kwargs = deterministic_kwargs
+    return wrapped
+
+
+class WarmStartFragilityBuilder(FragilityCurveBuilder):
+    """FragilityCurveBuilder with explicit warm-start across grid points.
+
+    Captures the converged design point after each grid point and pushes
+    it into the project's stochastic variables before the next run, so
+    FORM starts from a near-optimal point instead of the median.
+
+    Also forces ``start_method = sensitivity_search`` (uses prior gradient
+    info) when available, falling back gracefully to ``fixed_value``.
+    """
+
+    def _setup_project(self):
+        project = super()._setup_project()
+        # fixed_value uses each variable's design_value as the FORM seed;
+        # sensitivity_search burns extra LSF calls on an upfront exploration
+        # which is wasted when consecutive grid points share a design point.
+        try:
+            import probabilistic_library as ptk
+            project.settings.start_method = ptk.StartMethod.fixed_value
+        except (AttributeError, ImportError):
+            pass
+        self._last_design = {}
+        return project
+
+    def _compute_point(self, project, point, index, verbose=True):
+        # Push previous design point into stochastic variables (warm start)
+        if self._last_design and verbose:
+            print(f"  [{index:04d}] warm-start from prev design point", flush=True)
+        for name, x_val in self._last_design.items():
+            try:
+                project.variables[name].design_value = float(x_val)
+            except Exception:
+                pass
+
+        result = super()._compute_point(project, point, index, verbose=verbose)
+
+        # Capture this point's design values (in x-space) for the next call
+        if result.get("convergence", False) and result.get("method") == "form":
+            self._last_design = dict(result.get("design_point", {}))
+        return result
+
+    def build(self, grid, cache_dir, force_rebuild=False, verbose=True):
+        """Override to seed _last_design from the latest cached point.
+
+        Without this, restarting after partial completion would re-do a cold
+        start at the first uncached point, defeating the warm-start.
+        """
+        from pathlib import Path
+        cache_dir = Path(cache_dir)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        points = self._build_grid_points(grid)
+        n_total = len(points)
+        if force_rebuild:
+            completed = set()
+        else:
+            manifest = self._load_manifest(cache_dir)
+            completed = set(manifest["completed_indices"]) if manifest else set()
+        if verbose:
+            print(f"Fragility curve: {n_total} points, {len(completed)} cached, "
+                  f"{n_total - len(completed)} to compute")
+        project = self._setup_project()
+
+        for i, point in enumerate(points):
+            if i in completed:
+                # Seed warm-start from this cached point so the first
+                # uncached point can warm-start from the latest cached one
+                cached = self._load_point(cache_dir, i)
+                if cached and cached.get("convergence") and cached.get("method") == "form":
+                    self._last_design = dict(cached.get("design_point", {}))
+                continue
+            result = self._compute_point(project, point, i, verbose=verbose)
+            self._save_point(result, cache_dir, i)
+            completed.add(i)
+            self._save_manifest(cache_dir, grid, sorted(completed))
+        return self.load(cache_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -308,17 +443,18 @@ def build_dev_fragility(lsf_name: str, n_cr_grid: int, use_api: bool) -> list[di
 
     init_model(use_api=use_api)
     lsf_fn = LSF_REGISTRY[lsf_name]
+    lsf_fn = wrap_lsf_with_deterministic(lsf_fn, _settings["variables"])
     stochastic_vars = build_stochastic_vars(_settings["variables"])
 
-    builder = FragilityCurveBuilder(
+    builder = WarmStartFragilityBuilder(
         lsf=lsf_fn,
         stochastic_vars=stochastic_vars,
         deterministic_vars=["corrosion_rate"],
         form_params={
-            "relaxation_factor": 0.15,
-            "maximum_iterations": 100,
-            "variation_coefficient": 0.05,
-            "step_size": 0.05,
+            "relaxation_factor": 0.3,
+            "maximum_iterations": 30,
+            "variation_coefficient": 0.20,
+            "step_size": 0.10,
         },
     )
 
@@ -362,7 +498,7 @@ def main(lsf_name: str = "lsf_wall", use_api: bool = False, force_rebuild: bool 
     if lsf_name not in LSF_REGISTRY:
         raise ValueError(f"Unknown LSF '{lsf_name}'. Available: {list(LSF_REGISTRY.keys())}")
 
-    n_cr_grid = _config.get("n_cr_grid", 11)
+    n_cr_grid = _config.get("n_fc_grid", 10)
 
     print("=" * 60)
     print("Building fragility curve for D-SheetPiling")
@@ -393,17 +529,18 @@ def main(lsf_name: str = "lsf_wall", use_api: bool = False, force_rebuild: bool 
     else:
         init_model(use_api=use_api)
         lsf_fn = LSF_REGISTRY[lsf_name]
+        lsf_fn = wrap_lsf_with_deterministic(lsf_fn, _settings["variables"])
         stochastic_vars = build_stochastic_vars(_settings["variables"])
 
-        builder = FragilityCurveBuilder(
+        builder = WarmStartFragilityBuilder(
             lsf=lsf_fn,
             stochastic_vars=stochastic_vars,
             deterministic_vars=["corrosion_rate"],
             form_params={
-                "relaxation_factor": 0.15,
-                "maximum_iterations": 100,
-                "variation_coefficient": 0.05,
-                "step_size": 0.05,
+                "relaxation_factor": 0.5,
+                "maximum_iterations": 30,
+                "variation_coefficient": 0.20,
+                "step_size": 0.10,
             },
         )
 

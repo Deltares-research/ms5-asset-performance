@@ -48,14 +48,26 @@ _corrosion_model = None
 
 def init_corrosion_model():
     global _corrosion_model
+    model_type = _config.get("model_type", "power")
     _corrosion_model = CorrosionModel(
-        C50_mu=_config.get("C50_mu", 1.0),
+        model_type=model_type,
+        # linear-mode (50-75)
+        C50_mu=_config.get("C50_mu", 1.5),
         C50_std=_config.get("C50_std", 0.75),
-        corrosion_rate=_config["corrosion_rate"],
+        corrosion_rate=_config.get("corrosion_rate", 0.022),
+        t_start=_config.get("t_start", 50.0),
+        C50_min=_config.get("C50_min", 0.5),
+        C50_max=_config.get("C50_max", 2.5),
+        # power-mode (0-50)
+        power_A=_config.get("power_A", 0.091),
+        B_mu=_config.get("B_mu", 0.72),
+        B_std=_config.get("B_std", 0.05),
+        B_min=_config.get("B_min", 0.4),
+        B_max=_config.get("B_max", 1.0),
+        # common
         wall_thickness=_config["wall_thickness"],
         obs_error_std=_config["obs_error_std"],
-        t_start=_config["t_start"],
-        n_grid=_config["n_C50_grid"],
+        n_grid=_config.get("n_B_grid", _config.get("n_C50_grid", 100)),
         n_corrosion_grid=_config["n_cr_grid"],
     )
 
@@ -66,27 +78,35 @@ def get_det_pdfs(t, use_prior, **kwargs):
     setting_at_t = kwargs.get("setting_at_t", {})
     t_obs = kwargs.get("t_obs")
 
-    C50_pdf = jpdf.C50_prior if use_prior else jpdf.C50_pdf
+    param_pdf = jpdf.param_prior if use_prior else jpdf.param_pdf
     last_obs = setting_at_t.get("corrosion") if not use_prior else None
     last_obs_time = t_obs if not use_prior else None
 
     cr_grid, cr_pdf = _corrosion_model.corrosion_ratio_pdf(
-        t=t, C50_pdf=C50_pdf,
+        t=t, param_pdf=param_pdf,
         last_obs_time=last_obs_time, last_obs=last_obs,
     )
     return {"corrosion_rate": (cr_grid, cr_pdf)}
 
 
 def do_update(jpdf, obs_times, obs_values, t):
-    jpdf.update_C50(obs_times, obs_values)
+    jpdf.update(obs_times, obs_values)
 
 
 def do_reset(jpdf):
-    jpdf.reset_C50_to_prior()
+    jpdf.reset_to_prior()
 
 
 def build_state(jpdf):
+    if jpdf.model_type == "power":
+        return {
+            "model_type": "power",
+            "B_grid": jpdf.B_grid.tolist(),
+            "B_prior": jpdf.B_prior.tolist(),
+            "B_posterior": jpdf.B_pdf.tolist(),
+        }
     return {
+        "model_type": "linear",
         "C50_grid": jpdf.C50_grid.tolist(),
         "C50_prior": jpdf.C50_prior.tolist(),
         "C50_posterior": jpdf.C50_pdf.tolist(),
@@ -100,10 +120,18 @@ def build_state(jpdf):
 def main(
         lsf_name: str = "lsf_wall",
         dev_frag: bool = False,
+        model_type: str | None = None,
 ):
     print("=" * 60)
     print("D-SheetPiling Reliability Pipeline")
     print("=" * 60)
+
+    # CLI override of the corrosion model_type from settings.json.
+    if model_type is not None:
+        if model_type not in ("power", "linear"):
+            raise ValueError(f"--model-type must be 'power' or 'linear', got {model_type!r}")
+        _config["model_type"] = model_type
+    print(f"Corrosion model: {_config.get('model_type', 'power')}")
 
     # Load fragility curve (build if missing)
     cache_dir = _remote / "output" / f"fragility_curve_{lsf_name}"
@@ -133,7 +161,7 @@ def main(
     t_end = int(max(times))
     forecast_times = np.array(sorted(set(
         list(range(t_start, t_end + forecast_interval, forecast_interval)) +
-        [int(t) for t in times]
+        times  # keep exact (float) obs times in the forecast grid
     )), dtype=float)
 
     # Create pipeline
@@ -192,12 +220,19 @@ def main(
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--lsf-name", type=str, default="lsf_wall_anchor", help="LSF name (selects fragility_curve_{lsf}/)")
-    parser.add_argument( "--dev-frag", action="store_false")
+    parser.add_argument("--lsf-name", type=str, default="lsf_wall", help="LSF name (selects fragility_curve_{lsf}/)")
+    parser.add_argument( "--dev-frag", action="store_true")
+    parser.add_argument(
+        "--model-type", type=str, choices=["power", "linear"], default=None,
+        help="Corrosion model: 'power' (0-50 yr, C(t)=A*t^B, B random) or "
+             "'linear' (50-75 yr, C(t)=C50*(1+r/C50_mu*(t-t_start))). "
+             "Overrides 'model_type' in settings.json. Default: use settings.",
+    )
     args = parser.parse_args()
 
     main(
         lsf_name=args.lsf_name,
         dev_frag=args.dev_frag,
+        model_type=args.model_type,
     )
 

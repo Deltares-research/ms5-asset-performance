@@ -1,4 +1,6 @@
 import os
+import sys
+from contextlib import contextmanager
 from src.geotechnical_models.dsheetpiling.utils import *
 from copy import deepcopy
 from src.geotechnical_models.base import GeoModelBase
@@ -9,6 +11,29 @@ from typing import Optional, Dict
 import json
 import warnings
 from datetime import datetime
+
+
+@contextmanager
+def _silence_stdio():
+    """Silence stdout AND stderr at the OS file-descriptor level.
+
+    Catches output from subprocess children (e.g. D-SheetPiling.exe), which
+    inherit fd 1/2 from the parent and bypass Python-level redirects.
+    """
+    sys.stdout.flush()
+    sys.stderr.flush()
+    saved_out, saved_err = os.dup(1), os.dup(2)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        os.dup2(saved_out, 1)
+        os.dup2(saved_err, 2)
+        os.close(devnull)
+        os.close(saved_out)
+        os.close(saved_err)
 
 
 class DSheetPiling(GeoModelBase):
@@ -230,7 +255,8 @@ class DSheetPiling(GeoModelBase):
         if self.api_key is not None:
             self._execute_api(exe_path)
         else:
-            geomodel.execute()
+            with _silence_stdio():
+                geomodel.execute()
             self.results = self.read_dsheet_results(geomodel)
 
         # Cleanup temp files

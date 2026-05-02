@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from argparse import ArgumentParser
 from scipy import stats as st
+from tqdm import tqdm
 
 from src.io import get_remote_path
 from src.plotting import save_figure
@@ -69,6 +70,18 @@ def _build_marginal(v: dict):
     if dist_type in ["uniform", "unif"]:
         return st.uniform(loc=lo, scale=hi - lo)
     return st.norm(loc=mean, scale=std)
+
+
+def _truncated_ppf(dist, u: np.ndarray, lo: float, hi: float) -> np.ndarray:
+    """PPF of `dist` truncated to [lo, hi].
+
+    Maps uniform u in (0, 1) into the inner CDF range [F(lo), F(hi)] before
+    inverting. Idempotent for distributions already supported on [lo, hi]
+    (e.g. truncnorm / uniform), since F(lo)=0 and F(hi)=1 in that case.
+    """
+    F_lo = float(dist.cdf(lo)) if np.isfinite(lo) else 0.0
+    F_hi = float(dist.cdf(hi)) if np.isfinite(hi) else 1.0
+    return dist.ppf(F_lo + u * (F_hi - F_lo))
 
 
 def _build_correlation_matrix(var_names: list, pairs: list | None) -> np.ndarray:
@@ -151,8 +164,11 @@ def sample_variables(
     u_clipped = np.clip(st.norm.cdf(U), 1e-12, 1 - 1e-12)
 
     for k, i in enumerate(stoch_idx):
-        dist = _build_marginal(variables[i])
-        samples[:, i] = dist.ppf(u_clipped[:, k])
+        v = variables[i]
+        dist = _build_marginal(v)
+        lo = v.get("lower_bound", -np.inf)
+        hi = v.get("upper_bound", np.inf)
+        samples[:, i] = _truncated_ppf(dist, u_clipped[:, k], lo, hi)
 
     return samples
 
@@ -297,7 +313,9 @@ def main(
 
     # Evaluate LSF per sample
     g_history: dict[str, list[float]] = {c: [] for c in comps}
-    for i in range(n_samples):
+    n_fail_sys = 0
+    pbar = tqdm(range(n_samples), desc="MC", unit="sample", dynamic_ncols=True)
+    for i in pbar:
         # Build kwargs for LSF (mirrors sensitivity: EI is held at EI_start)
         kwargs = {name: float(X[i, j]) for j, name in enumerate(var_names)}
         kwargs["Wall_SheetPilingElementEI"] = _settings["parameters"]["EI_start"]
@@ -307,24 +325,18 @@ def main(
         for c in comps:
             g_history[c].append(g_dict[c])
 
-        # Progress
-        n_done = i + 1
-        if n_done % max(1, n_samples // 20) == 0 or n_done == n_samples:
-            fail_str = "  ".join(
-                f"{c}: {sum(1 for g in g_history[c] if g < 0)}" for c in comps
-            )
-            n_fail_sys = sum(
-                1 for k in range(n_done)
-                if any(g_history[c][k] < 0 for c in comps)
-            )
-            pf_running = n_fail_sys / n_done
-            beta_running = (
-                float(st.norm.ppf(1 - pf_running)) if 0 < pf_running < 1
-                else (np.inf if pf_running == 0 else -np.inf)
-            )
-            print(f"  [{n_done:6d}/{n_samples}]  failures -> {fail_str}  "
-                  f"system: {n_fail_sys}  Pf: {pf_running:.4e}  "
-                  f"beta: {beta_running:.3f}")
+        if any(g_dict[c] < 0 for c in comps):
+            n_fail_sys += 1
+        pf_running = n_fail_sys / (i + 1)
+        beta_running = (
+            float(st.norm.ppf(1 - pf_running)) if 0 < pf_running < 1
+            else (np.inf if pf_running == 0 else -np.inf)
+        )
+        pbar.set_postfix(
+            fail=n_fail_sys,
+            Pf=f"{pf_running:.2e}",
+            beta=f"{beta_running:.2f}",
+        )
 
     # Summary
     g_arrays = {c: np.array(g_history[c]) for c in comps}
@@ -419,8 +431,8 @@ def main(
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--lsf", type=str, default="lsf_wall_anchor", help=f"LSF to use. Available: {list(LSF_REGISTRY.keys())}")
-    parser.add_argument("--n_samples", type=int, default=10)
+    parser.add_argument("--lsf", type=str, default="lsf_wall", help=f"LSF to use. Available: {list(LSF_REGISTRY.keys())}")
+    parser.add_argument("--n_samples", type=int, default=100)
     parser.add_argument("--use_api", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()

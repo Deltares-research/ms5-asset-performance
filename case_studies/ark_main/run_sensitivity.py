@@ -66,7 +66,10 @@ def get_percentiles(v: dict, percentiles=(0.01, 0.99)):
     else:
         dist = st.norm(loc=mean, scale=std)
 
-    return {p: float(dist.ppf(p)) for p in percentiles}
+    # Truncate to [lo, hi] via inner-CDF remap (idempotent for truncnorm/uniform)
+    F_lo = float(dist.cdf(lo)) if np.isfinite(lo) else 0.0
+    F_hi = float(dist.cdf(hi)) if np.isfinite(hi) else 1.0
+    return {p: float(dist.ppf(F_lo + p * (F_hi - F_lo))) for p in percentiles}
 
 
 def component_names(lsf_name: str) -> list[str]:
@@ -179,7 +182,6 @@ def main(
     for c, gb in zip(comps, g_baseline):
         print(f"Baseline ({c}, all at mean): g = {gb:.2f}")
     print()
-
     # Sensitivity per variable
     results = []
     header = (f"{'Variable':<28s} {'comp':<7s} {'p01':>12s} {'g(p01)':>12s}  "

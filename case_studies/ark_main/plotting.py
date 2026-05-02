@@ -51,17 +51,21 @@ def plot_beta_forecast_at_time(
     ft_pr = sorted(bf_prior.keys())
     plt.plot(ft_pr, [min(bf_prior[t], max_beta) for t in ft_pr], c="b", label="Prior")
 
-    # Hindcast: solid red connecting posterior betas with forecast segments
+    # Hindcast: solid red traces the prev-obs posterior forecast curve from
+    # prev_t to curr_t (every forecast point in between), then jumps to the
+    # posterior beta at curr_t. Tracing the curve (instead of a chord) makes
+    # the solid line coincide with the dotted forecast for prev_t between
+    # obs points.
     hindcast_segments = []
     for prev_t, curr_t in zip(obs_times[:-1], obs_times[1:]):
-        prev_beta = min(results[prev_t]["posterior"]["beta"], max_beta)
+        bf = results[prev_t]["posterior"]["beta_forecast"]
         curr_beta = min(results[curr_t]["posterior"]["beta"], max_beta)
-        prev_fc = results[prev_t]["posterior"]["beta_forecast"].get(curr_t)
-        if prev_fc is not None:
-            prev_fc = min(prev_fc, max_beta)
-            hindcast_segments.append([
-                (prev_t, prev_beta), (curr_t, prev_fc), (curr_t, curr_beta),
-            ])
+        seg_times = [t for t in sorted(bf.keys()) if prev_t <= t <= curr_t]
+        if not seg_times:
+            continue
+        seg = [(t, min(bf[t], max_beta)) for t in seg_times]
+        seg.append((curr_t, curr_beta))  # vertical jump at curr_t
+        hindcast_segments.append(seg)
 
     if hindcast_segments:
         pts = list(chain.from_iterable(hindcast_segments))
@@ -354,10 +358,10 @@ def save_all_plots(
         future = [ft for ft in forecast_times if ft >= t_obs]
         pr, po = {}, {}
         for ft in future:
-            g, p = corrosion_model.corrosion_ratio_pdf(t=ft, C50_pdf=jpdf.C50_prior)
+            g, p = corrosion_model.corrosion_ratio_pdf(t=ft, param_pdf=jpdf.param_prior)
             pr[ft] = np.interp(cr_grid_plot, g, p, left=0, right=0).tolist()
             g, p = corrosion_model.corrosion_ratio_pdf(
-                t=ft, C50_pdf=jpdf.C50_pdf, last_obs_time=t_obs, last_obs=corr_obs,
+                t=ft, param_pdf=jpdf.param_pdf, last_obs_time=t_obs, last_obs=corr_obs,
             )
             po[ft] = np.interp(cr_grid_plot, g, p, left=0, right=0).tolist()
         return pr, po
