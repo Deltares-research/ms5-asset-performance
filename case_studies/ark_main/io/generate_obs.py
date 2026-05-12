@@ -27,17 +27,20 @@ Usage:
 """
 
 import json
+import sys
 from pathlib import Path
 from argparse import ArgumentParser
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 from scipy import stats
 
 from src.io import get_remote_path
-from corrosion import CorrosionModel
+from models.corrosion import CorrosionModel
 
 
-_ENV = Path(__file__).parent / ".env"
+_ENV = Path(__file__).resolve().parents[1] / ".env"
 
 
 def _prior_quantile(model_type: str, config: dict, q: float) -> float:

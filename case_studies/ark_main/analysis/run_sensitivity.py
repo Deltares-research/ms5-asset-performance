@@ -17,21 +17,27 @@ Usage:
 
 import csv
 import json
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 from argparse import ArgumentParser
 from scipy import stats as st
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from src.io import get_remote_path
 from src.plotting import save_figure
-from build_fragility import LSF_REGISTRY, init_model, load_settings
+from reliability.build_fragility import LSF_REGISTRY, init_model
 
 
-_ENV = Path(__file__).parent / ".env"
-_settings = load_settings()
-_config = _settings["parameters"]
+_ENV = Path(__file__).parent.parent / ".env"
 _remote = get_remote_path(_ENV)
+# run_sensitivity uses the FULL variable set, not the calibrated subset.
+_SETTINGS_PATH = _remote / "input" / "settings_full.json"
+with open(_SETTINGS_PATH, "r") as f:
+    _settings = json.load(f)
+_config = _settings["parameters"]
 _EULER = 0.5772156649
 
 
@@ -252,7 +258,7 @@ def main(
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--lsf", type=str, default="lsf_wall_anchor",
+    parser.add_argument("--lsf", type=str, default="lsf_wall",
                         help=f"LSF to use. Available: {list(LSF_REGISTRY.keys())}")
     parser.add_argument("--corrosion_rate", type=float, default=0.0)
     parser.add_argument("--use_api", action="store_true")

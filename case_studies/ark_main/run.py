@@ -18,13 +18,28 @@ from pathlib import Path
 from datetime import datetime
 from argparse import ArgumentParser
 
+# Geolib reads ``geolib.env`` relative to cwd when its ``MetaData`` BaseSettings
+# is first instantiated (during ``import geolib`` from src.geotechnical_models).
+# Hydrate it from the case-study copy here so this script works regardless of
+# the cwd it is launched from.
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parent / "geolib.env")
+
+# Silence geolib chatter that would interleave with progress output.
+# ``geolib.utils`` emits cosmetic ``run_identification`` newline warnings; the
+# base_model logger emits a one-line error before raising ``CalculationError``
+# whenever DSheetPiling.exe can't be located.
+import logging
+logging.getLogger("geolib.utils").setLevel(logging.ERROR)
+logging.getLogger("geolib.models.base_model").setLevel(logging.CRITICAL)
+
 from src.io import get_remote_path
 from src.pipeline import FragilityPipeline
 from src.ptk import FragilityCurveBuilder
-from jpdf import JPDF
-from corrosion import CorrosionModel
+from models.jpdf import JPDF
+from models.corrosion import CorrosionModel
 from plotting import save_all_plots
-from build_fragility import main as build_fragility
+from reliability.build_fragility import main as build_fragility
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +172,9 @@ def main(
 
     times = sorted([float(k) for k in data.keys()])
     forecast_interval = _config.get("forecast_interval", 1)
-    t_start = int(min(times))
+    # Anchor the forecast grid at config['t_start'] so the prior line spans the
+    # full horizon. For power mode t_start = 0 → C(0) = A * 0^B = 0.
+    t_start = int(_config.get("t_start", min(times)))
     t_end = int(max(times))
     forecast_times = np.array(sorted(set(
         list(range(t_start, t_end + forecast_interval, forecast_interval)) +

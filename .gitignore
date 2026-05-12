@@ -190,6 +190,7 @@ cython_debug/
 *.csv
 *.shi
 *.gif
+*.docx
 
 /mock
 /secrets/

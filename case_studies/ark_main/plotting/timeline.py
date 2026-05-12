@@ -118,9 +118,14 @@ def plot_corrosion_forecast_at_time(
     cr_grid = np.asarray(cr_grid)
     fig, ax = plt.subplots(figsize=(10, 5))
 
+    # Central line is the mode (PDF argmax). At t = t_obs the posterior PDF
+    # collapses to TruncN(last_obs, sigma_obs, [0, wall]) whose mode equals
+    # last_obs, so the line passes exactly through the observation marker.
+    # Mode also equals the mean once truncation is negligible (later times).
+
     # Prior
     cr_pr = np.vstack(list(cr_forecast_prior.values()))
-    cr_pr_mean = np.trapezoid(cr_pr * cr_grid[None, :], cr_grid, axis=1)
+    cr_pr_mode = cr_grid[np.argmax(cr_pr, axis=1)]
     cr_pr_cdf = cumulative_trapezoid(cr_pr, cr_grid)
     cr_pr_q05 = cr_grid[np.argmin(np.abs(cr_pr_cdf - alpha), axis=1)]
     cr_pr_q95 = cr_grid[np.argmin(np.abs(cr_pr_cdf - (1 - alpha)), axis=1)]
@@ -130,11 +135,11 @@ def plot_corrosion_forecast_at_time(
                     color="b", alpha=0.15)
     ax.plot(times_pr, cr_pr_q05 * wall_thickness, color="b", linewidth=0.5)
     ax.plot(times_pr, cr_pr_q95 * wall_thickness, color="b", linewidth=0.5)
-    ax.plot(times_pr, cr_pr_mean * wall_thickness, color="b", linewidth=1.5, label="Prior")
+    ax.plot(times_pr, cr_pr_mode * wall_thickness, color="b", linewidth=1.5, label="Prior")
 
     # Posterior
     cr_po = np.vstack(list(cr_forecast_posterior.values()))
-    cr_po_mean = np.trapezoid(cr_po * cr_grid[None, :], cr_grid, axis=1)
+    cr_po_mode = cr_grid[np.argmax(cr_po, axis=1)]
     cr_po_cdf = cumulative_trapezoid(cr_po, cr_grid)
     cr_po_q05 = cr_grid[np.argmin(np.abs(cr_po_cdf - alpha), axis=1)]
     cr_po_q95 = cr_grid[np.argmin(np.abs(cr_po_cdf - (1 - alpha)), axis=1)]
@@ -144,7 +149,7 @@ def plot_corrosion_forecast_at_time(
                     color="r", alpha=0.15)
     ax.plot(times_po, cr_po_q05 * wall_thickness, color="r", linewidth=0.5)
     ax.plot(times_po, cr_po_q95 * wall_thickness, color="r", linewidth=0.5)
-    ax.plot(times_po, cr_po_mean * wall_thickness, color="r", linewidth=1.5, label="Posterior")
+    ax.plot(times_po, cr_po_mode * wall_thickness, color="r", linewidth=1.5, label="Posterior")
 
     # Observations
     if obs_times is not None and obs_values is not None:
@@ -187,14 +192,14 @@ def plot_moment_forecast_at_time(
     cr_grid = np.asarray(cr_grid)
     fig, ax = plt.subplots(figsize=(10, 5))
 
-    # Prior
+    # Prior — central line from PDF mode (consistent with corrosion plot)
     cr_pr = np.vstack(list(cr_forecast_prior.values()))
-    cr_pr_mean = np.trapezoid(cr_pr * cr_grid[None, :], cr_grid, axis=1)
+    cr_pr_mode = cr_grid[np.argmax(cr_pr, axis=1)]
     cr_pr_cdf = cumulative_trapezoid(cr_pr, cr_grid)
     cr_pr_q05 = cr_grid[np.argmin(np.abs(cr_pr_cdf - alpha), axis=1)]
     cr_pr_q95 = cr_grid[np.argmin(np.abs(cr_pr_cdf - (1 - alpha)), axis=1)]
 
-    m_pr_mean = wall_moment_capacity * (1 - cr_pr_mean)
+    m_pr_mean = wall_moment_capacity * (1 - cr_pr_mode)
     m_pr_q95 = wall_moment_capacity * (1 - cr_pr_q05)  # low cr → high moment
     m_pr_q05 = wall_moment_capacity * (1 - cr_pr_q95)
 
@@ -206,12 +211,12 @@ def plot_moment_forecast_at_time(
 
     # Posterior
     cr_po = np.vstack(list(cr_forecast_posterior.values()))
-    cr_po_mean = np.trapezoid(cr_po * cr_grid[None, :], cr_grid, axis=1)
+    cr_po_mode = cr_grid[np.argmax(cr_po, axis=1)]
     cr_po_cdf = cumulative_trapezoid(cr_po, cr_grid)
     cr_po_q05 = cr_grid[np.argmin(np.abs(cr_po_cdf - alpha), axis=1)]
     cr_po_q95 = cr_grid[np.argmin(np.abs(cr_po_cdf - (1 - alpha)), axis=1)]
 
-    m_po_mean = wall_moment_capacity * (1 - cr_po_mean)
+    m_po_mean = wall_moment_capacity * (1 - cr_po_mode)
     m_po_q95 = wall_moment_capacity * (1 - cr_po_q05)
     m_po_q05 = wall_moment_capacity * (1 - cr_po_q95)
 
@@ -347,6 +352,7 @@ def save_all_plots(
             obs_corrosion_list.append(data[key]["corrosion"])
 
     t_first, t_last = times[0], times[-1]
+    t_plot_lo = float(min(forecast_times)) if len(forecast_times) else t_first
     wall_moment_capacity = config["wall_moment_capacity"]
     wall_thickness = config["wall_thickness"]
     obs_moment_cap = [wall_moment_capacity * (1 - c / wall_thickness) for c in obs_corrosion_list]
@@ -355,11 +361,16 @@ def save_all_plots(
     def build_cr_forecasts(t_obs):
         key = str(t_obs) if str(t_obs) in data else f"{t_obs:.1f}"
         corr_obs = data[key]["corrosion"] if key in data else None
-        future = [ft for ft in forecast_times if ft >= t_obs]
         pr, po = {}, {}
-        for ft in future:
+        # Prior is not anchored on any obs — span the full forecast horizon so
+        # the curve starts at t = forecast_times[0] (= 0 for the power model).
+        for ft in forecast_times:
             g, p = corrosion_model.corrosion_ratio_pdf(t=ft, param_pdf=jpdf.param_prior)
             pr[ft] = np.interp(cr_grid_plot, g, p, left=0, right=0).tolist()
+        # Posterior is anchored on the current obs and only spans future times.
+        for ft in forecast_times:
+            if ft < t_obs:
+                continue
             g, p = corrosion_model.corrosion_ratio_pdf(
                 t=ft, param_pdf=jpdf.param_pdf, last_obs_time=t_obs, last_obs=corr_obs,
             )
@@ -378,7 +389,16 @@ def save_all_plots(
     collect_pngs_to_pdf(png_dir, plot_dir / "beta_forecast.pdf")
     print(f"Beta forecast plots saved to {png_dir}")
 
-    # Corrosion forecast
+    # Corrosion forecast — ymax derived from the prior q95 at the last
+    # forecast time so the panel isn't dominated by empty whitespace.
+    g_last, p_last = corrosion_model.corrosion_ratio_pdf(t=t_last, param_pdf=jpdf.param_prior)
+    p_last = np.asarray(p_last)
+    cdf = np.cumsum(p_last)
+    cdf = cdf / cdf[-1] if cdf[-1] > 0 else cdf
+    q95_ratio = float(np.interp(0.95, cdf, g_last))
+    ymax_corrosion = max(2.0, q95_ratio * wall_thickness * 1.20)
+    ymax_corrosion = min(ymax_corrosion, wall_thickness)
+
     png_dir = plot_dir / "corrosion"
     png_dir.mkdir(parents=True, exist_ok=True)
     for current_t in obs_times_list:
@@ -388,7 +408,7 @@ def save_all_plots(
             obs_times=[t for t in obs_times_list if t <= current_t],
             obs_values=[c for t, c in zip(obs_times_list, obs_corrosion_list) if t <= current_t],
             obs_error_std=config["obs_error_std"], wall_thickness=wall_thickness,
-            xlim=(t_first, t_last), ylim=(0, wall_thickness),
+            xlim=(t_plot_lo, t_last), ylim=(0, ymax_corrosion),
         )
         save_figure(fig, png_dir / f"corrosion_t{int(current_t):03d}.png")
     collect_pngs_to_pdf(png_dir, plot_dir / "corrosion.pdf")
@@ -404,7 +424,7 @@ def save_all_plots(
             wall_moment_capacity=wall_moment_capacity,
             obs_times=[t for t in obs_times_list if t <= current_t],
             obs_moment_cap=[m for t, m in zip(obs_times_list, obs_moment_cap) if t <= current_t],
-            xlim=(t_first, t_last), ylim=(0, wall_moment_capacity * 1.1),
+            xlim=(t_plot_lo, t_last), ylim=(0, wall_moment_capacity * 1.1),
         )
         save_figure(fig, png_dir / f"moment_t{int(current_t):03d}.png")
     collect_pngs_to_pdf(png_dir, plot_dir / "moment.pdf")

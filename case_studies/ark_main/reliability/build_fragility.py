@@ -32,8 +32,8 @@ from src.ptk import FragilityCurveBuilder
 # Paths
 # ---------------------------------------------------------------------------
 
-_ENV = Path(__file__).parent / ".env"
-_SECRETS_ENV = Path(__file__).parents[2] / "secrets" / ".env"
+_ENV = Path(__file__).resolve().parents[1] / ".env"
+_SECRETS_ENV = Path(__file__).resolve().parents[3] / "secrets" / ".env"
 WORK_DIR = Path(tempfile.mkdtemp(prefix="dsheet_fc_")).resolve()
 
 
@@ -64,6 +64,31 @@ _base_model = None
 WALL_MOMENT_CAPACITY = _config["wall_moment_capacity"]
 ANCHOR_CAPACITY = _config["anchor_capacity"]
 WALL_THICKNESS = _config["wall_thickness"]
+
+# Smooth-min sharpness for the wall-moment LSF.
+#   bias bound on g: +log(N) / SMOOTH_ALPHA  (N = number of z-samples ~ 120)
+#   alpha = 50 -> bias <= +0.10, conservative (toward safety) and tight enough
+#   for FORM gradients to be accurate near g = 0.
+SMOOTH_ALPHA = 50.0
+
+
+def _smooth_g_wall(moments: np.ndarray, m_capacity: float, theta_M: float,
+                   alpha: float = SMOOTH_ALPHA) -> float:
+    """Smooth approximation to  g = M_cap / (theta_M * max_z |M(z)|) - 1.
+
+    Works on the per-z capacity-to-demand ratio
+        r(z) = M_cap / (theta_M * |M(z)|),
+    which is dimensionless and O(1) at failure (= 1). The original LSF is
+    g = min_z r(z) - 1; we smooth the min via the LogSumExp identity
+    min(r) = -max(-r):
+        smooth_min(r) = -logsumexp(-alpha * r) / alpha
+    Larger alpha -> sharper (closer to true min); alpha=50 keeps the bias on g
+    below ~+0.1 with N~120 samples while removing the argmax kink that breaks
+    FORM finite-difference gradients.
+    """
+    abs_m = np.maximum(np.abs(np.asarray(moments)), 1e-9)
+    r = m_capacity / (theta_M * abs_m)
+    return -np.logaddexp.reduce(-alpha * r) / alpha - 1.0
 
 
 def init_model(use_api: bool = False) -> None:
@@ -133,11 +158,7 @@ def lsf_wall(
         inputs = [(k, v) for k, v in locals().items() if k not in _internals]
         # print(f"\nTime:{time():.1f} | LSF={g:.3f} | {inputs}")
         return g
-    except Exception as e:
-        _internals = {"factor", "m_capacity", "model", "params", "payload",
-                      "max_moment", "g"}
-        inputs = [(k, v) for k, v in locals().items() if k not in _internals]
-        print(f"LSF crashed at: {inputs} err={e}")
+    except Exception:
         return -99999.
 
 def lsf_anchor(
@@ -191,8 +212,7 @@ def lsf_anchor(
             anchor_force = anchor_force[0]
 
         return f_yield / (model_factor_F * abs(anchor_force)) - 1
-    except Exception as e:
-        print(f"LSF crashed at: {[(k, v) for k, v in locals().items() if k != 'model'][:5]}... err={e}")
+    except Exception:
         return -99999.
 
 
@@ -264,9 +284,7 @@ def lsf_wall_anchor(
             return g_wall, g_anchor
         return min(g_wall, g_anchor)
 
-    except Exception as e:
-
-        print(f"LSF crashed at: {[(k, v) for k, v in locals().items() if k != 'model'][:5]}... err={e}")
+    except Exception:
         if return_separate:
             return -99999., -99999.
         else:
@@ -373,15 +391,21 @@ class WarmStartFragilityBuilder(FragilityCurveBuilder):
         self._last_design = {}
         return project
 
+    # Class-level switch: set to True to skip warm-start for diagnostics.
+    # Each FORM call then cold-starts from the median, slower but rules out
+    # warm-start poisoning when investigating bad beta sequences.
+    DISABLE_WARM_START = False
+
     def _compute_point(self, project, point, index, verbose=True):
         # Push previous design point into stochastic variables (warm start)
-        if self._last_design and verbose:
+        if self._last_design and not self.DISABLE_WARM_START and verbose:
             print(f"  [{index:04d}] warm-start from prev design point", flush=True)
-        for name, x_val in self._last_design.items():
-            try:
-                project.variables[name].design_value = float(x_val)
-            except Exception:
-                pass
+        if not self.DISABLE_WARM_START:
+            for name, x_val in self._last_design.items():
+                try:
+                    project.variables[name].design_value = float(x_val)
+                except Exception:
+                    pass
 
         result = super()._compute_point(project, point, index, verbose=verbose)
 
