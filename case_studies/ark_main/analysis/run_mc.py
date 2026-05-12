@@ -364,13 +364,11 @@ def plot_convergence(
     ax_pf.set_yscale("log")
     ax_pf.set_title("Running Pf (95% CI shaded)")
     ax_pf.grid(alpha=0.3, which="both")
-    ax_pf.legend(loc="best", fontsize=9)
 
     ax_b.set_xlabel("iteration")
     ax_b.set_ylabel("running beta")
     ax_b.set_title("Running beta (95% CI shaded)")
     ax_b.grid(alpha=0.3)
-    ax_b.legend(loc="best", fontsize=9)
 
     fig.suptitle(f"MC convergence — N = {n}", fontsize=11)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
