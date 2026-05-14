@@ -690,7 +690,7 @@ def main(
     init_model(use_api=use_api)
     lsf_fn = LSF_REGISTRY[lsf_name]
 
-    ckpt_interval = max(10, n_samples // 50)
+    ckpt_interval = max(10, n_samples // 2000)
 
     print("=" * 60)
     print("Monte Carlo Simulation")
