@@ -1,0 +1,95 @@
+"""
+Persistence for the spatial-MCS Pf grid.
+
+One JSON file per spatial-MCS run, holding the per-cr per-section failure
+counts and enough metadata to detect a stale cache::
+
+    {
+      "lsf_name":         "lsf_wall",
+      "n_samples":        100000,
+      "seed":             42,
+      "n_sections":       21,
+      "L":                1000.0,
+      "default_theta":    200.0,
+      "default_rho_0":    0.3,
+      "cr_values":        [0.0, 0.025, ...],
+      "betas":            [3.42, 3.31, ...],
+      "n_fail_section":   [[..21 ints..], ..n_cr rows..],
+      "n_fail_system":    [..n_cr ints..]
+    }
+
+The cache is keyed by every field except ``n_fail_*`` — if any of them
+differs, the cached file is treated as stale and recomputed.
+"""
+from __future__ import annotations
+
+import json
+import math
+from pathlib import Path
+
+import numpy as np
+
+
+def path(out_dir: Path) -> Path:
+    return out_dir / "pf_grid.json"
+
+
+def _arrays_close(a: list, b: list, tol: float = 1e-9) -> bool:
+    if len(a) != len(b):
+        return False
+    return all(math.isclose(float(x), float(y), abs_tol=tol) for x, y in zip(a, b))
+
+
+def try_load(
+    out_dir: Path,
+    *,
+    lsf_name: str,
+    n_samples: int,
+    seed: int,
+    n_sections: int,
+    L: float,
+    default_theta: float,
+    default_rho_0: float,
+    cr_values: np.ndarray,
+    betas: np.ndarray,
+) -> dict | None:
+    """Return cached data if every key matches, otherwise ``None``.
+
+    A mismatch on the fragility-cache fingerprint (``cr_values`` or ``betas``)
+    typically means the fragility curve has been rebuilt since this spatial
+    run was cached — we play it safe and force a recompute.
+    """
+    p = path(out_dir)
+    if not p.exists():
+        return None
+    try:
+        data = json.load(open(p))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"  Cached Pf grid {p} unreadable ({exc!r}) — recomputing.")
+        return None
+
+    same = (
+        data.get("lsf_name") == lsf_name
+        and int(data.get("n_samples", -1)) == int(n_samples)
+        and int(data.get("seed", -1)) == int(seed)
+        and int(data.get("n_sections", -1)) == int(n_sections)
+        and math.isclose(float(data.get("L", -1)), float(L), abs_tol=1e-9)
+        and math.isclose(float(data.get("default_theta", -1)), float(default_theta), abs_tol=1e-9)
+        and math.isclose(float(data.get("default_rho_0", -1)), float(default_rho_0), abs_tol=1e-9)
+        and _arrays_close(data.get("cr_values", []), list(cr_values))
+        and _arrays_close(data.get("betas", []), list(betas))
+    )
+    if not same:
+        print(f"  Cached Pf grid {p} has a different run config — recomputing.")
+        return None
+    print(f"  Loaded cached Pf grid from {p}.")
+    return data
+
+
+def save(out_dir: Path, data: dict) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    p = path(out_dir)
+    tmp = p.with_suffix(".json.tmp")
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    tmp.replace(p)
