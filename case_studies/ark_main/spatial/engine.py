@@ -48,6 +48,7 @@ from tqdm import tqdm
 from src.io import get_remote_path
 from reliability.build_fragility import load_settings
 
+from spatial import cache_dir as _cache_dir
 from spatial import checkpoint, covariance, fragility
 
 
@@ -116,39 +117,40 @@ def _run_mcs_over_cr_grid(
 # Step 5: cache gateway — public API
 # ----------------------------------------------------------------------
 
-def compute_or_load_pf_grid(
-    lsf_name: str = "lsf_wall",
-    n_samples: int = 10000,
-    seed: int = 42,
-    theta: float | None = None,
-    rho_0: float | None = None,
-) -> dict:
-    """Return the per-fragility-point Pf grid for ``lsf_name``.
+def compute_or_load_pf_grid(spatial_settings: dict) -> dict:
+    """Return the per-fragility-point Pf grid.
+
+    ``spatial_settings`` is the parsed ``spatial_settings.json`` payload —
+    it carries ``lsf_name``, ``n_samples``, ``seed``, ``L``, ``n_sections``,
+    ``default``, ``cr``, and ``per_variable``.
 
     Loads from ``<remote>/output/spatial_mc_<lsf_name>/pf_grid.json`` if a
     cached file compatible with the requested configuration exists; otherwise
     runs the spatial MCS at every cached fragility cr-point, writes the
     result to that path, and returns it. Subsequent calls with the same
-    arguments hit the cache.
+    spatial_settings hit the cache.
 
     The returned dict mirrors the on-disk JSON: ``lsf_name``, ``n_samples``,
-    ``seed``, ``n_sections``, ``L``, ``default_theta``, ``default_rho_0``,
+    ``seed``, ``n_sections``, ``L``, ``wall_theta``, ``wall_rho_0``,
     ``cr_values`` (n_cr), ``betas`` (n_cr), ``n_fail_section`` (n_cr x
     n_sections), ``n_fail_system`` (n_cr). Convert the last two to Pf by
     dividing by ``n_samples``.
 
     Cache invalidates if any of ``(lsf_name, n_samples, seed, n_sections, L,
-    default_theta, default_rho_0)`` or the fragility fingerprint
-    ``(cr_values, betas)`` differs from what's on disk — most commonly when
-    the fragility curve has been rebuilt or the spatial defaults moved.
+    wall_theta, wall_rho_0)`` or the fragility fingerprint
+    ``(cr_values, betas)`` differs from what's on disk.
     """
+    lsf_name = spatial_settings["lsf_name"]
+    n_samples = int(spatial_settings["n_samples"])
+    seed = int(spatial_settings["seed"])
+
     points = fragility.load_points(_remote, lsf_name)
     var_names = list(points[0]["alphas"].keys())
-    L, n_sections, default_theta, default_rho_0, spec = covariance.resolve_config(
-        var_names, _settings.get("spatial"), theta, rho_0,
+    L, n_sections, wall_theta, wall_rho_0, spec = covariance.resolve_config(
+        var_names, spatial_settings,
     )
     x = np.linspace(0.0, L, n_sections)
-    out_dir = _remote / "output" / f"spatial_mc_{lsf_name}"
+    out_dir = _cache_dir(_remote, spatial_settings)
 
     cr_values = np.array([pt["point"]["corrosion_rate"] for pt in points])
     betas = np.array([float(pt["beta"]) for pt in points])
@@ -157,7 +159,7 @@ def compute_or_load_pf_grid(
         out_dir,
         lsf_name=lsf_name, n_samples=n_samples, seed=seed,
         n_sections=n_sections, L=L,
-        default_theta=default_theta, default_rho_0=default_rho_0,
+        wall_theta=wall_theta, wall_rho_0=wall_rho_0,
         cr_values=cr_values, betas=betas,
     )
     if cached is not None:
@@ -172,8 +174,8 @@ def compute_or_load_pf_grid(
         "seed": int(seed),
         "n_sections": int(n_sections),
         "L": float(L),
-        "default_theta": float(default_theta),
-        "default_rho_0": float(default_rho_0),
+        "wall_theta": float(wall_theta),
+        "wall_rho_0": float(wall_rho_0),
         "cr_values": cr_values.tolist(),
         "betas": betas.tolist(),
         "n_fail_section": n_fail_section.tolist(),

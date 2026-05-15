@@ -1,28 +1,29 @@
 """
 Entry point for the spatial-variability MCS.
 
-Sequence:
+All configuration lives in ``<remote>/input/spatial_settings.json``. No CLI
+flags — edit the file then run::
+
+    python -m case_studies.ark_main.run_spatial
+
+Pipeline:
 
 1-5. ``compute_or_load_pf_grid`` — sample the spatial model, check per-sample
      per-location failure at every cr in the cached fragility curve,
-     aggregate to Pf(cr, location), and cache the table. On a re-run with
-     the same configuration the cached file is loaded instead.
-6.   Integrate the Pf grid over the cr distribution to get Pf at one time
-     ``t`` (currently t = 0, where the cr distribution is a delta at
-     cr = 0).
-
-Then writes a ``summary.json`` for t = 0 and three plots.
-
-Usage::
-
-    python -m case_studies.ark_main.run_spatial --n-samples 100000
-    python -m case_studies.ark_main.run_spatial --n-samples 100000 --theta 400 --rho-0 0.5
+     aggregate to Pf(cr, location), cache the table.
+6.   Prior leg — integrate ``pf_grid`` against ``prior_pdf_per_t`` from
+     ``cr_pdfs_<lsf>.json`` for every forecast time.
+7.   Posterior leg — per obs time, sample cr as a Kriged spatial field
+     anchored on the obs at x = 0, propagate to other sections through the
+     cr spatial kernel, re-evaluate the per-section LSF; aggregate to
+     per-section and system Pf.
+8.   Write results (summary, forecasts, plots) into a fresh
+     ``<remote>/output/results_spatial/<user>_<datetime>/`` folder.
 """
 from __future__ import annotations
 
 import json
 import sys
-from argparse import ArgumentParser
 from pathlib import Path
 
 _ARK = Path(__file__).resolve().parent
@@ -38,9 +39,21 @@ from scipy import stats as st
 from tqdm import tqdm
 
 from src.io import get_remote_path
+from src.plotting import collect_pngs_to_pdf, make_gifs, save_figure
 from reliability.build_fragility import load_settings
+from plotting.timeline import plot_beta_forecast_at_time
 
-from spatial import covariance, fragility, integration, plots
+from spatial import (
+    cache_dir as _cache_dir,
+    checkpoint as spatial_checkpoint,
+    covariance,
+    cr_field,
+    fragility,
+    integration,
+    plots,
+    posterior_mcs,
+    results_dir as _results_dir,
+)
 
 
 _ENV = _ARK / ".env"
@@ -70,43 +83,66 @@ def _load_cr_pdfs(lsf_name: str) -> dict:
     return json.load(open(path))
 
 
-def analyze(
-    lsf_name: str = "lsf_wall",
-    n_samples: int = 10000,
-    seed: int = 42,
-    theta: float | None = None,
-    rho_0: float | None = None,
-) -> None:
-    """Run (or load) the spatial MCS, integrate at t = 0, and produce
-    ``summary.json`` + plots under ``<remote>/output/spatial_mc_<lsf>/``.
+def _load_spatial_settings() -> dict:
+    """Load ``<remote>/input/spatial_settings.json``."""
+    path = _remote / "input" / "spatial_settings.json"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing {path}. Create the spatial pipeline config file."
+        )
+    return json.load(open(path))
+
+
+def analyze(spatial_settings: dict | None = None) -> None:
+    """Run (or load) the spatial MCS, integrate against prior and posterior
+    cr distributions, and produce summary + forecasts + plots under
+    ``<remote>/output/results_spatial/<user>_<datetime>/``.
+
+    All configuration comes from ``<remote>/input/spatial_settings.json``
+    unless an explicit dict is passed in (handy for programmatic exploration
+    without rewriting the file).
+
+    The prior leg integrates the cached ``pf_grid`` (parametric in cr,
+    uniform-cr assumption) against ``prior_pdf_per_t``. The posterior leg
+    samples cr as a Kriged spatial field anchored on the observations at
+    ``x = 0`` and re-evaluates the per-section LSF; system Pf is then
+    consistent with the spatially-varying cr posterior.
     """
-    # Light setup so we can print a meaningful header and prepare what the
-    # plots need (``points`` for the cr=0 alphas, ``spec`` for the Cholesky
-    # of the realisations panel).
+    settings_dict = spatial_settings if spatial_settings is not None else _load_spatial_settings()
+    lsf_name = settings_dict["lsf_name"]
+    n_samples = int(settings_dict["n_samples"])
+    seed = int(settings_dict["seed"])
+
     points = fragility.load_points(_remote, lsf_name)
     var_names = list(points[0]["alphas"].keys())
-    L, n_sections, default_theta, default_rho_0, spec = covariance.resolve_config(
-        var_names, _settings.get("spatial"), theta, rho_0,
+    L, n_sections, wall_theta, wall_rho_0, spec = covariance.resolve_config(
+        var_names, settings_dict,
     )
     x = np.linspace(0.0, L, n_sections)
-    out_dir = _remote / "output" / f"spatial_mc_{lsf_name}"
+
+    # Cache and results live side-by-side under spatial_analysis/, both
+    # keyed by the same setup signature (LSF, n_samples, seed, geometry,
+    # spatial kernel params). Same config -> same folders; re-running with
+    # an identical setup hit-caches and overwrites the results folder.
+    cache_dir = _cache_dir(_remote, settings_dict)
+    results_dir = _results_dir(_remote, settings_dict)
+    results_dir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
     print("Spatial MCS — sheet-pile wall")
     print("=" * 60)
     print(f"LSF:              {lsf_name}")
     print(f"L:                {L:.1f} m,  n_sections={n_sections}  (spacing {L/(n_sections-1):.1f} m)")
-    print(f"default theta:    {default_theta:.1f} m")
-    print(f"default rho_0:    {default_rho_0:.3f}")
+    print(f"wall theta:       {wall_theta:.1f} m")
+    print(f"wall rho_0:       {wall_rho_0:.3f}")
     print(f"n_cr points:      {len(points)}")
     print(f"n_samples:        {n_samples}")
     print(f"seed:             {seed}")
+    print(f"cache dir:        {cache_dir}")
+    print(f"results dir:      {results_dir}")
 
     # Steps 1-5.
-    data = compute_or_load_pf_grid(
-        lsf_name=lsf_name, n_samples=n_samples, seed=seed,
-        theta=theta, rho_0=rho_0,
-    )
+    data = compute_or_load_pf_grid(settings_dict)
 
     cr_values = np.array(data["cr_values"])
     betas_form = np.array(data["betas"])
@@ -159,7 +195,7 @@ def analyze(
           f"Pf_sys = {pf_system_t[0]:.4e}  (beta = {beta_system_t[0]:.3f})")
     print(f"  t = {forecast_times[-1]:>5.1f}:  "
           f"Pf_sys = {pf_system_t[-1]:.4e}  (beta = {beta_system_t[-1]:.3f})")
-    print(f"  Output: {out_dir}")
+    print(f"  Results: {results_dir}")
 
     summary = {
         "lsf_name": lsf_name,
@@ -167,8 +203,8 @@ def analyze(
         "seed": seed,
         "L": L,
         "n_sections": n_sections,
-        "default_theta": default_theta,
-        "default_rho_0": default_rho_0,
+        "wall_theta": wall_theta,
+        "wall_rho_0": wall_rho_0,
         "corrosion_model_type": crp.get("model_type", "unknown"),
         "forecast_times": forecast_times.tolist(),
         "pf_system_t": pf_system_t.tolist(),
@@ -176,11 +212,47 @@ def analyze(
         "pf_section_t": pf_section_t.tolist(),   # (n_t, n_sections)
         "x_sections": x.tolist(),
     }
-    out_dir.mkdir(parents=True, exist_ok=True)
-    with open(out_dir / "summary.json", "w") as f:
+    with open(results_dir / "summary.json", "w") as f:
         json.dump(summary, f, indent=2)
 
-    plots_dir = out_dir / "plots"
+    forecasts_dir = results_dir / "forecasts"
+    forecasts_dir.mkdir(parents=True, exist_ok=True)
+
+    def _jsonable_beta(arr: np.ndarray) -> list:
+        """Convert a beta array to a JSON-serialisable nested list.
+
+        ``+inf`` (zero Pf) → ``null``; ``-inf`` (Pf = 1) → ``null`` too. Use
+        ``pf_*`` arrays in the same file if the exact failure rates matter.
+        """
+        a = np.asarray(arr, dtype=float)
+        if a.ndim == 0:
+            return None if not np.isfinite(a) else float(a)
+        out = np.where(np.isfinite(a), a, np.nan).tolist()
+        # JSON doesn't support NaN/inf — round-trip through None.
+        def _walk(x):
+            if isinstance(x, list):
+                return [_walk(v) for v in x]
+            return None if (isinstance(x, float) and not np.isfinite(x)) else x
+        return _walk(out)
+
+    prior_forecast = {
+        "leg": "prior",
+        "lsf_name": lsf_name,
+        "n_samples": n_samples,
+        "seed": seed,
+        "L": L,
+        "n_sections": n_sections,
+        "x_sections": x.tolist(),
+        "forecast_times": forecast_times.tolist(),
+        "pf_section_t": pf_section_t.tolist(),                   # (n_t, n_sections)
+        "pf_system_t":  pf_system_t.tolist(),                    # (n_t,)
+        "beta_section_t": _jsonable_beta(beta_section_t),        # (n_t, n_sections)
+        "beta_system_t":  _jsonable_beta(beta_system_t),         # (n_t,)
+    }
+    with open(forecasts_dir / "prior.json", "w") as f:
+        json.dump(prior_forecast, f, indent=2)
+
+    plots_dir = results_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
     plots.pf_vs_cr(
         cr_values=cr_values,
@@ -222,29 +294,331 @@ def analyze(
         n_show=10, seed=seed,
         out_path=plots_dir / "realizations.png",
     )
+
+    # ----------------------------------------------------------------------
+    # Posterior leg: per obs time, run a field-sampling MCS that anchors
+    # the cr posterior at x = 0 (where obs are taken) and propagates to
+    # other sections via the dedicated cr spatial kernel. System Pf is
+    # exact in the model here (no uniform-cr approximation).
+    # ----------------------------------------------------------------------
+    theta_cr_val, rho_0_cr_val = covariance.resolve_cr_config(settings_dict)
+    obs_times_sorted = sorted(
+        float(k) for k in crp.get("posterior_pdf_per_obs", {}).keys()
+    )
+
+    print(f"\n{'='*60}")
+    print(f"Posterior leg — field-sampling MCS conditioned at x = 0")
+    print(f"{'='*60}")
+    print(f"  cr kernel: theta = {theta_cr_val:.1f} m,  rho_0 = {rho_0_cr_val:.3f}")
+    if obs_times_sorted:
+        print(f"  obs scenarios: {len(obs_times_sorted)}  "
+              f"({obs_times_sorted[0]:.1f} .. {obs_times_sorted[-1]:.1f})")
+    else:
+        print("  (no obs scenarios in file)")
+
+    cached_post = spatial_checkpoint.try_load_posterior(
+        cache_dir,
+        lsf_name=lsf_name, n_samples=n_samples, seed=seed,
+        n_sections=n_sections, L=L,
+        wall_theta=wall_theta, wall_rho_0=wall_rho_0,
+        cr_theta=theta_cr_val, cr_rho_0=rho_0_cr_val,
+        cr_values=cr_values, betas=betas_form,
+        obs_times=obs_times_sorted,
+    )
+    if cached_post is not None:
+        posterior_results = cached_post["posterior"]
+    elif obs_times_sorted:
+        posterior_results: dict[str, dict] = {}
+        for t_obs_str in sorted(crp["posterior_pdf_per_obs"].keys(), key=float):
+            post_block = crp["posterior_pdf_per_obs"][t_obs_str]
+            ft_block = np.array(
+                sorted(float(t) for t in post_block.keys()), dtype=float,
+            )
+            nfs, nfsys = posterior_mcs.run_posterior_mcs(
+                points=points, x=x, spec_basic=spec,
+                theta_cr=theta_cr_val, rho_0_cr=rho_0_cr_val,
+                cr_grid_export=cr_grid_export,
+                prior_pdf_per_t=crp["prior_pdf_per_t"],
+                posterior_pdf_per_t=post_block,
+                forecast_times=ft_block,
+                n_samples=n_samples, seed=seed,
+                desc=f"post t_obs={float(t_obs_str):.1f}",
+            )
+            posterior_results[t_obs_str] = {
+                "forecast_times": ft_block.tolist(),
+                "n_fail_section": nfs.tolist(),
+                "n_fail_system": nfsys.tolist(),
+                "pf_section": (nfs / n_samples).tolist(),
+                "pf_system": (nfsys / n_samples).tolist(),
+            }
+        spatial_checkpoint.save_posterior(cache_dir, {
+            "lsf_name": lsf_name,
+            "n_samples": int(n_samples),
+            "seed": int(seed),
+            "n_sections": int(n_sections),
+            "L": float(L),
+            "wall_theta": float(wall_theta),
+            "wall_rho_0": float(wall_rho_0),
+            "cr_theta": float(theta_cr_val),
+            "cr_rho_0": float(rho_0_cr_val),
+            "cr_values": cr_values.tolist(),
+            "betas": betas_form.tolist(),
+            "obs_times": obs_times_sorted,
+            "posterior": posterior_results,
+        })
+        print(f"  Saved posterior grid to "
+              f"{spatial_checkpoint.posterior_path(cache_dir)}")
+    else:
+        posterior_results = {}
+
+    if posterior_results:
+        # One-line summary per obs scenario at t_end.
+        for t_obs_str in sorted(posterior_results.keys(), key=float):
+            block = posterior_results[t_obs_str]
+            pf_sys_end = float(block["pf_system"][-1])
+            t_end_block = float(block["forecast_times"][-1])
+            print(f"  t_obs = {float(t_obs_str):>5.1f}:  "
+                  f"Pf_sys(t={t_end_block:.1f}) = {pf_sys_end:.4e}")
+
+        # forecasts/posterior.json — same shape as forecasts/prior.json but
+        # nested by ``t_obs``. Each per-obs block contains the slice of
+        # forecast times after that obs only (matches the exporter file).
+        posterior_forecast: dict = {
+            "leg": "posterior",
+            "lsf_name": lsf_name,
+            "n_samples": n_samples,
+            "seed": seed,
+            "L": L,
+            "n_sections": n_sections,
+            "x_sections": x.tolist(),
+            "cr_theta": float(theta_cr_val),
+            "cr_rho_0": float(rho_0_cr_val),
+            "obs_times": obs_times_sorted,
+            "per_obs": {},
+        }
+        for t_obs_str in sorted(posterior_results.keys(), key=float):
+            block = posterior_results[t_obs_str]
+            pf_sec = np.asarray(block["pf_section"], dtype=float)
+            pf_sys = np.asarray(block["pf_system"], dtype=float)
+            posterior_forecast["per_obs"][t_obs_str] = {
+                "forecast_times": block["forecast_times"],
+                "pf_section_t": pf_sec.tolist(),
+                "pf_system_t":  pf_sys.tolist(),
+                "beta_section_t": _jsonable_beta(_to_beta(pf_sec)),
+                "beta_system_t":  _jsonable_beta(_to_beta(pf_sys)),
+            }
+        with open(forecasts_dir / "posterior.json", "w") as f:
+            json.dump(posterior_forecast, f, indent=2)
+
+        plots.pf_vs_time_posterior(
+            forecast_times_prior=forecast_times,
+            pf_system_prior=pf_system_t,
+            posterior_results=posterior_results,
+            out_path=plots_dir / "pf_vs_time_posterior.png",
+        )
+
+        # ---- System-β forecast PNG-per-obs-time + PDF + GIF, mirroring
+        # run.py's beta_forecast plot but on the system (series) beta. We
+        # reshape our prior/posterior arrays into the per-obs-time dict
+        # shape that ``plotting.timeline.plot_beta_forecast_at_time``
+        # already expects, then drive PNG/PDF/GIF rendering identically.
+        prior_beta_forecast = {
+            float(t): float(b)
+            for t, b in zip(forecast_times, beta_system_t)
+            if np.isfinite(b)
+        }
+        results_for_plot: dict[float, dict] = {}
+        for t_obs_str in sorted(posterior_results.keys(), key=float):
+            t_obs = float(t_obs_str)
+            block = posterior_results[t_obs_str]
+            pf_sys_block = np.asarray(block["pf_system"], dtype=float)
+            ft_block = np.asarray(block["forecast_times"], dtype=float)
+            beta_block = _to_beta(pf_sys_block)
+            bf_post = {
+                float(t): float(b)
+                for t, b in zip(ft_block, beta_block)
+                if np.isfinite(b)
+            }
+            beta_post_at_tobs = (
+                bf_post[min(bf_post.keys())] if bf_post else float("nan")
+            )
+            beta_prior_at_tobs = prior_beta_forecast.get(
+                t_obs,
+                float(np.interp(t_obs, forecast_times, beta_system_t)),
+            )
+            results_for_plot[t_obs] = {
+                "prior": {
+                    "beta": beta_prior_at_tobs,
+                    "beta_forecast": prior_beta_forecast,
+                },
+                "posterior": {
+                    "beta": beta_post_at_tobs,
+                    "beta_forecast": bf_post,
+                },
+            }
+
+        beta_req = _settings.get("parameters", {}).get("beta_req", 2.3)
+        bf_png_dir = plots_dir / "beta_forecast_system"
+        bf_png_dir.mkdir(parents=True, exist_ok=True)
+        for t_obs in sorted(results_for_plot.keys()):
+            results_up_to_t = {
+                k: v for k, v in results_for_plot.items() if k <= t_obs
+            }
+            fig = plot_beta_forecast_at_time(
+                current_time=t_obs,
+                results=results_up_to_t,
+                beta_req=beta_req,
+            )
+            save_figure(
+                fig,
+                bf_png_dir / f"beta_forecast_system_t{t_obs:06.2f}.png",
+            )
+        collect_pngs_to_pdf(bf_png_dir, plots_dir / "beta_forecast_system.pdf")
+
+        # ---- Spatial cr profile along the wall, per obs time. For each
+        # t_obs we show the obs-conditioned cr distribution at t = t_obs
+        # (the moment of observation): posterior at x = 0 sits on the
+        # observation, fans out to the prior at sections beyond the cr
+        # correlation length. PDF + GIF picked up downstream.
+        wall_thickness = float(
+            _settings.get("parameters", {}).get("wall_thickness", 9.5)
+        )
+        obs_error_std = float(
+            _settings.get("parameters", {}).get("obs_error_std", 0.4)
+        )
+
+        # Read observation values from data.json (for the obs marker).
+        data_path = _remote / "input" / "data.json"
+        if data_path.exists():
+            data_json = json.load(open(data_path))
+            obs_value_at_time = {
+                float(d["time"]): float(d["corrosion"])
+                for d in data_json.values()
+                if "time" in d and "corrosion" in d
+            }
+        else:
+            obs_value_at_time = {}
+
+        # One y-axis range shared by every cr-along-wall frame so the GIF
+        # doesn't rescale between obs scenarios. Take the largest of:
+        #   * prior q95 of cr at t_end (worst-case forecast scatter)
+        #   * largest observed corrosion plus its 95% noise envelope
+        # Multiply by 1.10 for headroom, floor at 2 mm so a near-zero
+        # range doesn't squash the plot, and cap at wall_thickness so we
+        # never overshoot the physical bound.
+        t_end_key = f"{forecast_times[-1]:.4f}"
+        prior_pdf_tend = np.asarray(crp["prior_pdf_per_t"][t_end_key])
+        cdf_tend = cr_field.cdf_on_grid(prior_pdf_tend, cr_grid_export)
+        cr_q95_tend = float(cr_field.inv_cdf_at(
+            np.array([0.95]), cr_grid_export, cdf_tend
+        ).item())
+        ymax_from_prior = cr_q95_tend * wall_thickness
+        if obs_value_at_time:
+            ymax_from_obs = max(
+                v + 1.96 * obs_error_std for v in obs_value_at_time.values()
+            )
+        else:
+            ymax_from_obs = 0.0
+        ymax_mm = max(2.0, ymax_from_prior, ymax_from_obs) * 1.10
+        ymax_mm = min(ymax_mm, wall_thickness)
+
+        cr_png_dir = plots_dir / "cr_along_wall"
+        cr_png_dir.mkdir(parents=True, exist_ok=True)
+        for t_obs_str in sorted(crp["posterior_pdf_per_obs"].keys(), key=float):
+            post_block = crp["posterior_pdf_per_obs"][t_obs_str]
+            # The posterior at the obs time is keyed by t_obs in the file.
+            if t_obs_str not in post_block:
+                continue
+            t_obs = float(t_obs_str)
+            prior_pdf_at_t = np.asarray(crp["prior_pdf_per_t"][t_obs_str])
+            post_pdf_at_t = np.asarray(post_block[t_obs_str])
+            prior_q, cond_q = cr_field.conditional_cr_quantiles(
+                x=x, x0_idx=0,
+                theta_cr=theta_cr_val, rho_0_cr=rho_0_cr_val,
+                prior_pdf=prior_pdf_at_t,
+                posterior_pdf=post_pdf_at_t,
+                cr_grid=cr_grid_export,
+                quantiles=(0.05, 0.5, 0.95),
+            )
+            obs_value_mm = None
+            for t_data, c_mm in obs_value_at_time.items():
+                if abs(t_data - t_obs) < 1e-3:
+                    obs_value_mm = c_mm
+                    break
+            plots.cr_along_wall(
+                x=x, prior_q=prior_q, cond_q=cond_q,
+                t_obs=t_obs, t_at=t_obs,
+                wall_thickness=wall_thickness,
+                obs_value_mm=obs_value_mm,
+                obs_error_std_mm=obs_error_std,
+                ylim_mm=(0.0, ymax_mm),
+                out_path=cr_png_dir / f"cr_along_wall_t{t_obs:06.2f}.png",
+            )
+        collect_pngs_to_pdf(cr_png_dir, plots_dir / "cr_along_wall.pdf")
+
+        # ---- Per-section split-violin plot of the cr distribution
+        # (prior on the left half, posterior on the right). Same y-axis
+        # cap as ``cr_along_wall`` so the GIFs are directly comparable.
+        violin_png_dir = plots_dir / "cr_violin"
+        violin_png_dir.mkdir(parents=True, exist_ok=True)
+        n_violin_samples = 5000
+        violin_rng = np.random.default_rng(int(settings_dict["seed"]) + 1234)
+        for t_obs_str in sorted(crp["posterior_pdf_per_obs"].keys(), key=float):
+            post_block = crp["posterior_pdf_per_obs"][t_obs_str]
+            if t_obs_str not in post_block:
+                continue
+            t_obs = float(t_obs_str)
+            prior_pdf_at_t = np.asarray(crp["prior_pdf_per_t"][t_obs_str])
+            post_pdf_at_t = np.asarray(post_block[t_obs_str])
+
+            # Prior cr samples are stationary across the wall — draw once.
+            F_prior = cr_field.cdf_on_grid(prior_pdf_at_t, cr_grid_export)
+            u_prior = violin_rng.uniform(size=n_violin_samples)
+            cr_prior_samples = cr_field.inv_cdf_at(
+                u_prior, cr_grid_export, F_prior,
+            )
+
+            # Posterior cr field — Kriged conditional at every section.
+            m_post, v_post = cr_field.z_moments_under_posterior(
+                prior_pdf_at_t, post_pdf_at_t, cr_grid_export,
+            )
+            mean_factor, L_z = cr_field.kriged_chol(
+                x=x, x0_idx=0,
+                theta_cr=theta_cr_val, rho_0_cr=rho_0_cr_val,
+                v_post=v_post,
+            )
+            cr_post_samples = cr_field.sample_cr_field(
+                violin_rng, n_violin_samples,
+                mean_factor, L_z, m_post,
+                prior_pdf_at_t, cr_grid_export,
+            )
+
+            obs_value_mm = None
+            for t_data, c_mm in obs_value_at_time.items():
+                if abs(t_data - t_obs) < 1e-3:
+                    obs_value_mm = c_mm
+                    break
+
+            plots.cr_along_wall_violin(
+                x=x,
+                cr_prior_samples_mm=cr_prior_samples * wall_thickness,
+                cr_post_samples_mm=cr_post_samples * wall_thickness,
+                t_obs=t_obs, t_at=t_obs,
+                wall_thickness=wall_thickness,
+                obs_value_mm=obs_value_mm,
+                obs_error_std_mm=obs_error_std,
+                ylim_mm=(0.0, ymax_mm),
+                out_path=violin_png_dir / f"cr_violin_t{t_obs:06.2f}.png",
+            )
+        collect_pngs_to_pdf(violin_png_dir, plots_dir / "cr_violin.pdf")
+
+    # GIFs from every PNG subdirectory under plots_dir (beta_forecast_system,
+    # cr_along_wall, cr_violin). Same call ``run.py`` uses to bundle its
+    # animations.
+    make_gifs(plots_dir)
+
     print(f"  Plots: {plots_dir}")
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser()
-    parser.add_argument("--lsf", type=str, default="lsf_wall",
-                        help="LSF whose fragility cache to read.")
-    parser.add_argument("--n-samples", type=int, default=10000)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--theta", type=float, default=None,
-                        help="Default spatial correlation length [m]. Falls "
-                             "back to settings.json `spatial.default.theta` "
-                             "(200 m if absent).")
-    parser.add_argument("--rho-0", type=float, default=None,
-                        help="Default long-range correlation floor in [0, 1]. "
-                             "Falls back to settings.json `spatial.default."
-                             "rho_0` (0.3 if absent).")
-    args = parser.parse_args()
-
-    analyze(
-        lsf_name=args.lsf,
-        n_samples=args.n_samples,
-        seed=args.seed,
-        theta=args.theta,
-        rho_0=args.rho_0,
-    )
+    analyze()

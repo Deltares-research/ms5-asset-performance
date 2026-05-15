@@ -10,8 +10,8 @@ counts and enough metadata to detect a stale cache::
       "seed":             42,
       "n_sections":       21,
       "L":                1000.0,
-      "default_theta":    200.0,
-      "default_rho_0":    0.3,
+      "wall_theta":    200.0,
+      "wall_rho_0":    0.3,
       "cr_values":        [0.0, 0.025, ...],
       "betas":            [3.42, 3.31, ...],
       "n_fail_section":   [[..21 ints..], ..n_cr rows..],
@@ -48,8 +48,8 @@ def try_load(
     seed: int,
     n_sections: int,
     L: float,
-    default_theta: float,
-    default_rho_0: float,
+    wall_theta: float,
+    wall_rho_0: float,
     cr_values: np.ndarray,
     betas: np.ndarray,
 ) -> dict | None:
@@ -74,8 +74,8 @@ def try_load(
         and int(data.get("seed", -1)) == int(seed)
         and int(data.get("n_sections", -1)) == int(n_sections)
         and math.isclose(float(data.get("L", -1)), float(L), abs_tol=1e-9)
-        and math.isclose(float(data.get("default_theta", -1)), float(default_theta), abs_tol=1e-9)
-        and math.isclose(float(data.get("default_rho_0", -1)), float(default_rho_0), abs_tol=1e-9)
+        and math.isclose(float(data.get("wall_theta", -1)), float(wall_theta), abs_tol=1e-9)
+        and math.isclose(float(data.get("wall_rho_0", -1)), float(wall_rho_0), abs_tol=1e-9)
         and _arrays_close(data.get("cr_values", []), list(cr_values))
         and _arrays_close(data.get("betas", []), list(betas))
     )
@@ -89,6 +89,76 @@ def try_load(
 def save(out_dir: Path, data: dict) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     p = path(out_dir)
+    tmp = p.with_suffix(".json.tmp")
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    tmp.replace(p)
+
+
+# ----------------------------------------------------------------------
+# Posterior leg cache (cr-field MCS, per obs scenario)
+# ----------------------------------------------------------------------
+
+def posterior_path(out_dir: Path) -> Path:
+    return out_dir / "posterior_grid.json"
+
+
+def try_load_posterior(
+    out_dir: Path,
+    *,
+    lsf_name: str,
+    n_samples: int,
+    seed: int,
+    n_sections: int,
+    L: float,
+    wall_theta: float,
+    wall_rho_0: float,
+    cr_theta: float,
+    cr_rho_0: float,
+    cr_values: np.ndarray,
+    betas: np.ndarray,
+    obs_times: list[float],
+) -> dict | None:
+    """Return the cached posterior-leg result if every key matches, else ``None``.
+
+    Cache invalidates on any metadata change OR if the fragility fingerprint
+    (``cr_values``, ``betas``) differs from when the cache was written —
+    typically the curve was rebuilt — OR if the obs-time set changed (e.g.
+    ``data.json`` got a new entry).
+    """
+    p = posterior_path(out_dir)
+    if not p.exists():
+        return None
+    try:
+        data = json.load(open(p))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"  Cached posterior grid {p} unreadable ({exc!r}) — recomputing.")
+        return None
+
+    same = (
+        data.get("lsf_name") == lsf_name
+        and int(data.get("n_samples", -1)) == int(n_samples)
+        and int(data.get("seed", -1)) == int(seed)
+        and int(data.get("n_sections", -1)) == int(n_sections)
+        and math.isclose(float(data.get("L", -1)), float(L), abs_tol=1e-9)
+        and math.isclose(float(data.get("wall_theta", -1)), float(wall_theta), abs_tol=1e-9)
+        and math.isclose(float(data.get("wall_rho_0", -1)), float(wall_rho_0), abs_tol=1e-9)
+        and math.isclose(float(data.get("cr_theta", -1)), float(cr_theta), abs_tol=1e-9)
+        and math.isclose(float(data.get("cr_rho_0", -1)), float(cr_rho_0), abs_tol=1e-9)
+        and _arrays_close(data.get("cr_values", []), list(cr_values))
+        and _arrays_close(data.get("betas", []), list(betas))
+        and _arrays_close(data.get("obs_times", []), list(obs_times))
+    )
+    if not same:
+        print(f"  Cached posterior grid {p} has a different run config — recomputing.")
+        return None
+    print(f"  Loaded cached posterior grid from {p}.")
+    return data
+
+
+def save_posterior(out_dir: Path, data: dict) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    p = posterior_path(out_dir)
     tmp = p.with_suffix(".json.tmp")
     with open(tmp, "w") as f:
         json.dump(data, f, indent=2)

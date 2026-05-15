@@ -44,8 +44,8 @@ def over_cr(
     ])  # (n_pdf, n_sections)
     pf_sys_fine = np.interp(cr_pdf_grid, cr_values, pf_system_grid)
 
-    pf_section_t = np.trapz(
+    pf_section_t = np.trapezoid(
         pf_sec_fine * cr_pdf_values[:, None], cr_pdf_grid, axis=0,
     )
-    pf_system_t = float(np.trapz(pf_sys_fine * cr_pdf_values, cr_pdf_grid))
+    pf_system_t = float(np.trapezoid(pf_sys_fine * cr_pdf_values, cr_pdf_grid))
     return pf_section_t, pf_system_t
