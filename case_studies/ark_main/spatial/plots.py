@@ -493,3 +493,125 @@ def realizations(
     ax.legend(loc="upper right", fontsize=8)
     fig.tight_layout()
     save_figure(fig, out_path)
+
+
+# ----------------------------------------------------------------------
+# Nested-FORM alpha visualisations
+# ----------------------------------------------------------------------
+
+def _alpha_grid_layout(n_panels: int) -> tuple[int, int]:
+    """Pick a (rows, cols) layout that's roughly square for n_panels."""
+    cols = int(np.ceil(np.sqrt(n_panels)))
+    rows = int(np.ceil(n_panels / cols))
+    return rows, cols
+
+
+def alpha_heatmap(
+    *,
+    forecast_times: np.ndarray,
+    x: np.ndarray,
+    alpha_cr: np.ndarray,            # (n_t, n_sections)
+    alpha_basic: np.ndarray,         # (n_t, n_sections, n_active)
+    active_vars: list[str],
+    t_obs: float,
+    out_path: Path,
+) -> None:
+    """One heatmap per variable: alpha_v(t, section), plus alpha_cr.
+
+    Color is diverging (RdBu) and symmetric around 0 with a shared vmax across
+    all panels in the figure so per-variable contributions are comparable.
+    Hot red = positive alpha (load-like), cold blue = negative alpha
+    (resistance-like). White = ~0 (variable doesn't matter at that (t, section)).
+    """
+    # Order panels: alpha_cr first, then basic vars in input order.
+    panels = [("cr", alpha_cr)] + [
+        (active_vars[j], alpha_basic[:, :, j]) for j in range(len(active_vars))
+    ]
+    n_panels = len(panels)
+    rows, cols = _alpha_grid_layout(n_panels)
+
+    # Shared symmetric color scale across all panels.
+    vmax = max(0.05, float(np.max(np.abs(np.stack([p[1] for p in panels])))))
+
+    fig, axes = plt.subplots(rows, cols, figsize=(3.6 * cols, 2.8 * rows),
+                             squeeze=False)
+    extent = [forecast_times[0], forecast_times[-1], x[0], x[-1]]
+    for k, (name, arr) in enumerate(panels):
+        r, c = divmod(k, cols)
+        ax = axes[r][c]
+        im = ax.imshow(
+            arr.T,                                 # (n_sections, n_t)
+            origin="lower", aspect="auto", extent=extent,
+            cmap="RdBu_r", vmin=-vmax, vmax=vmax, interpolation="nearest",
+        )
+        ax.axvline(t_obs, color="k", linestyle=":", linewidth=0.8)
+        ax.set_title(name, fontsize=10)
+        if r == rows - 1:
+            ax.set_xlabel("t")
+        if c == 0:
+            ax.set_ylabel("section x [m]")
+
+    # Blank any spare panels in the last row.
+    for k in range(n_panels, rows * cols):
+        r, c = divmod(k, cols)
+        axes[r][c].axis("off")
+
+    cbar = fig.colorbar(im, ax=axes, shrink=0.7, pad=0.02,
+                        location="right", aspect=30)
+    cbar.set_label(r"$\alpha_v$")
+    fig.suptitle(
+        rf"Nested-FORM $\alpha_v(t, x)$  —  $t_{{\rm obs}}={t_obs:.1f}$",
+        fontsize=12,
+    )
+    save_figure(fig, out_path)
+
+
+def alpha_lines_at_sections(
+    *,
+    forecast_times: np.ndarray,
+    x: np.ndarray,
+    alpha_cr: np.ndarray,            # (n_t, n_sections)
+    alpha_basic: np.ndarray,         # (n_t, n_sections, n_active)
+    active_vars: list[str],
+    section_indices: list[int],
+    t_obs: float,
+    out_path: Path,
+) -> None:
+    """alpha_v(t) at a handful of sections — one subplot per section.
+
+    cr is drawn as a thick dashed black line; basic variables share a viridis
+    colour ramp keyed by variable index so the same variable has the same
+    colour across all subplots and across obs scenarios. A horizontal y = 0
+    line marks the resistance/load sign flip.
+    """
+    n_sec = len(section_indices)
+    fig, axes = plt.subplots(
+        1, n_sec, figsize=(4.2 * n_sec, 3.6), sharey=True, squeeze=False,
+    )
+    axes = axes[0]
+    cmap = plt.get_cmap("viridis")
+    colors = [cmap(j / max(1, len(active_vars) - 1)) for j in range(len(active_vars))]
+
+    for ax_i, sec_idx in enumerate(section_indices):
+        ax = axes[ax_i]
+        ax.axhline(0.0, color="0.7", linewidth=0.8)
+        ax.axvline(t_obs, color="k", linestyle=":", linewidth=0.8)
+        # cr line first so it's on top of legend reading order.
+        ax.plot(forecast_times, alpha_cr[:, sec_idx],
+                color="black", linestyle="--", linewidth=2.2, label="cr")
+        for j, v in enumerate(active_vars):
+            ax.plot(forecast_times, alpha_basic[:, sec_idx, j],
+                    color=colors[j], linewidth=1.4, label=v)
+        ax.set_title(f"x = {x[sec_idx]:.0f} m", fontsize=10)
+        ax.set_xlabel("t")
+        ax.grid(alpha=0.3)
+    axes[0].set_ylabel(r"$\alpha_v$")
+    # One legend for the whole figure on the right.
+    axes[-1].legend(loc="center left", bbox_to_anchor=(1.02, 0.5),
+                    fontsize=8, frameon=False)
+    fig.suptitle(
+        rf"Nested-FORM $\alpha_v(t)$ at selected sections  —  $t_{{\rm obs}}={t_obs:.1f}$",
+        fontsize=12,
+    )
+    fig.tight_layout(rect=(0, 0, 0.85, 0.94))
+    save_figure(fig, out_path)

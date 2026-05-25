@@ -50,6 +50,7 @@ from spatial import (
     cr_field,
     fragility,
     integration,
+    nested_mcs,
     plots,
     posterior_mcs,
     results_dir as _results_dir,
@@ -112,6 +113,16 @@ def analyze(spatial_settings: dict | None = None) -> None:
     lsf_name = settings_dict["lsf_name"]
     n_samples = int(settings_dict["n_samples"])
     seed = int(settings_dict["seed"])
+    # ``posterior_method`` selects the posterior-leg sampler:
+    #   "field"  — current per-sample fragility interpolation (posterior_mcs)
+    #   "nested" — nested-FORM tangent-hyperplane MCS (nested_mcs)
+    # Both methods write to different cache files so they coexist in the same
+    # signature folder.
+    posterior_method = str(settings_dict.get("posterior_method", "field")).lower()
+    if posterior_method not in ("field", "nested"):
+        raise ValueError(
+            f"Unknown posterior_method={posterior_method!r}. Use 'field' or 'nested'."
+        )
 
     points = fragility.load_points(_remote, lsf_name)
     var_names = list(points[0]["alphas"].keys())
@@ -132,6 +143,7 @@ def analyze(spatial_settings: dict | None = None) -> None:
     print("Spatial MCS — sheet-pile wall")
     print("=" * 60)
     print(f"LSF:              {lsf_name}")
+    print(f"posterior method: {posterior_method}")
     print(f"L:                {L:.1f} m,  n_sections={n_sections}  (spacing {L/(n_sections-1):.1f} m)")
     print(f"wall theta:       {wall_theta:.1f} m")
     print(f"wall rho_0:       {wall_rho_0:.3f}")
@@ -307,7 +319,10 @@ def analyze(spatial_settings: dict | None = None) -> None:
     )
 
     print(f"\n{'='*60}")
-    print(f"Posterior leg — field-sampling MCS conditioned at x = 0")
+    if posterior_method == "nested":
+        print(f"Posterior leg — nested-FORM tangent-hyperplane MCS at x = 0")
+    else:
+        print(f"Posterior leg — field-sampling MCS conditioned at x = 0")
     print(f"{'='*60}")
     print(f"  cr kernel: theta = {theta_cr_val:.1f} m,  rho_0 = {rho_0_cr_val:.3f}")
     if obs_times_sorted:
@@ -324,6 +339,7 @@ def analyze(spatial_settings: dict | None = None) -> None:
         cr_theta=theta_cr_val, cr_rho_0=rho_0_cr_val,
         cr_values=cr_values, betas=betas_form,
         obs_times=obs_times_sorted,
+        method=posterior_method,
     )
     if cached_post is not None:
         posterior_results = cached_post["posterior"]
@@ -334,25 +350,55 @@ def analyze(spatial_settings: dict | None = None) -> None:
             ft_block = np.array(
                 sorted(float(t) for t in post_block.keys()), dtype=float,
             )
-            nfs, nfsys = posterior_mcs.run_posterior_mcs(
-                points=points, x=x, spec_basic=spec,
-                theta_cr=theta_cr_val, rho_0_cr=rho_0_cr_val,
-                cr_grid_export=cr_grid_export,
-                prior_pdf_per_t=crp["prior_pdf_per_t"],
-                posterior_pdf_per_t=post_block,
-                forecast_times=ft_block,
-                n_samples=n_samples, seed=seed,
-                desc=f"post t_obs={float(t_obs_str):.1f}",
-            )
-            posterior_results[t_obs_str] = {
+            if posterior_method == "nested":
+                nfs, nfsys, precomp = nested_mcs.run_nested_mcs(
+                    points=points, x=x, spec_basic=spec,
+                    theta_cr=theta_cr_val, rho_0_cr=rho_0_cr_val,
+                    cr_grid_export=cr_grid_export,
+                    prior_pdf_per_t=crp["prior_pdf_per_t"],
+                    posterior_pdf_per_t=post_block,
+                    forecast_times=ft_block,
+                    n_samples=n_samples, seed=seed,
+                    desc=f"nested t_obs={float(t_obs_str):.1f}",
+                )
+            else:
+                nfs, nfsys = posterior_mcs.run_posterior_mcs(
+                    points=points, x=x, spec_basic=spec,
+                    theta_cr=theta_cr_val, rho_0_cr=rho_0_cr_val,
+                    cr_grid_export=cr_grid_export,
+                    prior_pdf_per_t=crp["prior_pdf_per_t"],
+                    posterior_pdf_per_t=post_block,
+                    forecast_times=ft_block,
+                    n_samples=n_samples, seed=seed,
+                    desc=f"post t_obs={float(t_obs_str):.1f}",
+                )
+                precomp = None
+            block_entry = {
                 "forecast_times": ft_block.tolist(),
                 "n_fail_section": nfs.tolist(),
                 "n_fail_system": nfsys.tolist(),
                 "pf_section": (nfs / n_samples).tolist(),
                 "pf_system": (nfsys / n_samples).tolist(),
             }
+            if precomp is not None:
+                # Persist the full nested-FORM decomposition so plots can use
+                # it on cache hits without recomputing. alpha_basic is the
+                # heaviest field — (n_t, N, n_active) floats per obs — but
+                # still small (~tens of KB) for realistic n_t / N / n_active.
+                block_entry["nested_form"] = {
+                    "beta_T":      precomp["beta_T"].tolist(),
+                    "alpha_cr":    precomp["alpha_cr"].tolist(),
+                    "alpha_basic": precomp["alpha_basic"].tolist(),
+                    "active_vars": precomp.get("active_vars", []),
+                    "xi_star":     precomp["xi_star"].tolist(),
+                    "cr_star":     precomp["cr_star"].tolist(),
+                    "mu_z":        precomp["mu_z"].tolist(),
+                    "sigma_z":     precomp["sigma_z"].tolist(),
+                }
+            posterior_results[t_obs_str] = block_entry
         spatial_checkpoint.save_posterior(cache_dir, {
             "lsf_name": lsf_name,
+            "method": posterior_method,
             "n_samples": int(n_samples),
             "seed": int(seed),
             "n_sections": int(n_sections),
@@ -365,9 +411,9 @@ def analyze(spatial_settings: dict | None = None) -> None:
             "betas": betas_form.tolist(),
             "obs_times": obs_times_sorted,
             "posterior": posterior_results,
-        })
+        }, method=posterior_method)
         print(f"  Saved posterior grid to "
-              f"{spatial_checkpoint.posterior_path(cache_dir)}")
+              f"{spatial_checkpoint.posterior_path(cache_dir, method=posterior_method)}")
     else:
         posterior_results = {}
 
@@ -611,6 +657,51 @@ def analyze(spatial_settings: dict | None = None) -> None:
                 out_path=violin_png_dir / f"cr_violin_t{t_obs:06.2f}.png",
             )
         collect_pngs_to_pdf(violin_png_dir, plots_dir / "cr_violin.pdf")
+
+        # ---- Nested-FORM alpha plots (only when posterior_method == "nested").
+        # Per obs scenario, render two views of the (section, t) alphas:
+        #   * alpha_heatmap   — RdBu heatmap per variable, one panel each, in
+        #     a single figure. Shows the spatial+temporal pattern of every
+        #     contribution at a glance.
+        #   * alpha_lines     — alpha_v(t) lines at first/middle/last sections
+        #     for direct comparison across distance from the obs anchor.
+        if posterior_method == "nested" and posterior_results:
+            heat_dir = plots_dir / "alpha_heatmap"
+            lines_dir = plots_dir / "alpha_lines"
+            heat_dir.mkdir(parents=True, exist_ok=True)
+            lines_dir.mkdir(parents=True, exist_ok=True)
+            # Stable per-obs section picks: ends + middle.
+            section_indices = sorted(set([0, n_sections // 2, n_sections - 1]))
+            for t_obs_str in sorted(posterior_results.keys(), key=float):
+                nf = posterior_results[t_obs_str].get("nested_form")
+                if nf is None:
+                    continue
+                t_obs = float(t_obs_str)
+                ft = np.asarray(
+                    posterior_results[t_obs_str]["forecast_times"], dtype=float,
+                )
+                alpha_cr_arr = np.asarray(nf["alpha_cr"], dtype=float)
+                alpha_basic_arr = np.asarray(nf["alpha_basic"], dtype=float)
+                active_vars = list(nf.get("active_vars", []))
+                plots.alpha_heatmap(
+                    forecast_times=ft, x=x,
+                    alpha_cr=alpha_cr_arr,
+                    alpha_basic=alpha_basic_arr,
+                    active_vars=active_vars,
+                    t_obs=t_obs,
+                    out_path=heat_dir / f"alpha_heatmap_t{t_obs:06.2f}.png",
+                )
+                plots.alpha_lines_at_sections(
+                    forecast_times=ft, x=x,
+                    alpha_cr=alpha_cr_arr,
+                    alpha_basic=alpha_basic_arr,
+                    active_vars=active_vars,
+                    section_indices=section_indices,
+                    t_obs=t_obs,
+                    out_path=lines_dir / f"alpha_lines_t{t_obs:06.2f}.png",
+                )
+            collect_pngs_to_pdf(heat_dir, plots_dir / "alpha_heatmap.pdf")
+            collect_pngs_to_pdf(lines_dir, plots_dir / "alpha_lines.pdf")
 
     # GIFs from every PNG subdirectory under plots_dir (beta_forecast_system,
     # cr_along_wall, cr_violin). Same call ``run.py`` uses to bundle its

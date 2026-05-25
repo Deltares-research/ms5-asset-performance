@@ -59,11 +59,18 @@ shared by all sections.
   "seed": 42,
   "L": 1000.0,
   "n_sections": 11,
+  "posterior_method": "field",
   "wall": { "theta": 200.0, "rho_0": 0.0 },
   "cr":   { "theta":  50.0, "rho_0": 0.0 },
   "per_variable": {}
 }
 ```
+
+- `posterior_method` — `"field"` (default) or `"nested"`. Selects the
+  posterior-leg sampler. The two methods write to different cache files in
+  the same signature folder (`posterior_grid.json` vs
+  `posterior_grid_nested.json`) so they coexist; the prior leg is unchanged
+  in either case. See "Posterior leg methods" below.
 
 - `wall.{theta, rho_0}` — basic-variable squared-exp kernel
   `C(d) = rho_0 + (1 − rho_0) · exp(−(d/theta)²)`. Applied to **soil**
@@ -127,8 +134,9 @@ python -m case_studies.ark_main.io.export_cr_pdfs --lsf-name lsf_wall
 <remote>/output/spatial_analysis/
 ├── cached/
 │   └── <setup_signature>/
-│       ├── pf_grid.json           # prior leg cache (Pf at every cr-point)
-│       └── posterior_grid.json    # posterior leg cache (per t_obs)
+│       ├── pf_grid.json                  # prior leg cache (Pf at every cr-point)
+│       ├── posterior_grid.json           # posterior leg cache, method=field
+│       └── posterior_grid_nested.json    # posterior leg cache, method=nested
 ├── results/
 │   └── <setup_signature>/
 │       ├── summary.json
@@ -149,7 +157,13 @@ python -m case_studies.ark_main.io.export_cr_pdfs --lsf-name lsf_wall
 │           ├── cr_along_wall.gif
 │           ├── cr_violin/              # PNG per t_obs
 │           ├── cr_violin.pdf
-│           └── cr_violin.gif
+│           ├── cr_violin.gif
+│           ├── alpha_heatmap/          # PNG per t_obs    (method=nested only)
+│           ├── alpha_heatmap.pdf       #                   (method=nested only)
+│           ├── alpha_heatmap.gif       #                   (method=nested only)
+│           ├── alpha_lines/            # PNG per t_obs    (method=nested only)
+│           ├── alpha_lines.pdf         #                   (method=nested only)
+│           └── alpha_lines.gif         #                   (method=nested only)
 └── sweep/                         # outputs of analyze_sweep.py
     ├── beta_forecast_grid.png
     └── beta_contour_tend.png
@@ -170,12 +184,16 @@ lsf-<tag>_N<n_samples>_seed<seed>_L<int(L)>_n<n_sections>_wth<int>_wrh<g>_crth<i
 
 ### Cache invalidation
 
-Both `pf_grid.json` and `posterior_grid.json` are validated against:
+Both `pf_grid.json` and `posterior_grid*.json` are validated against:
 
 - LSF name, `n_samples`, `seed`, `n_sections`, `L`.
 - `wall_theta`, `wall_rho_0`, and (posterior) `cr_theta`, `cr_rho_0`.
 - Fragility fingerprint (`cr_values`, `betas`).
 - (Posterior) `obs_times`.
+- (Posterior) `method` is encoded in the file name, not in the validator —
+  `"field"` writes `posterior_grid.json`, `"nested"` writes
+  `posterior_grid_nested.json`. The two coexist; flipping the flag picks
+  the matching file (or recomputes if absent).
 
 Any mismatch → recompute. See `spatial/checkpoint.py`.
 
@@ -200,6 +218,7 @@ Any mismatch → recompute. See `spatial/checkpoint.py`.
 | `__init__.py` | `setup_signature()`, `cache_dir()`, `results_dir()` helpers. |
 | `engine.py` | `compute_or_load_pf_grid(spatial_settings)` — prior-leg MCS. Effective Cholesky collapse `C_eff = Σ_v α_v² · C_v`. Common random numbers across cr-points so `Pf(cr)` is smooth. |
 | `posterior_mcs.py` | `run_posterior_mcs(...)` — field-sampling MCS per obs scenario. Per-variable Cholesky for soil vars; scalar broadcast for non-soil vars. Per-section FORM coefficients `(β_i, α_i)` interpolated from the fragility cache against the realised local cr. |
+| `nested_mcs.py` | `run_nested_mcs(...)` — alternative posterior sampler. Precomputes one **nested-FORM** linearisation per (section, t) by treating cr as one more basic variable; MCS then evaluates the tangent-hyperplane LSF `g_i = β_T_i − α_cr_i·ξ_i − Σ_v α_basic_iv·u_iv`. Faster inner loop, extra approximation. Selected via `posterior_method: "nested"`. |
 | `cr_field.py` | Nataf + Kriging utilities. `cdf_on_grid`, `inv_cdf_at`, `z_moments_under_posterior`, `kriged_chol`, `sample_cr_field`, `conditional_cr_quantiles` (closed-form). |
 | `covariance.py` | `spatial_covariance(x, theta, rho_0)`, `effective_cholesky`, `resolve_config`, `resolve_cr_config`, `is_soil_variable`. |
 | `integration.py` | `over_cr(...)` — integrate `Pf(cr)` against a cr_pdf via trapezoidal rule. Uses `np.trapezoid` (NumPy 2.x; `np.trapz` was removed). |
@@ -234,7 +253,8 @@ Upstream of the spatial work. The spatial pipeline reuses:
 # repo root
 cd /path/to/ms5-asset-performance
 
-# Spatial pipeline (reads spatial_settings.json)
+# Spatial pipeline (reads spatial_settings.json — posterior_method picks
+# "field" or "nested")
 python -m case_studies.ark_main.run_spatial
 
 # θ_wall × θ_cr sweep (9 combos by default, ~45 min @ 100k samples)
@@ -250,7 +270,30 @@ python -m case_studies.ark_main.io.export_cr_pdfs --lsf-name lsf_wall
 python -m case_studies.ark_main.io.export_wall_params --lsf lsf_wall
 python -m case_studies.ark_main.io.export_wall_params --lsf lsf_wall_anchor
 python -m case_studies.ark_main.io.export_wall_params       # un-pruned table
+
+# --- Mac dev (no D-SheetPiling install) ---
+# Generate a realistic-looking mock fragility cache + cr_pdfs + data.json
+# under mock/ (the case-study .env points REMOTE_PATH at mock/ already):
+python -m case_studies.ark_main.mock.generate_mock_fragility
+# Then run_spatial works end-to-end against the mock inputs.
 ```
+
+### Mock data for Mac dev (`mock/generate_mock_fragility.py`)
+
+The fragility cache requires D-SheetPiling FORM runs that don't ship on the
+Mac. The mock generator fills the three things the spatial pipeline reads:
+
+- `mock/output/fragility_curve_lsf_wall/point_*.json` + `manifest.json` —
+  18 cr-points with monotone-decreasing `β(cr)` from ~4 at cr=0 to ~0.3 at
+  cr=1, unit-norm α dominated by `model_factor_M`, mild α drift with cr.
+- `mock/output/cr_pdfs_lsf_wall.json` — power-law corrosion
+  `cr_mm(t) = A·t^B` with `A ~ logN(log 0.15, 0.35²)`, `B ~ N(0.7, 0.07²)`,
+  5 000 prior samples reweighted by Gaussian likelihood per obs.
+- `mock/input/data.json` — three synthetic obs at `t = 10 / 20 / 30`.
+
+Rerun the generator any time you want to change the fragility shape or
+add/remove obs. Outputs land directly where the pipeline expects them
+because `.env`'s `REMOTE_PATH` already points at `case_studies/ark_main/mock/`.
 
 ---
 
@@ -301,6 +344,72 @@ Per cached fragility point `cr_k` with `(β_k, α_k(v))`:
 
 ---
 
+## Posterior leg methods (`posterior_method` flag)
+
+Two posterior samplers coexist; choose with `spatial_settings.posterior_method`:
+
+### `"field"` (default) — `spatial/posterior_mcs.py`
+
+The original. Per MC sample, per section: draw the local cr from the Kriged
+field, **interpolate `(β(cr_i), α(cr_i))`** from the cached fragility, evaluate
+`g_i = β_i − Σ_v α_iv · U_v(x_i)`. Heaviest inner loop (one interp + dot
+product per section per sample) but pointwise-exact use of the fragility curve.
+
+### `"nested"` — `spatial/nested_mcs.py`
+
+Treats cr as one more basic random variable via Nataf:
+`z = Φ⁻¹(F_prior(cr; t))`. Under the posterior, the marginal of `z_i` at
+section `i` is Gaussian with `μ_z_i = ρ_i · m_post`,
+`σ²_z_i = 1 + ρ_i²(v_post − 1)`. Standardised local cr at section `i` is
+`ξ_i := (z_i − μ_z_i) / σ_z_i`, N(0, 1) marginal.
+
+For each (section, t) solve the 1-D nested-FORM search
+
+```
+ξ_i* = argmin  ξ²  +  β(cr_i(ξ))²
+```
+
+with `cr_i(ξ) = F_prior⁻¹(Φ(μ_z_i + σ_z_i · ξ))`. Then read off
+
+```
+β_T_i      = sqrt(ξ_i*²  +  β(cr_i*)²)
+α_cr_i     = − ξ_i* / β_T_i
+α_basic_i  = (β(cr_i*) / β_T_i) · α(cr_i*)
+```
+
+`α_cr_i² + Σ_v α_basic_iv² = 1` by construction. The MCS then evaluates the
+**tangent-hyperplane LSF** with no per-sample fragility interpolation:
+
+```
+g_i = β_T_i  −  α_cr_i · ξ_i  −  Σ_v α_basic_iv · U_v(x_i)
+```
+
+`ξ` is the standardised cr field (Kriged z divided by per-section `σ_z`);
+`U_v` are the same basic-variable spatial fields the `"field"` method uses.
+
+#### What "nested" buys / loses
+
+- ✓ Faster inner loop — one matmul per t, no per-sample interp.
+- ✓ Exposes an explicit α per (section, t) for **every** variable including cr.
+  See `alpha_heatmap` / `alpha_lines` plots: α_cr grows from ~0 at the obs
+  anchor (where cr is pinned) to its prior-nested-FORM value at sections far
+  past `θ_cr` (where Kriging collapses to the prior).
+- ✗ Linearises the fragility surface at the design point `cr_i*` instead of
+  evaluating it per realised `cr_i`. Smoke test on mock data (N=5k): nested
+  Pf_sys ran 10–20% **lower** than field; expect that gap to shrink at the
+  real 100k samples and to be larger where β(cr) is strongly nonlinear over
+  the range the field reaches.
+
+#### Cache layout
+
+`posterior_grid.json` (field) and `posterior_grid_nested.json` (nested)
+coexist in the same signature folder; the cache validator includes a
+`method` field. Each nested cache block carries the per-(section, t)
+`beta_T`, `alpha_cr`, `alpha_basic`, `active_vars`, `xi_star`, `cr_star`,
+`mu_z`, `sigma_z` so the α plots render on cache hits without recomputing.
+
+---
+
 ## Plot details worth remembering
 
 - **`pf_vs_time.png`** — system curve is **smoother than per-section** in
@@ -323,6 +432,19 @@ Per cached fragility point `cr_k` with `(β_k, α_k(v))`:
 - **Sweep `beta_forecast_grid.png`** — one subplot per θ_wall (3 panels),
   one viridis curve per θ_cr (3 colours per panel). Uses the **EARLIEST**
   obs scenario because the latest obs is single-point (degenerate visually).
+- **`alpha_heatmap/`** (nested only) — one PNG per obs scenario. Grid of
+  per-variable heatmaps, x=t, y=section, color=signed α (RdBu_r, symmetric
+  vmax shared across panels in the figure). `cr` panel is first; the
+  remaining panels are the active basic variables in fragility-cache order.
+  Dotted vertical line marks `t_obs`. Watch the `cr` panel: near `x = 0` it
+  stays pale (obs pins cr); far from `x = 0` it darkens as the prior cr
+  takes over and its share of the unit-norm budget grows.
+- **`alpha_lines/`** (nested only) — one PNG per obs scenario. Three
+  subplots (first / middle / last section), each plotting `α_v(t)` as
+  lines: thick dashed black for cr, viridis-ramped colours for the basic
+  variables (same colour per variable across all subplots and across obs
+  scenarios). y-axis shared across subplots; right-most subplot carries
+  the figure legend.
 
 ---
 
@@ -347,6 +469,12 @@ Per cached fragility point `cr_k` with `(β_k, α_k(v))`:
 - Per-section beta-forecast plot for the **system** uses the same renderer
   as the per-section one (`plotting/timeline.plot_beta_forecast_at_time`),
   just fed with system arrays reshaped into the per-obs-time dict shape.
+- **Posterior method coexistence**: `"field"` (default) and `"nested"` are
+  both kept rather than replacing one with the other. Different cache
+  files in the same signature folder; both methods share the same prior
+  leg (parametric integration) for the unconditional case. Nataf reference
+  marginal stays the **prior** for both, so the spatial covariance
+  bookkeeping is identical between the two.
 
 ---
 

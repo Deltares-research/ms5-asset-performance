@@ -99,8 +99,16 @@ def save(out_dir: Path, data: dict) -> None:
 # Posterior leg cache (cr-field MCS, per obs scenario)
 # ----------------------------------------------------------------------
 
-def posterior_path(out_dir: Path) -> Path:
-    return out_dir / "posterior_grid.json"
+def posterior_path(out_dir: Path, method: str = "field") -> Path:
+    """File name for the posterior-leg cache.
+
+    Two methods write to different files so they coexist in the same cache
+    folder: the existing field-MCS posterior at ``posterior_grid.json`` and
+    the nested-FORM MCS at ``posterior_grid_nested.json``.
+    """
+    if method == "field":
+        return out_dir / "posterior_grid.json"
+    return out_dir / f"posterior_grid_{method}.json"
 
 
 def try_load_posterior(
@@ -118,6 +126,7 @@ def try_load_posterior(
     cr_values: np.ndarray,
     betas: np.ndarray,
     obs_times: list[float],
+    method: str = "field",
 ) -> dict | None:
     """Return the cached posterior-leg result if every key matches, else ``None``.
 
@@ -126,7 +135,7 @@ def try_load_posterior(
     typically the curve was rebuilt — OR if the obs-time set changed (e.g.
     ``data.json`` got a new entry).
     """
-    p = posterior_path(out_dir)
+    p = posterior_path(out_dir, method=method)
     if not p.exists():
         return None
     try:
@@ -156,9 +165,9 @@ def try_load_posterior(
     return data
 
 
-def save_posterior(out_dir: Path, data: dict) -> None:
+def save_posterior(out_dir: Path, data: dict, method: str = "field") -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    p = posterior_path(out_dir)
+    p = posterior_path(out_dir, method=method)
     tmp = p.with_suffix(".json.tmp")
     with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
