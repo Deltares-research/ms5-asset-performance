@@ -14,13 +14,19 @@ sections at 50 m / 100 m spacing. Every section shares the **same** cached
 FORM fragility curve (`<remote>/output/fragility_curve_<lsf>/point_*.json`),
 parameterised by a single scalar `corrosion_rate` (cr ∈ [0, 1]).
 
-Two reliability legs:
+Two reliability legs (each runnable in either the **field** or **nested**
+method — see "Posterior leg methods" below; both legs use the same method):
 
-1. **Prior leg** — pure parametric: integrate a cached `Pf(cr, section)` grid
-   against the time-varying prior cr-PDF from the corrosion model.
-2. **Posterior leg** — field-sampling MCS where cr varies along the wall as
-   a Kriged Gaussian field anchored on observations at `x = 0` and decaying
-   to the prior at far x via the cr spatial kernel.
+1. **Prior leg** — no observations.
+   - `field`: integrate a cached `Pf(cr, section)` grid against the time-
+     varying prior cr-PDF (uniform-cr-per-sample assumption).
+   - `nested`: nested-FORM tangent-hyperplane MCS on the **unconditional**
+     cr-field — cr varies along the wall under the prior covariance.
+2. **Posterior leg** — observations at `x = 0`.
+   - `field`: per-sample fragility interpolation on the Kriged-conditional
+     cr-field.
+   - `nested`: nested-FORM tangent-hyperplane MCS on the Kriging-conditional
+     cr-field.
 
 The fragility points and corrosion observations are read from
 `<remote>/output/fragility_curve_<lsf>/` and `<remote>/input/data.json`
@@ -59,18 +65,22 @@ shared by all sections.
   "seed": 42,
   "L": 1000.0,
   "n_sections": 11,
-  "posterior_method": "field",
+  "mcs_method": "field",
   "wall": { "theta": 200.0, "rho_0": 0.0 },
   "cr":   { "theta":  50.0, "rho_0": 0.0 },
   "per_variable": {}
 }
 ```
 
-- `posterior_method` — `"field"` (default) or `"nested"`. Selects the
-  posterior-leg sampler. The two methods write to different cache files in
-  the same signature folder (`posterior_grid.json` vs
-  `posterior_grid_nested.json`) so they coexist; the prior leg is unchanged
-  in either case. See "Posterior leg methods" below.
+- `mcs_method` — `"field"` (default) or `"nested"`. Selects the MCS
+  method for **both** legs (prior + posterior). The two methods write to
+  different cache files in the same signature folder (`pf_grid.json` +
+  `posterior_grid.json` for field; `pf_grid_nested.json` +
+  `posterior_grid_nested.json` for nested) so they coexist. See "Method
+  flag — what gets swapped" below for the per-leg breakdown.
+  - Legacy key `posterior_method` is still accepted (emits a
+    `DeprecationWarning`) for back-compat with older settings files; remove
+    it once you've renamed the keys.
 
 - `wall.{theta, rho_0}` — basic-variable squared-exp kernel
   `C(d) = rho_0 + (1 − rho_0) · exp(−(d/theta)²)`. Applied to **soil**
@@ -134,7 +144,8 @@ python -m case_studies.ark_main.io.export_cr_pdfs --lsf-name lsf_wall
 <remote>/output/spatial_analysis/
 ├── cached/
 │   └── <setup_signature>/
-│       ├── pf_grid.json                  # prior leg cache (Pf at every cr-point)
+│       ├── pf_grid.json                  # prior leg cache,     method=field  (Pf at every cr-point)
+│       ├── pf_grid_nested.json           # prior leg cache,     method=nested (per-t fail counts)
 │       ├── posterior_grid.json           # posterior leg cache, method=field
 │       └── posterior_grid_nested.json    # posterior leg cache, method=nested
 ├── results/
@@ -144,11 +155,11 @@ python -m case_studies.ark_main.io.export_cr_pdfs --lsf-name lsf_wall
 │       │   ├── prior.json
 │       │   └── posterior.json     # per t_obs block
 │       └── plots/
-│           ├── pf_vs_cr.png
+│           ├── pf_vs_cr.png             # method=field only (no Pf(cr) table in nested)
 │           ├── pf_vs_time.png
 │           ├── pf_vs_time_posterior.png
 │           ├── beta_along_wall.png
-│           ├── realizations.png
+│           ├── realizations.png         # method=field only (g(x) at cr=0)
 │           ├── beta_forecast_system/   # PNG per t_obs
 │           ├── beta_forecast_system.pdf
 │           ├── beta_forecast_system.gif
@@ -163,7 +174,8 @@ python -m case_studies.ark_main.io.export_cr_pdfs --lsf-name lsf_wall
 │           ├── alpha_heatmap.gif       #                   (method=nested only)
 │           ├── alpha_lines/            # PNG per t_obs    (method=nested only)
 │           ├── alpha_lines.pdf         #                   (method=nested only)
-│           └── alpha_lines.gif         #                   (method=nested only)
+│           ├── alpha_lines.gif         #                   (method=nested only)
+│           └── alpha_lines_prior.png   # single panel     (method=nested only, prior leg)
 └── sweep/                         # outputs of analyze_sweep.py
     ├── beta_forecast_grid.png
     └── beta_contour_tend.png
@@ -184,16 +196,20 @@ lsf-<tag>_N<n_samples>_seed<seed>_L<int(L)>_n<n_sections>_wth<int>_wrh<g>_crth<i
 
 ### Cache invalidation
 
-Both `pf_grid.json` and `posterior_grid*.json` are validated against:
+All four caches (`pf_grid.json`, `pf_grid_nested.json`,
+`posterior_grid.json`, `posterior_grid_nested.json`) are validated against:
 
 - LSF name, `n_samples`, `seed`, `n_sections`, `L`.
-- `wall_theta`, `wall_rho_0`, and (posterior) `cr_theta`, `cr_rho_0`.
+- `wall_theta`, `wall_rho_0`.
+- `cr_theta`, `cr_rho_0` (posterior caches always; the nested prior cache
+  also depends on the cr kernel because it samples the cr-field directly;
+  the field-prior cache `pf_grid.json` does **not** depend on `cr_*`).
 - Fragility fingerprint (`cr_values`, `betas`).
-- (Posterior) `obs_times`.
-- (Posterior) `method` is encoded in the file name, not in the validator —
-  `"field"` writes `posterior_grid.json`, `"nested"` writes
-  `posterior_grid_nested.json`. The two coexist; flipping the flag picks
-  the matching file (or recomputes if absent).
+- `obs_times` (posterior caches), `forecast_times` (nested-prior cache).
+- `method` is encoded in the file name, not in the validator —
+  `"field"` writes `pf_grid.json` + `posterior_grid.json`, `"nested"` writes
+  `pf_grid_nested.json` + `posterior_grid_nested.json`. The pairs coexist;
+  flipping the flag picks the matching pair (or recomputes if absent).
 
 Any mismatch → recompute. See `spatial/checkpoint.py`.
 
@@ -218,7 +234,7 @@ Any mismatch → recompute. See `spatial/checkpoint.py`.
 | `__init__.py` | `setup_signature()`, `cache_dir()`, `results_dir()` helpers. |
 | `engine.py` | `compute_or_load_pf_grid(spatial_settings)` — prior-leg MCS. Effective Cholesky collapse `C_eff = Σ_v α_v² · C_v`. Common random numbers across cr-points so `Pf(cr)` is smooth. |
 | `posterior_mcs.py` | `run_posterior_mcs(...)` — field-sampling MCS per obs scenario. Per-variable Cholesky for soil vars; scalar broadcast for non-soil vars. Per-section FORM coefficients `(β_i, α_i)` interpolated from the fragility cache against the realised local cr. |
-| `nested_mcs.py` | `run_nested_mcs(...)` — alternative posterior sampler. Precomputes one **nested-FORM** linearisation per (section, t) by treating cr as one more basic variable; MCS then evaluates the tangent-hyperplane LSF `g_i = β_T_i − α_cr_i·ξ_i − Σ_v α_basic_iv·u_iv`. Faster inner loop, extra approximation. Selected via `posterior_method: "nested"`. |
+| `nested_mcs.py` | Nested-FORM tangent-hyperplane MCS for **both legs**. `run_nested_mcs(...)` — per-obs-scenario posterior sampler: one nested-FORM linearisation per (section, t) using Kriging-conditional cr-field moments. `run_nested_mcs_prior(...)` — unconditional prior sampler: one (β_T, α_cr, α_basic) triple per t (prior is stationary along the wall), tangent-hyperplane MCS on the prior cr-field. Both selected by `mcs_method: "nested"`. |
 | `cr_field.py` | Nataf + Kriging utilities. `cdf_on_grid`, `inv_cdf_at`, `z_moments_under_posterior`, `kriged_chol`, `sample_cr_field`, `conditional_cr_quantiles` (closed-form). |
 | `covariance.py` | `spatial_covariance(x, theta, rho_0)`, `effective_cholesky`, `resolve_config`, `resolve_cr_config`, `is_soil_variable`. |
 | `integration.py` | `over_cr(...)` — integrate `Pf(cr)` against a cr_pdf via trapezoidal rule. Uses `np.trapezoid` (NumPy 2.x; `np.trapz` was removed). |
@@ -253,7 +269,7 @@ Upstream of the spatial work. The spatial pipeline reuses:
 # repo root
 cd /path/to/ms5-asset-performance
 
-# Spatial pipeline (reads spatial_settings.json — posterior_method picks
+# Spatial pipeline (reads spatial_settings.json — mcs_method picks
 # "field" or "nested")
 python -m case_studies.ark_main.run_spatial
 
@@ -344,69 +360,86 @@ Per cached fragility point `cr_k` with `(β_k, α_k(v))`:
 
 ---
 
-## Posterior leg methods (`posterior_method` flag)
+## Method flag — what gets swapped (`mcs_method`)
 
-Two posterior samplers coexist; choose with `spatial_settings.posterior_method`:
+One flag toggles both legs. Both legs always run, and both use the chosen
+method. (The flag was previously named `posterior_method` when it only
+gated the posterior leg; the legacy key still works with a deprecation
+warning.)
 
-### `"field"` (default) — `spatial/posterior_mcs.py`
+### `"field"` (default)
 
-The original. Per MC sample, per section: draw the local cr from the Kriged
-field, **interpolate `(β(cr_i), α(cr_i))`** from the cached fragility, evaluate
-`g_i = β_i − Σ_v α_iv · U_v(x_i)`. Heaviest inner loop (one interp + dot
-product per section per sample) but pointwise-exact use of the fragility curve.
+| Leg       | Module                     | What it does |
+|-----------|----------------------------|--------------|
+| Prior     | `spatial/engine.py`        | Spatial MCS at each cached cr-point (β_k, α_k) via the **uniform-cr-per-sample** Cholesky `L(α_k)`; then `Pf(cr_k) → ∫ Pf(cr) · prior_pdf(cr; t) dcr` per t. |
+| Posterior | `spatial/posterior_mcs.py` | Per MC sample, per section: draw local cr from the **Kriging-conditional** cr-field, interpolate `(β(cr_i), α(cr_i))` from the fragility, evaluate `g_i = β_i − Σ_v α_iv · U_v(x_i)`. |
 
-### `"nested"` — `spatial/nested_mcs.py`
+Pointwise-exact use of the fragility curve. Prior cr is uniform within a
+sample (only basic vars vary spatially); posterior cr varies along the wall.
+
+### `"nested"` — `spatial/nested_mcs.py` (`run_nested_mcs_prior` + `run_nested_mcs`)
 
 Treats cr as one more basic random variable via Nataf:
-`z = Φ⁻¹(F_prior(cr; t))`. Under the posterior, the marginal of `z_i` at
-section `i` is Gaussian with `μ_z_i = ρ_i · m_post`,
-`σ²_z_i = 1 + ρ_i²(v_post − 1)`. Standardised local cr at section `i` is
-`ξ_i := (z_i − μ_z_i) / σ_z_i`, N(0, 1) marginal.
-
-For each (section, t) solve the 1-D nested-FORM search
+`z = Φ⁻¹(F_prior(cr; t))`. The 1-D nested-FORM search
 
 ```
-ξ_i* = argmin  ξ²  +  β(cr_i(ξ))²
+ξ* = argmin  ξ²  +  β(cr(ξ))²        with cr(ξ) = F_prior⁻¹(Φ(μ_z + σ_z · ξ))
 ```
 
-with `cr_i(ξ) = F_prior⁻¹(Φ(μ_z_i + σ_z_i · ξ))`. Then read off
+yields
 
 ```
-β_T_i      = sqrt(ξ_i*²  +  β(cr_i*)²)
-α_cr_i     = − ξ_i* / β_T_i
-α_basic_i  = (β(cr_i*) / β_T_i) · α(cr_i*)
+β_T       = sqrt(ξ*²  +  β(cr*)²)
+α_cr      = − ξ* / β_T
+α_basic   = (β(cr*) / β_T) · α(cr*)          (with α_cr² + Σ α_basic² = 1)
 ```
 
-`α_cr_i² + Σ_v α_basic_iv² = 1` by construction. The MCS then evaluates the
-**tangent-hyperplane LSF** with no per-sample fragility interpolation:
+The MCS then evaluates the **tangent-hyperplane LSF** with no per-sample
+fragility interpolation:
 
 ```
-g_i = β_T_i  −  α_cr_i · ξ_i  −  Σ_v α_basic_iv · U_v(x_i)
+g_i = β_T  −  α_cr · ξ_i  −  Σ_v α_basic_v · U_v(x_i)
 ```
 
-`ξ` is the standardised cr field (Kriged z divided by per-section `σ_z`);
-`U_v` are the same basic-variable spatial fields the `"field"` method uses.
+Per-leg differences:
+
+| Leg       | `(μ_z, σ_z)`                                  | (β_T, α_*) shape | cr-field sampler                              |
+|-----------|-----------------------------------------------|------------------|-----------------------------------------------|
+| Prior     | `(0, 1)` everywhere (stationary along wall)   | `(n_t,)`         | Unconditional Cholesky of cr kernel along x.  |
+| Posterior | `(ρ_i · m_post, 1 + ρ_i²(v_post − 1))`         | `(n_t, n_sec)`   | Kriging-conditional Cholesky.                 |
+
+Same technique, same model on both legs — the **only** difference is
+whether the cr field is conditioned on observations. This is why nested-mode
+prior and posterior Pf curves are directly comparable: a β reduction
+between prior and posterior is now attributable to observations, not to a
+method switch.
 
 #### What "nested" buys / loses
 
-- ✓ Faster inner loop — one matmul per t, no per-sample interp.
-- ✓ Exposes an explicit α per (section, t) for **every** variable including cr.
-  See `alpha_heatmap` / `alpha_lines` plots: α_cr grows from ~0 at the obs
-  anchor (where cr is pinned) to its prior-nested-FORM value at sections far
-  past `θ_cr` (where Kriging collapses to the prior).
-- ✗ Linearises the fragility surface at the design point `cr_i*` instead of
-  evaluating it per realised `cr_i`. Smoke test on mock data (N=5k): nested
-  Pf_sys ran 10–20% **lower** than field; expect that gap to shrink at the
-  real 100k samples and to be larger where β(cr) is strongly nonlinear over
-  the range the field reaches.
+- ✓ Faster inner loop — one matmul per t, no per-sample interp. Prior leg
+  at N=5k / 51 t-steps / 11 sections ran in <0.1 s on Mac.
+- ✓ Consistent technique across legs — see table above. β_prior and β_post
+  differ only because the cr-field is conditioned, not because the integrator
+  changed.
+- ✓ Exposes an explicit α per (section, t) for **every** variable including
+  cr — see `alpha_heatmap` / `alpha_lines` (posterior, per (t, section))
+  and `alpha_lines_prior` (single panel, since the prior is stationary).
+- ✗ Linearises the fragility surface at the design point `cr*` instead of
+  evaluating it per realised `cr_i`. Prior leg also changes models, not
+  just method: it goes from uniform-cr-per-sample to a spatially-varying
+  cr field, so nested-prior Pf is generally **higher** than field-prior Pf
+  (more system-failure opportunities when cr is uncorrelated along the
+  wall). Smoke test on mock data (N=5k, θ_cr=50 m, ρ_0_cr=0): nested-prior
+  Pf_sys(t=50) = 3.1 × 10⁻² vs field-prior 1.8 × 10⁻² (~75% higher).
 
 #### Cache layout
 
-`posterior_grid.json` (field) and `posterior_grid_nested.json` (nested)
-coexist in the same signature folder; the cache validator includes a
-`method` field. Each nested cache block carries the per-(section, t)
-`beta_T`, `alpha_cr`, `alpha_basic`, `active_vars`, `xi_star`, `cr_star`,
-`mu_z`, `sigma_z` so the α plots render on cache hits without recomputing.
+`pf_grid.json` + `posterior_grid.json` (field) and `pf_grid_nested.json` +
+`posterior_grid_nested.json` (nested) coexist in the same signature folder;
+the cache validator includes a `method` field. Each nested cache block
+carries the per-(section, t) (or per-t for the prior) `beta_T`, `alpha_cr`,
+`alpha_basic`, `active_vars`, `xi_star`, `cr_star`, `mu_z`, `sigma_z` so
+the α plots render on cache hits without recomputing.
 
 ---
 
@@ -445,6 +478,12 @@ coexist in the same signature folder; the cache validator includes a
   variables (same colour per variable across all subplots and across obs
   scenarios). y-axis shared across subplots; right-most subplot carries
   the figure legend.
+- **`alpha_lines_prior.png`** (nested only) — single panel, `α_v(t)` for
+  the unconditional prior leg. No section dimension because the prior is
+  stationary along the wall, so the design point only depends on `t`. Same
+  colour palette as `alpha_lines/`; the cr curve is what `α_cr_i` collapses
+  to at sections far past `θ_cr` in the posterior plots (Kriging at far
+  distance == prior).
 
 ---
 
@@ -460,6 +499,16 @@ coexist in the same signature folder; the cache validator includes a
 - Posterior leg uses **field MCS**, not parametric `pf_grid` integration.
   The parametric grid assumes uniform cr across the wall and can't
   represent a spatially-varying cr field for the system event.
+- **Both legs share a method**: `mcs_method` flag governs prior + posterior,
+  not just posterior. The user wanted "consistent calculation of beta using
+  the same method" — picking method=nested on the posterior while the prior
+  stayed on field-integration mixed two different models/techniques and made
+  β reductions hard to attribute. So nested-mode was extended to the prior
+  too: same Nataf+nested-FORM machinery, only the cr-field conditioning
+  differs (unconditional Cholesky for prior, Kriging for posterior). The
+  flag was renamed from the old `posterior_method` to `mcs_method` to
+  reflect this scope; the old key is still accepted with a deprecation
+  warning so existing settings files keep working.
 - Sweep at **100k samples** is the current reference (10k → 100k changed
   results by ~3%, matching √10 noise scaling).
 - Settings come from `spatial_settings.json` only — no CLI flags. The
@@ -469,12 +518,13 @@ coexist in the same signature folder; the cache validator includes a
 - Per-section beta-forecast plot for the **system** uses the same renderer
   as the per-section one (`plotting/timeline.plot_beta_forecast_at_time`),
   just fed with system arrays reshaped into the per-obs-time dict shape.
-- **Posterior method coexistence**: `"field"` (default) and `"nested"` are
-  both kept rather than replacing one with the other. Different cache
-  files in the same signature folder; both methods share the same prior
-  leg (parametric integration) for the unconditional case. Nataf reference
-  marginal stays the **prior** for both, so the spatial covariance
-  bookkeeping is identical between the two.
+- **Method coexistence**: `"field"` (default) and `"nested"` are both kept
+  rather than replacing one with the other. Different cache files in the
+  same signature folder (`pf_grid.json` + `posterior_grid.json` vs
+  `pf_grid_nested.json` + `posterior_grid_nested.json`). Nataf reference
+  marginal stays the **prior** for nested-mode (same convention for prior
+  leg `(μ_z=0, σ_z=1)` and posterior leg `(μ_z=ρ·m_post, σ_z=…)`), so the
+  spatial covariance bookkeeping is identical across the two legs.
 
 ---
 

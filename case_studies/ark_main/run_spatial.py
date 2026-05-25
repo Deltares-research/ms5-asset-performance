@@ -113,15 +113,30 @@ def analyze(spatial_settings: dict | None = None) -> None:
     lsf_name = settings_dict["lsf_name"]
     n_samples = int(settings_dict["n_samples"])
     seed = int(settings_dict["seed"])
-    # ``posterior_method`` selects the posterior-leg sampler:
-    #   "field"  — current per-sample fragility interpolation (posterior_mcs)
-    #   "nested" — nested-FORM tangent-hyperplane MCS (nested_mcs)
-    # Both methods write to different cache files so they coexist in the same
-    # signature folder.
-    posterior_method = str(settings_dict.get("posterior_method", "field")).lower()
-    if posterior_method not in ("field", "nested"):
+    # ``mcs_method`` selects the MCS method for BOTH legs:
+    #   "field"  — prior leg uses ``compute_or_load_pf_grid`` + integration
+    #              over the cr PDF (uniform-cr-per-sample assumption); the
+    #              posterior leg uses ``posterior_mcs`` (per-sample fragility
+    #              interpolation on the Kriged cr-field).
+    #   "nested" — both legs use a nested-FORM tangent-hyperplane MCS on a
+    #              spatially-varying cr-field; the only difference between
+    #              the legs is whether the cr-field is conditioned on obs.
+    # Each method writes to its own cache files (pf_grid.json / pf_grid_nested.json,
+    # posterior_grid.json / posterior_grid_nested.json) so the two coexist.
+    # ``posterior_method`` is the legacy key from when the flag was posterior-only;
+    # accept it with a deprecation warning so existing settings files still work.
+    if "posterior_method" in settings_dict and "mcs_method" not in settings_dict:
+        import warnings
+        warnings.warn(
+            "spatial_settings.posterior_method is deprecated; rename to mcs_method "
+            "(the flag now governs both legs).", DeprecationWarning, stacklevel=2,
+        )
+        mcs_method = str(settings_dict["posterior_method"]).lower()
+    else:
+        mcs_method = str(settings_dict.get("mcs_method", "field")).lower()
+    if mcs_method not in ("field", "nested"):
         raise ValueError(
-            f"Unknown posterior_method={posterior_method!r}. Use 'field' or 'nested'."
+            f"Unknown mcs_method={mcs_method!r}. Use 'field' or 'nested'."
         )
 
     points = fragility.load_points(_remote, lsf_name)
@@ -143,7 +158,7 @@ def analyze(spatial_settings: dict | None = None) -> None:
     print("Spatial MCS — sheet-pile wall")
     print("=" * 60)
     print(f"LSF:              {lsf_name}")
-    print(f"posterior method: {posterior_method}")
+    print(f"mcs method:       {mcs_method}")
     print(f"L:                {L:.1f} m,  n_sections={n_sections}  (spacing {L/(n_sections-1):.1f} m)")
     print(f"wall theta:       {wall_theta:.1f} m")
     print(f"wall rho_0:       {wall_rho_0:.3f}")
@@ -153,40 +168,128 @@ def analyze(spatial_settings: dict | None = None) -> None:
     print(f"cache dir:        {cache_dir}")
     print(f"results dir:      {results_dir}")
 
-    # Steps 1-5.
-    data = compute_or_load_pf_grid(settings_dict)
-
-    cr_values = np.array(data["cr_values"])
-    betas_form = np.array(data["betas"])
-    n_fail_section = np.array(data["n_fail_section"])      # (n_cr, n_sections)
-    n_fail_system = np.array(data["n_fail_system"])        # (n_cr,)
-    pf_section_grid = n_fail_section / n_samples
-    pf_system_grid = n_fail_system / n_samples
-
-    # Step 6: integrate Pf(cr) against the **prior** cr_pdf at every t in
-    # the forecast grid. We read the prior PDFs from the canonical exporter
-    # file rather than reconstructing them from the corrosion model — this
-    # keeps the spatial pipeline strictly downstream of ``run.py``'s
-    # per-section pipeline (one source of truth for cr distributions).
+    # Shared inputs (used by both methods and both legs).
     crp = _load_cr_pdfs(lsf_name)
     cr_grid_export = np.array(crp["cr_grid"])
     forecast_times = np.array(crp["forecast_times"], dtype=float)
-
-    print(f"\nIntegrating spatial Pf grid against prior cr_pdf(t)...")
-    print(f"  Corrosion model: {crp.get('model_type', 'unknown')}")
-    print(f"  Forecast grid:   t = {forecast_times[0]:.1f} -> {forecast_times[-1]:.1f}, "
-          f"n_t = {len(forecast_times)} (from {Path(crp.get('lsf_name', lsf_name)).name})")
-
-    pf_section_t = np.zeros((len(forecast_times), n_sections))
-    pf_system_t = np.zeros(len(forecast_times))
     prior_pdf_per_t = crp["prior_pdf_per_t"]
-    for i, t in enumerate(tqdm(forecast_times, desc="t-integration",
-                               unit="t", dynamic_ncols=True)):
-        cr_pdf = np.asarray(prior_pdf_per_t[f"{t:.4f}"])
-        pf_section_t[i], pf_system_t[i] = integration.over_cr(
-            pf_section_grid, pf_system_grid, cr_values,
-            cr_pdf_grid=cr_grid_export, cr_pdf_values=cr_pdf,
+
+    # cr-kernel needed by the nested prior MCS (and by the posterior leg
+    # of either method); pulled here once.
+    theta_cr_val, rho_0_cr_val = covariance.resolve_cr_config(settings_dict)
+
+    # Fragility-cache fingerprint (cr_values, betas) for cache validation.
+    # The nested method skips compute_or_load_pf_grid so we read them from
+    # the cache directly.
+    cr_values_frag = np.array(
+        [float(p["point"]["corrosion_rate"]) for p in points], dtype=float,
+    )
+    betas_frag = np.array([float(p["beta"]) for p in points], dtype=float)
+    _order_frag = np.argsort(cr_values_frag)
+    cr_values_frag = cr_values_frag[_order_frag]
+    betas_frag = betas_frag[_order_frag]
+
+    # Prior leg — two methods.
+    if mcs_method == "nested":
+        # Unconditional nested-FORM MCS: one (beta_T, alpha_cr, alpha_basic)
+        # per t (prior is stationary along the wall), tangent-hyperplane LSF
+        # evaluated on a spatially-varying cr-field. Same technique as the
+        # nested posterior leg, with no obs conditioning.
+        print(f"\nPrior leg — nested-FORM tangent-hyperplane MCS (unconditional)")
+        print(f"  cr kernel: theta = {theta_cr_val:.1f} m,  rho_0 = {rho_0_cr_val:.3f}")
+        print(f"  Corrosion model: {crp.get('model_type', 'unknown')}")
+        print(f"  Forecast grid:   t = {forecast_times[0]:.1f} -> {forecast_times[-1]:.1f}, "
+              f"n_t = {len(forecast_times)}")
+
+        cached_prior_nested = spatial_checkpoint.try_load_prior_nested(
+            cache_dir,
+            lsf_name=lsf_name, n_samples=n_samples, seed=seed,
+            n_sections=n_sections, L=L,
+            wall_theta=wall_theta, wall_rho_0=wall_rho_0,
+            cr_theta=theta_cr_val, cr_rho_0=rho_0_cr_val,
+            cr_values=cr_values_frag, betas=betas_frag,
+            forecast_times=forecast_times.tolist(),
         )
+        if cached_prior_nested is not None:
+            nfs_prior = np.array(cached_prior_nested["n_fail_section"])
+            nfsys_prior = np.array(cached_prior_nested["n_fail_system"])
+            prior_nf_block = cached_prior_nested["nested_form"]
+            prior_precomp = {
+                k: np.asarray(v) if k != "active_vars" else list(v)
+                for k, v in prior_nf_block.items()
+            }
+        else:
+            nfs_prior, nfsys_prior, prior_precomp = nested_mcs.run_nested_mcs_prior(
+                points=points, x=x, spec_basic=spec,
+                theta_cr=theta_cr_val, rho_0_cr=rho_0_cr_val,
+                cr_grid_export=cr_grid_export,
+                prior_pdf_per_t=prior_pdf_per_t,
+                forecast_times=forecast_times,
+                n_samples=n_samples, seed=seed,
+                desc="nested prior MC",
+            )
+            spatial_checkpoint.save_prior_nested(cache_dir, {
+                "lsf_name": lsf_name,
+                "method": "nested",
+                "n_samples": int(n_samples),
+                "seed": int(seed),
+                "n_sections": int(n_sections),
+                "L": float(L),
+                "wall_theta": float(wall_theta),
+                "wall_rho_0": float(wall_rho_0),
+                "cr_theta": float(theta_cr_val),
+                "cr_rho_0": float(rho_0_cr_val),
+                "cr_values": cr_values_frag.tolist(),
+                "betas": betas_frag.tolist(),
+                "forecast_times": forecast_times.tolist(),
+                "n_fail_section": nfs_prior.tolist(),
+                "n_fail_system": nfsys_prior.tolist(),
+                "nested_form": {
+                    "beta_T":      prior_precomp["beta_T"].tolist(),
+                    "alpha_cr":    prior_precomp["alpha_cr"].tolist(),
+                    "alpha_basic": prior_precomp["alpha_basic"].tolist(),
+                    "active_vars": prior_precomp.get("active_vars", []),
+                    "xi_star":     prior_precomp["xi_star"].tolist(),
+                    "cr_star":     prior_precomp["cr_star"].tolist(),
+                },
+            })
+            print(f"  Saved nested-prior grid to "
+                  f"{spatial_checkpoint.path(cache_dir, method='nested')}")
+
+        pf_section_t = nfs_prior / n_samples
+        pf_system_t = nfsys_prior / n_samples
+        # Field-method-only artifacts (the Pf-vs-cr table) — not produced by
+        # the nested method; sentinel-empty so downstream plot/branch guards
+        # know to skip the pf_vs_cr and realisations plots.
+        cr_values = None
+        betas_form = None
+        n_fail_section = None
+        n_fail_system = None
+    else:
+        # Field method: classic cr-grid spatial MCS + integration over cr.
+        data = compute_or_load_pf_grid(settings_dict)
+
+        cr_values = np.array(data["cr_values"])
+        betas_form = np.array(data["betas"])
+        n_fail_section = np.array(data["n_fail_section"])      # (n_cr, n_sections)
+        n_fail_system = np.array(data["n_fail_system"])        # (n_cr,)
+        pf_section_grid = n_fail_section / n_samples
+        pf_system_grid = n_fail_system / n_samples
+
+        print(f"\nIntegrating spatial Pf grid against prior cr_pdf(t)...")
+        print(f"  Corrosion model: {crp.get('model_type', 'unknown')}")
+        print(f"  Forecast grid:   t = {forecast_times[0]:.1f} -> {forecast_times[-1]:.1f}, "
+              f"n_t = {len(forecast_times)} (from {Path(crp.get('lsf_name', lsf_name)).name})")
+
+        pf_section_t = np.zeros((len(forecast_times), n_sections))
+        pf_system_t = np.zeros(len(forecast_times))
+        for i, t in enumerate(tqdm(forecast_times, desc="t-integration",
+                                   unit="t", dynamic_ncols=True)):
+            cr_pdf = np.asarray(prior_pdf_per_t[f"{t:.4f}"])
+            pf_section_t[i], pf_system_t[i] = integration.over_cr(
+                pf_section_grid, pf_system_grid, cr_values,
+                cr_pdf_grid=cr_grid_export, cr_pdf_values=cr_pdf,
+            )
 
     def _to_beta(pf):
         out = np.full_like(pf, np.nan, dtype=float)
@@ -266,14 +369,18 @@ def analyze(spatial_settings: dict | None = None) -> None:
 
     plots_dir = results_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
-    plots.pf_vs_cr(
-        cr_values=cr_values,
-        n_fail_section=n_fail_section,
-        n_fail_system=n_fail_system,
-        betas_form=betas_form,
-        n_samples=n_samples,
-        out_path=plots_dir / "pf_vs_cr.png",
-    )
+    # pf_vs_cr and realizations need the per-cr-point Pf table that only
+    # the field method produces. The nested method goes straight from
+    # (beta_T, alpha_*) to Pf(t), so these plots are skipped.
+    if mcs_method == "field":
+        plots.pf_vs_cr(
+            cr_values=cr_values,
+            n_fail_section=n_fail_section,
+            n_fail_system=n_fail_system,
+            betas_form=betas_form,
+            n_samples=n_samples,
+            out_path=plots_dir / "pf_vs_cr.png",
+        )
     plots.pf_vs_time(
         forecast_times=forecast_times,
         pf_section_t=pf_section_t,
@@ -294,32 +401,45 @@ def analyze(spatial_settings: dict | None = None) -> None:
         out_path=plots_dir / "beta_along_wall.png",
         t_label=f"t = {forecast_times[i_last]:.1f}",
     )
-    # Realisations at cr = 0 (the cr point where the spatial spread is
-    # measured before integration; useful as a visual sanity check for the
-    # spatial sampler regardless of t).
-    idx0 = int(np.argmin(np.abs(cr_values - 0.0)))
-    L_eff_at_cr0 = covariance.effective_cholesky(
-        x, {k: float(v) for k, v in points[idx0]["alphas"].items()}, spec,
-    )
-    plots.realizations(
-        x=x, L_eff=L_eff_at_cr0, beta_single=float(betas_form[idx0]),
-        n_show=10, seed=seed,
-        out_path=plots_dir / "realizations.png",
-    )
+    if mcs_method == "field":
+        # Realisations at cr = 0 (the cr point where the spatial spread is
+        # measured before integration; useful as a visual sanity check for
+        # the spatial sampler regardless of t).
+        idx0 = int(np.argmin(np.abs(cr_values - 0.0)))
+        L_eff_at_cr0 = covariance.effective_cholesky(
+            x, {k: float(v) for k, v in points[idx0]["alphas"].items()}, spec,
+        )
+        plots.realizations(
+            x=x, L_eff=L_eff_at_cr0, beta_single=float(betas_form[idx0]),
+            n_show=10, seed=seed,
+            out_path=plots_dir / "realizations.png",
+        )
+
+    if mcs_method == "nested":
+        # Prior-leg alpha plot — single panel (prior is stationary along the
+        # wall, so alpha_v(t) is one curve per variable, not per (section, t)).
+        # Companion to the per-obs ``alpha_lines`` plots on the posterior side.
+        plots.alpha_lines_prior(
+            forecast_times=forecast_times,
+            alpha_cr=prior_precomp["alpha_cr"],
+            alpha_basic=prior_precomp["alpha_basic"],
+            active_vars=list(prior_precomp.get("active_vars", [])),
+            out_path=plots_dir / "alpha_lines_prior.png",
+        )
 
     # ----------------------------------------------------------------------
     # Posterior leg: per obs time, run a field-sampling MCS that anchors
     # the cr posterior at x = 0 (where obs are taken) and propagates to
     # other sections via the dedicated cr spatial kernel. System Pf is
     # exact in the model here (no uniform-cr approximation).
+    # (theta_cr_val / rho_0_cr_val resolved earlier with the shared inputs.)
     # ----------------------------------------------------------------------
-    theta_cr_val, rho_0_cr_val = covariance.resolve_cr_config(settings_dict)
     obs_times_sorted = sorted(
         float(k) for k in crp.get("posterior_pdf_per_obs", {}).keys()
     )
 
     print(f"\n{'='*60}")
-    if posterior_method == "nested":
+    if mcs_method == "nested":
         print(f"Posterior leg — nested-FORM tangent-hyperplane MCS at x = 0")
     else:
         print(f"Posterior leg — field-sampling MCS conditioned at x = 0")
@@ -337,9 +457,9 @@ def analyze(spatial_settings: dict | None = None) -> None:
         n_sections=n_sections, L=L,
         wall_theta=wall_theta, wall_rho_0=wall_rho_0,
         cr_theta=theta_cr_val, cr_rho_0=rho_0_cr_val,
-        cr_values=cr_values, betas=betas_form,
+        cr_values=cr_values_frag, betas=betas_frag,
         obs_times=obs_times_sorted,
-        method=posterior_method,
+        method=mcs_method,
     )
     if cached_post is not None:
         posterior_results = cached_post["posterior"]
@@ -350,7 +470,7 @@ def analyze(spatial_settings: dict | None = None) -> None:
             ft_block = np.array(
                 sorted(float(t) for t in post_block.keys()), dtype=float,
             )
-            if posterior_method == "nested":
+            if mcs_method == "nested":
                 nfs, nfsys, precomp = nested_mcs.run_nested_mcs(
                     points=points, x=x, spec_basic=spec,
                     theta_cr=theta_cr_val, rho_0_cr=rho_0_cr_val,
@@ -398,7 +518,7 @@ def analyze(spatial_settings: dict | None = None) -> None:
             posterior_results[t_obs_str] = block_entry
         spatial_checkpoint.save_posterior(cache_dir, {
             "lsf_name": lsf_name,
-            "method": posterior_method,
+            "method": mcs_method,
             "n_samples": int(n_samples),
             "seed": int(seed),
             "n_sections": int(n_sections),
@@ -407,13 +527,13 @@ def analyze(spatial_settings: dict | None = None) -> None:
             "wall_rho_0": float(wall_rho_0),
             "cr_theta": float(theta_cr_val),
             "cr_rho_0": float(rho_0_cr_val),
-            "cr_values": cr_values.tolist(),
-            "betas": betas_form.tolist(),
+            "cr_values": cr_values_frag.tolist(),
+            "betas": betas_frag.tolist(),
             "obs_times": obs_times_sorted,
             "posterior": posterior_results,
-        }, method=posterior_method)
+        }, method=mcs_method)
         print(f"  Saved posterior grid to "
-              f"{spatial_checkpoint.posterior_path(cache_dir, method=posterior_method)}")
+              f"{spatial_checkpoint.posterior_path(cache_dir, method=mcs_method)}")
     else:
         posterior_results = {}
 
@@ -658,14 +778,15 @@ def analyze(spatial_settings: dict | None = None) -> None:
             )
         collect_pngs_to_pdf(violin_png_dir, plots_dir / "cr_violin.pdf")
 
-        # ---- Nested-FORM alpha plots (only when posterior_method == "nested").
+        # ---- Nested-FORM alpha plots (only when mcs_method == "nested").
+        # Posterior leg, per (section, t).
         # Per obs scenario, render two views of the (section, t) alphas:
         #   * alpha_heatmap   — RdBu heatmap per variable, one panel each, in
         #     a single figure. Shows the spatial+temporal pattern of every
         #     contribution at a glance.
         #   * alpha_lines     — alpha_v(t) lines at first/middle/last sections
         #     for direct comparison across distance from the obs anchor.
-        if posterior_method == "nested" and posterior_results:
+        if mcs_method == "nested" and posterior_results:
             heat_dir = plots_dir / "alpha_heatmap"
             lines_dir = plots_dir / "alpha_lines"
             heat_dir.mkdir(parents=True, exist_ok=True)

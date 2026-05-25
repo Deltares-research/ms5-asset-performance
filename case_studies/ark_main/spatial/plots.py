@@ -615,3 +615,37 @@ def alpha_lines_at_sections(
     )
     fig.tight_layout(rect=(0, 0, 0.85, 0.94))
     save_figure(fig, out_path)
+
+
+def alpha_lines_prior(
+    *,
+    forecast_times: np.ndarray,
+    alpha_cr: np.ndarray,            # (n_t,)
+    alpha_basic: np.ndarray,         # (n_t, n_active)
+    active_vars: list[str],
+    out_path: Path,
+) -> None:
+    """alpha_v(t) for the unconditional (prior) nested-FORM leg.
+
+    Single panel — no section dimension because the prior is stationary along
+    the wall, so ``(alpha_cr_t, alpha_basic_t)`` is the same at every section.
+    Same colour palette as :func:`alpha_lines_at_sections`: cr as thick dashed
+    black, basic vars on a viridis ramp keyed by variable index.
+    """
+    fig, ax = plt.subplots(figsize=(6.5, 4.0))
+    cmap = plt.get_cmap("viridis")
+    colors = [cmap(j / max(1, len(active_vars) - 1)) for j in range(len(active_vars))]
+    ax.axhline(0.0, color="0.7", linewidth=0.8)
+    ax.plot(forecast_times, alpha_cr,
+            color="black", linestyle="--", linewidth=2.2, label="cr")
+    for j, v in enumerate(active_vars):
+        ax.plot(forecast_times, alpha_basic[:, j],
+                color=colors[j], linewidth=1.4, label=v)
+    ax.set_xlabel("t")
+    ax.set_ylabel(r"$\alpha_v$")
+    ax.grid(alpha=0.3)
+    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5),
+              fontsize=8, frameon=False)
+    ax.set_title(r"Nested-FORM $\alpha_v(t)$ — unconditional (prior) leg")
+    fig.tight_layout(rect=(0, 0, 0.80, 1.0))
+    save_figure(fig, out_path)

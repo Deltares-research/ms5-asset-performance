@@ -30,8 +30,17 @@ from pathlib import Path
 import numpy as np
 
 
-def path(out_dir: Path) -> Path:
-    return out_dir / "pf_grid.json"
+def path(out_dir: Path, method: str = "field") -> Path:
+    """File name for the prior-leg cache.
+
+    ``method="field"`` -> the classic ``pf_grid.json`` (one Pf per cr-point
+    from :func:`spatial.engine.compute_or_load_pf_grid`). ``method="nested"``
+    -> ``pf_grid_nested.json`` (per-t fail counts from the nested-FORM
+    unconditional MCS). The two coexist in the same signature folder.
+    """
+    if method == "field":
+        return out_dir / "pf_grid.json"
+    return out_dir / f"pf_grid_{method}.json"
 
 
 def _arrays_close(a: list, b: list, tol: float = 1e-9) -> bool:
@@ -89,6 +98,72 @@ def try_load(
 def save(out_dir: Path, data: dict) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     p = path(out_dir)
+    tmp = p.with_suffix(".json.tmp")
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    tmp.replace(p)
+
+
+# ----------------------------------------------------------------------
+# Prior leg cache for the nested-FORM unconditional MCS
+# ----------------------------------------------------------------------
+
+def try_load_prior_nested(
+    out_dir: Path,
+    *,
+    lsf_name: str,
+    n_samples: int,
+    seed: int,
+    n_sections: int,
+    L: float,
+    wall_theta: float,
+    wall_rho_0: float,
+    cr_theta: float,
+    cr_rho_0: float,
+    cr_values: np.ndarray,
+    betas: np.ndarray,
+    forecast_times: list[float],
+) -> dict | None:
+    """Return the cached nested-prior MCS result if every key matches.
+
+    Unlike the field prior (``pf_grid.json``), this cache depends on the cr
+    kernel parameters because the unconditional cr field is sampled with the
+    cr spatial covariance, and on the forecast time grid because
+    ``(beta_T, alpha_cr, alpha_basic)`` is recomputed per t.
+    """
+    p = path(out_dir, method="nested")
+    if not p.exists():
+        return None
+    try:
+        data = json.load(open(p))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"  Cached nested-prior grid {p} unreadable ({exc!r}) — recomputing.")
+        return None
+
+    same = (
+        data.get("lsf_name") == lsf_name
+        and int(data.get("n_samples", -1)) == int(n_samples)
+        and int(data.get("seed", -1)) == int(seed)
+        and int(data.get("n_sections", -1)) == int(n_sections)
+        and math.isclose(float(data.get("L", -1)), float(L), abs_tol=1e-9)
+        and math.isclose(float(data.get("wall_theta", -1)), float(wall_theta), abs_tol=1e-9)
+        and math.isclose(float(data.get("wall_rho_0", -1)), float(wall_rho_0), abs_tol=1e-9)
+        and math.isclose(float(data.get("cr_theta", -1)), float(cr_theta), abs_tol=1e-9)
+        and math.isclose(float(data.get("cr_rho_0", -1)), float(cr_rho_0), abs_tol=1e-9)
+        and _arrays_close(data.get("cr_values", []), list(cr_values))
+        and _arrays_close(data.get("betas", []), list(betas))
+        and _arrays_close(data.get("forecast_times", []), list(forecast_times))
+    )
+    if not same:
+        print(f"  Cached nested-prior grid {p} has a different run config — recomputing.")
+        return None
+    print(f"  Loaded cached nested-prior grid from {p}.")
+    return data
+
+
+def save_prior_nested(out_dir: Path, data: dict) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    p = path(out_dir, method="nested")
     tmp = p.with_suffix(".json.tmp")
     with open(tmp, "w") as f:
         json.dump(data, f, indent=2)

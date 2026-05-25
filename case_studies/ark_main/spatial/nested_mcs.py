@@ -1,5 +1,14 @@
 """
-Nested-FORM MCS for one obs scenario — alternative to ``posterior_mcs.py``.
+Nested-FORM MCS for prior and posterior legs.
+
+Companion to ``posterior_mcs.py`` (per-sample fragility interpolation) and to
+``engine.py`` (cr-grid-then-integrate prior leg). Both legs of the spatial
+pipeline can use this module via ``spatial_settings.mcs_method =
+"nested"``: posterior obs scenarios go through :func:`run_nested_mcs`, and
+the unconditional prior leg goes through :func:`run_nested_mcs_prior`. The
+two share the same 1-D nested-FORM search; the prior variant just sets
+``mu_z = 0``, ``sigma_z = 1`` (no obs conditioning) and collapses the
+section dimension because the prior is stationary along the wall.
 
 Idea
 ----
@@ -351,6 +360,194 @@ def run_nested_mcs(
         alpha_cr_t = alpha_cr_all[ti][None, :]                  # (1, N)
         # alpha_basic: (N, n_active); U_basic: (n_active, n_s, N)
         Y_basic = np.einsum("nv,vsn->sn", alpha_basic_all[ti], U_basic)  # (n_s, N)
+        G = beta_T_t - alpha_cr_t * xi_field - Y_basic          # (n_s, N)
+
+        sec_fail = G < 0
+        n_fail_section[ti] += sec_fail.sum(axis=0).astype(np.int64)
+        n_fail_system[ti] += int(sec_fail.any(axis=1).sum())
+
+        pf_sys = n_fail_system[ti] / n_samples
+        pbar.set_postfix(t=f"{float(t):.1f}", Pf=f"{pf_sys:.2e}")
+    pbar.close()
+
+    return n_fail_section, n_fail_system, precompute
+
+
+# ----------------------------------------------------------------------
+# Prior leg — nested-FORM with no observations
+# ----------------------------------------------------------------------
+
+def compute_nested_form_prior(
+    *,
+    cr_grid_export: np.ndarray,
+    prior_pdf_per_t: dict[str, list[float]],
+    forecast_times: np.ndarray,
+    cr_values_frag: np.ndarray,
+    betas_frag: np.ndarray,
+    alpha_table: np.ndarray,              # (n_cr, n_active)
+    active_vars: list[str] | None = None,
+) -> dict[str, np.ndarray]:
+    """Per-t nested-FORM precompute for the unconditional (prior) leg.
+
+    No observation conditioning -> ``mu_z = 0``, ``sigma_z = 1`` everywhere
+    and the prior is stationary along the wall, so the design point only
+    depends on ``t`` (one (beta_T, alpha_cr, alpha_basic) triple per t).
+
+    Returns 1-D arrays shaped ``(n_t,)`` or ``(n_t, n_active)``::
+
+        xi_star:     (n_t,)             argmin of the 1-D search
+        cr_star:     (n_t,)             cr at the design point
+        beta_form:   (n_t,)             beta(cr_star)
+        beta_T:      (n_t,)             total nested-FORM beta
+        alpha_cr:    (n_t,)             direction cosine for standardised cr
+        alpha_basic: (n_t, n_active)    direction cosines for u-vars
+    """
+    n_active = alpha_table.shape[1]
+    n_t = len(forecast_times)
+
+    xi_star = np.zeros(n_t)
+    cr_star = np.zeros(n_t)
+    beta_form = np.zeros(n_t)
+    beta_T = np.zeros(n_t)
+    alpha_cr_out = np.zeros(n_t)
+    alpha_basic_out = np.zeros((n_t, n_active))
+
+    for ti, t in enumerate(forecast_times):
+        key = f"{float(t):.4f}"
+        prior_pdf = np.asarray(prior_pdf_per_t[key], dtype=float)
+        F_prior = cr_field.cdf_on_grid(prior_pdf, cr_grid_export)
+
+        xs, crs, b_at_crs = _nested_form_1d(
+            mu_z=0.0,
+            sigma_z=1.0,
+            cr_grid_export=cr_grid_export,
+            F_prior=F_prior,
+            cr_values_frag=cr_values_frag,
+            betas_frag=betas_frag,
+        )
+        xi_star[ti] = xs
+        cr_star[ti] = crs
+        beta_form[ti] = b_at_crs
+        bT = float(np.sqrt(xs * xs + b_at_crs * b_at_crs))
+        beta_T[ti] = bT
+        alpha_cr_out[ti] = -xs / bT if bT > 0 else 0.0
+        alpha_at_crs = np.array([
+            float(np.interp(crs, cr_values_frag, alpha_table[:, j]))
+            for j in range(n_active)
+        ])
+        alpha_basic_out[ti] = (b_at_crs / bT) * alpha_at_crs if bT > 0 else 0.0
+
+    return {
+        "xi_star": xi_star,
+        "cr_star": cr_star,
+        "beta_form": beta_form,
+        "beta_T": beta_T,
+        "alpha_cr": alpha_cr_out,
+        "alpha_basic": alpha_basic_out,
+        "active_vars": list(active_vars) if active_vars is not None else [],
+    }
+
+
+def run_nested_mcs_prior(
+    *,
+    points: list[dict],
+    x: np.ndarray,
+    spec_basic: dict[str, tuple[float, float]],
+    theta_cr: float,
+    rho_0_cr: float,
+    cr_grid_export: np.ndarray,
+    prior_pdf_per_t: dict[str, list[float]],
+    forecast_times: np.ndarray,
+    n_samples: int,
+    seed: int,
+    desc: str = "nested prior MC",
+) -> tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]]:
+    """Run the nested-FORM MCS on the **unconditional** spatial cr-field.
+
+    Mirrors :func:`run_nested_mcs` but without obs conditioning. The cr field
+    is drawn via the prior Cholesky (kernel ``rho_0_cr + (1-rho_0_cr) *
+    exp(-(d/theta_cr)**2)``); each ``z_i`` is N(0, 1) marginal so
+    ``xi_i == z_i`` directly. The design point ``(beta_T_t, alpha_cr_t,
+    alpha_basic_t)`` is the **same at every section** for a given t (prior
+    stationarity), broadcast along the section axis at evaluation time.
+
+    Returns ``(n_fail_section, n_fail_system, precompute)`` with the same
+    shapes as :func:`run_nested_mcs`.
+    """
+    n_sections = len(x)
+
+    cr_values = np.array([float(p["point"]["corrosion_rate"]) for p in points])
+    order = np.argsort(cr_values)
+    cr_values = cr_values[order]
+    betas = np.array([float(points[i]["beta"]) for i in order])
+    var_names = list(points[0]["alphas"].keys())
+    alpha_full = np.array([
+        [float(points[i]["alphas"][v]) for v in var_names] for i in order
+    ])
+    active_mask = np.any(np.abs(alpha_full) > 1e-6, axis=0)
+    active_vars = [v for v, m in zip(var_names, active_mask) if m]
+    alpha_table = alpha_full[:, active_mask]
+    n_active = len(active_vars)
+
+    precompute = compute_nested_form_prior(
+        cr_grid_export=cr_grid_export,
+        prior_pdf_per_t=prior_pdf_per_t,
+        forecast_times=forecast_times,
+        cr_values_frag=cr_values,
+        betas_frag=betas,
+        alpha_table=alpha_table,
+        active_vars=active_vars,
+    )
+    beta_T_all = precompute["beta_T"]              # (n_t,)
+    alpha_cr_all = precompute["alpha_cr"]          # (n_t,)
+    alpha_basic_all = precompute["alpha_basic"]    # (n_t, n_active)
+
+    # Cholesky of the unconditional cr field along the wall (one factor,
+    # shared across t — kernel doesn't depend on t).
+    C_cr = spatial_covariance(x, theta_cr, rho_0_cr)
+    L_cr = np.linalg.cholesky(C_cr + 1e-8 * np.eye(n_sections))
+
+    # Cholesky of each basic-variable field (same machinery as posterior).
+    L_by_var = _per_variable_chol(x, spec_basic, active_vars)
+    spatial_idx = [j for j, v in enumerate(active_vars) if L_by_var[v] is not None]
+    uniform_idx = [j for j, v in enumerate(active_vars) if L_by_var[v] is None]
+    n_spatial = len(spatial_idx)
+    n_uniform = len(uniform_idx)
+    if n_spatial:
+        L_basic_stack = np.stack(
+            [L_by_var[active_vars[j]] for j in spatial_idx], axis=0,
+        )
+        L_basic_T = L_basic_stack.swapaxes(-1, -2)  # (n_spatial, N, N)
+    else:
+        L_basic_T = None
+
+    rng = np.random.default_rng(seed)
+    n_t = len(forecast_times)
+    n_fail_section = np.zeros((n_t, n_sections), dtype=np.int64)
+    n_fail_system = np.zeros(n_t, dtype=np.int64)
+
+    pbar = tqdm(forecast_times, desc=desc, unit="t", dynamic_ncols=True)
+    for ti, t in enumerate(pbar):
+        # 1) Unconditional cr field. Each xi_i ~ N(0, 1), correlated by L_cr.
+        Z_cr = rng.standard_normal((n_samples, n_sections))
+        xi_field = Z_cr @ L_cr.T                                # (n_s, N)
+
+        # 2) Basic u-fields (same as posterior).
+        U_basic = np.empty((n_active, n_samples, n_sections))
+        if n_spatial:
+            Z_spatial = rng.standard_normal((n_spatial, n_samples, n_sections))
+            U_basic[spatial_idx] = Z_spatial @ L_basic_T
+        if n_uniform:
+            Z_uniform = rng.standard_normal((n_uniform, n_samples))
+            U_basic[uniform_idx] = Z_uniform[..., None]
+
+        # 3) Tangent-hyperplane LSF. (beta_T_t, alpha_cr_t, alpha_basic_t)
+        #    are scalars/1D vectors — broadcast across sections.
+        beta_T_t = float(beta_T_all[ti])
+        alpha_cr_t = float(alpha_cr_all[ti])
+        alpha_basic_t = alpha_basic_all[ti]                     # (n_active,)
+        # einsum: 'v,vsn->sn' (broadcast alpha_v across samples and sections)
+        Y_basic = np.einsum("v,vsn->sn", alpha_basic_t, U_basic)
         G = beta_T_t - alpha_cr_t * xi_field - Y_basic          # (n_s, N)
 
         sec_fail = G < 0
