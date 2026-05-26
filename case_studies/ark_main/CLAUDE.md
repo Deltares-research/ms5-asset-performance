@@ -65,22 +65,24 @@ shared by all sections.
   "seed": 42,
   "L": 1000.0,
   "n_sections": 11,
-  "mcs_method": "field",
+  "mcs_method": "interpolate",
   "wall": { "theta": 200.0, "rho_0": 0.0 },
   "cr":   { "theta":  50.0, "rho_0": 0.0 },
   "per_variable": {}
 }
 ```
 
-- `mcs_method` — `"field"` (default) or `"nested"`. Selects the MCS
+- `mcs_method` — `"interpolate"` (default) or `"alphas"`. Selects the MCS
   method for **both** legs (prior + posterior). The two methods write to
   different cache files in the same signature folder (`pf_grid.json` +
-  `posterior_grid.json` for field; `pf_grid_nested.json` +
-  `posterior_grid_nested.json` for nested) so they coexist. See "Method
+  `posterior_grid.json` for interpolate; `pf_grid_alphas.json` +
+  `posterior_grid_alphas.json` for alphas) so they coexist. See "Method
   flag — what gets swapped" below for the per-leg breakdown.
   - Legacy key `posterior_method` is still accepted (emits a
-    `DeprecationWarning`) for back-compat with older settings files; remove
-    it once you've renamed the keys.
+    `DeprecationWarning`).
+  - Legacy values `"field"` / `"nested"` are still accepted as aliases for
+    `"interpolate"` / `"alphas"` (each emits a `DeprecationWarning`); remove
+    once existing settings files are migrated.
 
 - `wall.{theta, rho_0}` — basic-variable squared-exp kernel
   `C(d) = rho_0 + (1 − rho_0) · exp(−(d/theta)²)`. Applied to **soil**
@@ -91,8 +93,18 @@ shared by all sections.
 - `per_variable: { var_name: { "theta": ..., "rho_0": ... } }` — overrides
   for individual variables. Empty in current setup. If you populate it, the
   setup signature gains a `pv-<8-hex>` suffix.
-- **No CLI flags**. Programmatic overrides pass a dict to `analyze(cfg)`
-  (used by `run_spatial_sweep.py`).
+- **CLI flags override the file**. `run_spatial.py` and
+  `run_spatial_sweep.py` expose `--lsf-name`, `--n-samples`, `--seed`,
+  `--L`, `--n-sections`, `--mcs-method`, `--wall-theta`/`--wall-rho0`,
+  `--cr-theta`/`--cr-rho0`, `--settings`. Any flag set on the command line
+  overrides the matching field in `spatial_settings.json` for the duration
+  of that run; unspecified flags inherit from the file. The sweep keeps
+  `--theta-wall`/`--theta-cr` as `nargs="+"` lists.
+- Programmatic overrides still work: pass a dict to `analyze(cfg)` or
+  `sweep(..., base=cfg)`. The sweep CLI does this internally — it loads
+  the settings file, applies CLI overrides via
+  `run_spatial._apply_overrides`, then passes the result as `base=` to
+  every combo's `analyze(cfg)` call.
 
 ### Soil vs non-soil classification
 
@@ -144,10 +156,10 @@ python -m case_studies.ark_main.io.export_cr_pdfs --lsf-name lsf_wall
 <remote>/output/spatial_analysis/
 ├── cached/
 │   └── <setup_signature>/
-│       ├── pf_grid.json                  # prior leg cache,     method=field  (Pf at every cr-point)
-│       ├── pf_grid_nested.json           # prior leg cache,     method=nested (per-t fail counts)
-│       ├── posterior_grid.json           # posterior leg cache, method=field
-│       └── posterior_grid_nested.json    # posterior leg cache, method=nested
+│       ├── pf_grid.json                  # prior leg cache,     method=interpolate (Pf at every cr-point)
+│       ├── pf_grid_alphas.json           # prior leg cache,     method=alphas      (per-t fail counts)
+│       ├── posterior_grid.json           # posterior leg cache, method=interpolate
+│       └── posterior_grid_alphas.json    # posterior leg cache, method=alphas
 ├── results/
 │   └── <setup_signature>/
 │       ├── summary.json
@@ -155,11 +167,11 @@ python -m case_studies.ark_main.io.export_cr_pdfs --lsf-name lsf_wall
 │       │   ├── prior.json
 │       │   └── posterior.json     # per t_obs block
 │       └── plots/
-│           ├── pf_vs_cr.png             # method=field only (no Pf(cr) table in nested)
+│           ├── pf_vs_cr.png             # method=interpolate only (no Pf(cr) table in alphas)
 │           ├── pf_vs_time.png
 │           ├── pf_vs_time_posterior.png
 │           ├── beta_along_wall.png
-│           ├── realizations.png         # method=field only (g(x) at cr=0)
+│           ├── realizations.png         # method=interpolate only (g(x) at cr=0)
 │           ├── beta_forecast_system/   # PNG per t_obs
 │           ├── beta_forecast_system.pdf
 │           ├── beta_forecast_system.gif
@@ -169,13 +181,13 @@ python -m case_studies.ark_main.io.export_cr_pdfs --lsf-name lsf_wall
 │           ├── cr_violin/              # PNG per t_obs
 │           ├── cr_violin.pdf
 │           ├── cr_violin.gif
-│           ├── alpha_heatmap/          # PNG per t_obs    (method=nested only)
-│           ├── alpha_heatmap.pdf       #                   (method=nested only)
-│           ├── alpha_heatmap.gif       #                   (method=nested only)
-│           ├── alpha_lines/            # PNG per t_obs    (method=nested only)
-│           ├── alpha_lines.pdf         #                   (method=nested only)
-│           ├── alpha_lines.gif         #                   (method=nested only)
-│           └── alpha_lines_prior.png   # single panel     (method=nested only, prior leg)
+│           ├── alpha_heatmap/          # PNG per t_obs    (method=alphas only)
+│           ├── alpha_heatmap.pdf       #                   (method=alphas only)
+│           ├── alpha_heatmap.gif       #                   (method=alphas only)
+│           ├── alpha_lines/            # PNG per t_obs    (method=alphas only)
+│           ├── alpha_lines.pdf         #                   (method=alphas only)
+│           ├── alpha_lines.gif         #                   (method=alphas only)
+│           └── alpha_lines_prior.png   # single panel     (method=alphas only, prior leg)
 └── sweep/                         # outputs of analyze_sweep.py
     ├── beta_forecast_grid.png
     └── beta_contour_tend.png
@@ -196,20 +208,21 @@ lsf-<tag>_N<n_samples>_seed<seed>_L<int(L)>_n<n_sections>_wth<int>_wrh<g>_crth<i
 
 ### Cache invalidation
 
-All four caches (`pf_grid.json`, `pf_grid_nested.json`,
-`posterior_grid.json`, `posterior_grid_nested.json`) are validated against:
+All four caches (`pf_grid.json`, `pf_grid_alphas.json`,
+`posterior_grid.json`, `posterior_grid_alphas.json`) are validated against:
 
 - LSF name, `n_samples`, `seed`, `n_sections`, `L`.
 - `wall_theta`, `wall_rho_0`.
-- `cr_theta`, `cr_rho_0` (posterior caches always; the nested prior cache
+- `cr_theta`, `cr_rho_0` (posterior caches always; the alphas-prior cache
   also depends on the cr kernel because it samples the cr-field directly;
-  the field-prior cache `pf_grid.json` does **not** depend on `cr_*`).
+  the interpolate-prior cache `pf_grid.json` does **not** depend on `cr_*`).
 - Fragility fingerprint (`cr_values`, `betas`).
-- `obs_times` (posterior caches), `forecast_times` (nested-prior cache).
+- `obs_times` (posterior caches), `forecast_times` (alphas-prior cache).
 - `method` is encoded in the file name, not in the validator —
-  `"field"` writes `pf_grid.json` + `posterior_grid.json`, `"nested"` writes
-  `pf_grid_nested.json` + `posterior_grid_nested.json`. The pairs coexist;
-  flipping the flag picks the matching pair (or recomputes if absent).
+  `"interpolate"` writes `pf_grid.json` + `posterior_grid.json`, `"alphas"`
+  writes `pf_grid_alphas.json` + `posterior_grid_alphas.json`. The pairs
+  coexist; flipping the flag picks the matching pair (or recomputes if
+  absent).
 
 Any mismatch → recompute. See `spatial/checkpoint.py`.
 
@@ -234,7 +247,7 @@ Any mismatch → recompute. See `spatial/checkpoint.py`.
 | `__init__.py` | `setup_signature()`, `cache_dir()`, `results_dir()` helpers. |
 | `engine.py` | `compute_or_load_pf_grid(spatial_settings)` — prior-leg MCS. Effective Cholesky collapse `C_eff = Σ_v α_v² · C_v`. Common random numbers across cr-points so `Pf(cr)` is smooth. |
 | `posterior_mcs.py` | `run_posterior_mcs(...)` — field-sampling MCS per obs scenario. Per-variable Cholesky for soil vars; scalar broadcast for non-soil vars. Per-section FORM coefficients `(β_i, α_i)` interpolated from the fragility cache against the realised local cr. |
-| `nested_mcs.py` | Nested-FORM tangent-hyperplane MCS for **both legs**. `run_nested_mcs(...)` — per-obs-scenario posterior sampler: one nested-FORM linearisation per (section, t) using Kriging-conditional cr-field moments. `run_nested_mcs_prior(...)` — unconditional prior sampler: one (β_T, α_cr, α_basic) triple per t (prior is stationary along the wall), tangent-hyperplane MCS on the prior cr-field. Both selected by `mcs_method: "nested"`. |
+| `nested_mcs.py` | Nested-FORM tangent-hyperplane MCS for **both legs**. `run_nested_mcs(...)` — per-obs-scenario posterior sampler: one nested-FORM linearisation per (section, t) using Kriging-conditional cr-field moments. `run_nested_mcs_prior(...)` — unconditional prior sampler: one (β_T, α_cr, α_basic) triple per t (prior is stationary along the wall), tangent-hyperplane MCS on the prior cr-field. Both selected by `mcs_method: "alphas"`. |
 | `cr_field.py` | Nataf + Kriging utilities. `cdf_on_grid`, `inv_cdf_at`, `z_moments_under_posterior`, `kriged_chol`, `sample_cr_field`, `conditional_cr_quantiles` (closed-form). |
 | `covariance.py` | `spatial_covariance(x, theta, rho_0)`, `effective_cholesky`, `resolve_config`, `resolve_cr_config`, `is_soil_variable`. |
 | `integration.py` | `over_cr(...)` — integrate `Pf(cr)` against a cr_pdf via trapezoidal rule. Uses `np.trapezoid` (NumPy 2.x; `np.trapz` was removed). |
@@ -270,8 +283,9 @@ Upstream of the spatial work. The spatial pipeline reuses:
 cd /path/to/ms5-asset-performance
 
 # Spatial pipeline (reads spatial_settings.json — mcs_method picks
-# "field" or "nested")
+# "interpolate" or "alphas"; flags below override settings file fields)
 python -m case_studies.ark_main.run_spatial
+python -m case_studies.ark_main.run_spatial --mcs-method alphas --n-samples 5000
 
 # θ_wall × θ_cr sweep (9 combos by default, ~45 min @ 100k samples)
 python -m case_studies.ark_main.run_spatial_sweep
@@ -365,9 +379,10 @@ Per cached fragility point `cr_k` with `(β_k, α_k(v))`:
 One flag toggles both legs. Both legs always run, and both use the chosen
 method. (The flag was previously named `posterior_method` when it only
 gated the posterior leg; the legacy key still works with a deprecation
-warning.)
+warning. The values `"field"` / `"nested"` are also still accepted as
+aliases for `"interpolate"` / `"alphas"`.)
 
-### `"field"` (default)
+### `"interpolate"` (default)
 
 | Leg       | Module                     | What it does |
 |-----------|----------------------------|--------------|
@@ -377,7 +392,7 @@ warning.)
 Pointwise-exact use of the fragility curve. Prior cr is uniform within a
 sample (only basic vars vary spatially); posterior cr varies along the wall.
 
-### `"nested"` — `spatial/nested_mcs.py` (`run_nested_mcs_prior` + `run_nested_mcs`)
+### `"alphas"` — `spatial/nested_mcs.py` (`run_nested_mcs_prior` + `run_nested_mcs`)
 
 Treats cr as one more basic random variable via Nataf:
 `z = Φ⁻¹(F_prior(cr; t))`. The 1-D nested-FORM search
@@ -409,12 +424,12 @@ Per-leg differences:
 | Posterior | `(ρ_i · m_post, 1 + ρ_i²(v_post − 1))`         | `(n_t, n_sec)`   | Kriging-conditional Cholesky.                 |
 
 Same technique, same model on both legs — the **only** difference is
-whether the cr field is conditioned on observations. This is why nested-mode
+whether the cr field is conditioned on observations. This is why alphas-mode
 prior and posterior Pf curves are directly comparable: a β reduction
 between prior and posterior is now attributable to observations, not to a
 method switch.
 
-#### What "nested" buys / loses
+#### What `"alphas"` buys / loses
 
 - ✓ Faster inner loop — one matmul per t, no per-sample interp. Prior leg
   at N=5k / 51 t-steps / 11 sections ran in <0.1 s on Mac.
@@ -427,19 +442,20 @@ method switch.
 - ✗ Linearises the fragility surface at the design point `cr*` instead of
   evaluating it per realised `cr_i`. Prior leg also changes models, not
   just method: it goes from uniform-cr-per-sample to a spatially-varying
-  cr field, so nested-prior Pf is generally **higher** than field-prior Pf
+  cr field, so alphas-prior Pf is generally **higher** than interpolate-prior Pf
   (more system-failure opportunities when cr is uncorrelated along the
-  wall). Smoke test on mock data (N=5k, θ_cr=50 m, ρ_0_cr=0): nested-prior
-  Pf_sys(t=50) = 3.1 × 10⁻² vs field-prior 1.8 × 10⁻² (~75% higher).
+  wall). Smoke test on mock data (N=5k, θ_cr=50 m, ρ_0_cr=0): alphas-prior
+  Pf_sys(t=50) = 3.1 × 10⁻² vs interpolate-prior 1.8 × 10⁻² (~75% higher).
 
 #### Cache layout
 
-`pf_grid.json` + `posterior_grid.json` (field) and `pf_grid_nested.json` +
-`posterior_grid_nested.json` (nested) coexist in the same signature folder;
-the cache validator includes a `method` field. Each nested cache block
-carries the per-(section, t) (or per-t for the prior) `beta_T`, `alpha_cr`,
-`alpha_basic`, `active_vars`, `xi_star`, `cr_star`, `mu_z`, `sigma_z` so
-the α plots render on cache hits without recomputing.
+`pf_grid.json` + `posterior_grid.json` (interpolate) and
+`pf_grid_alphas.json` + `posterior_grid_alphas.json` (alphas) coexist in
+the same signature folder; the cache validator includes a `method` field.
+Each alphas cache block carries the per-(section, t) (or per-t for the
+prior) `beta_T`, `alpha_cr`, `alpha_basic`, `active_vars`, `xi_star`,
+`cr_star`, `mu_z`, `sigma_z` so the α plots render on cache hits without
+recomputing.
 
 ---
 
@@ -465,20 +481,20 @@ the α plots render on cache hits without recomputing.
 - **Sweep `beta_forecast_grid.png`** — one subplot per θ_wall (3 panels),
   one viridis curve per θ_cr (3 colours per panel). Uses the **EARLIEST**
   obs scenario because the latest obs is single-point (degenerate visually).
-- **`alpha_heatmap/`** (nested only) — one PNG per obs scenario. Grid of
+- **`alpha_heatmap/`** (alphas only) — one PNG per obs scenario. Grid of
   per-variable heatmaps, x=t, y=section, color=signed α (RdBu_r, symmetric
   vmax shared across panels in the figure). `cr` panel is first; the
   remaining panels are the active basic variables in fragility-cache order.
   Dotted vertical line marks `t_obs`. Watch the `cr` panel: near `x = 0` it
   stays pale (obs pins cr); far from `x = 0` it darkens as the prior cr
   takes over and its share of the unit-norm budget grows.
-- **`alpha_lines/`** (nested only) — one PNG per obs scenario. Three
+- **`alpha_lines/`** (alphas only) — one PNG per obs scenario. Three
   subplots (first / middle / last section), each plotting `α_v(t)` as
   lines: thick dashed black for cr, viridis-ramped colours for the basic
   variables (same colour per variable across all subplots and across obs
   scenarios). y-axis shared across subplots; right-most subplot carries
   the figure legend.
-- **`alpha_lines_prior.png`** (nested only) — single panel, `α_v(t)` for
+- **`alpha_lines_prior.png`** (alphas only) — single panel, `α_v(t)` for
   the unconditional prior leg. No section dimension because the prior is
   stationary along the wall, so the design point only depends on `t`. Same
   colour palette as `alpha_lines/`; the cr curve is what `α_cr_i` collapses
@@ -501,30 +517,38 @@ the α plots render on cache hits without recomputing.
   represent a spatially-varying cr field for the system event.
 - **Both legs share a method**: `mcs_method` flag governs prior + posterior,
   not just posterior. The user wanted "consistent calculation of beta using
-  the same method" — picking method=nested on the posterior while the prior
-  stayed on field-integration mixed two different models/techniques and made
-  β reductions hard to attribute. So nested-mode was extended to the prior
-  too: same Nataf+nested-FORM machinery, only the cr-field conditioning
+  the same method" — picking method=alphas on the posterior while the prior
+  stayed on interpolate-integration mixed two different models/techniques and
+  made β reductions hard to attribute. So alphas-mode was extended to the
+  prior too: same Nataf+nested-FORM machinery, only the cr-field conditioning
   differs (unconditional Cholesky for prior, Kriging for posterior). The
   flag was renamed from the old `posterior_method` to `mcs_method` to
   reflect this scope; the old key is still accepted with a deprecation
   warning so existing settings files keep working.
+- **Method values renamed**: `"field"` → `"interpolate"`, `"nested"` →
+  `"alphas"`. The new names describe **what the method does**: the
+  interpolate method interpolates the cached fragility per sample; the
+  alphas method precomputes the FORM design-point alphas and evaluates a
+  tangent-hyperplane LSF. Old values still resolve with a DeprecationWarning.
 - Sweep at **100k samples** is the current reference (10k → 100k changed
   results by ~3%, matching √10 noise scaling).
-- Settings come from `spatial_settings.json` only — no CLI flags. The
-  sweep driver passes dicts to `analyze(cfg)` programmatically.
+- Settings come from `spatial_settings.json` with CLI overrides — see the
+  "Configuration files" section. The sweep driver builds its base config
+  the same way (CLI overrides applied via `_apply_overrides`), then passes
+  the override-applied dict to `analyze(cfg)` per combo.
 - Output folders are signature-named, not timestamped — same config →
   same folder, hit caches, overwrite results.
 - Per-section beta-forecast plot for the **system** uses the same renderer
   as the per-section one (`plotting/timeline.plot_beta_forecast_at_time`),
   just fed with system arrays reshaped into the per-obs-time dict shape.
-- **Method coexistence**: `"field"` (default) and `"nested"` are both kept
-  rather than replacing one with the other. Different cache files in the
-  same signature folder (`pf_grid.json` + `posterior_grid.json` vs
-  `pf_grid_nested.json` + `posterior_grid_nested.json`). Nataf reference
-  marginal stays the **prior** for nested-mode (same convention for prior
-  leg `(μ_z=0, σ_z=1)` and posterior leg `(μ_z=ρ·m_post, σ_z=…)`), so the
-  spatial covariance bookkeeping is identical across the two legs.
+- **Method coexistence**: `"interpolate"` (default) and `"alphas"` are
+  both kept rather than replacing one with the other. Different cache
+  files in the same signature folder (`pf_grid.json` +
+  `posterior_grid.json` vs `pf_grid_alphas.json` +
+  `posterior_grid_alphas.json`). Nataf reference marginal stays the
+  **prior** for alphas-mode (same convention for prior leg `(μ_z=0,
+  σ_z=1)` and posterior leg `(μ_z=ρ·m_post, σ_z=…)`), so the spatial
+  covariance bookkeeping is identical across the two legs.
 
 ---
 

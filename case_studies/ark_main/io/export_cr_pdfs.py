@@ -40,7 +40,9 @@ def load_fragility(cache_dir: Path) -> list[dict]:
     pts = []
     for f in sorted(cache_dir.glob("point_*.json")):
         with open(f) as fh:
-            pts.append(json.load(fh))
+            rec = json.load(fh)
+        if "point" in rec and "pf" in rec and "beta" in rec:
+            pts.append(rec)
     pts.sort(key=lambda r: r["index"])
     return pts
 

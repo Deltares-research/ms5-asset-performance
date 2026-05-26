@@ -1,10 +1,16 @@
 """
 Entry point for the spatial-variability MCS.
 
-All configuration lives in ``<remote>/input/spatial_settings.json``. No CLI
-flags — edit the file then run::
+The base configuration lives in ``<remote>/input/spatial_settings.json``.
+Any field can be overridden for a single run via CLI flags::
 
     python -m case_studies.ark_main.run_spatial
+    python -m case_studies.ark_main.run_spatial --mcs-method nested --n-samples 5000
+    python -m case_studies.ark_main.run_spatial --settings /tmp/custom.json --seed 7
+
+See ``--help`` for the full list. Flags map 1:1 to fields in the settings
+JSON (``--wall-theta`` -> ``wall.theta`` etc.); unspecified flags leave the
+matching field at its value in the file.
 
 Pipeline:
 
@@ -22,6 +28,7 @@ Pipeline:
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -114,17 +121,18 @@ def analyze(spatial_settings: dict | None = None) -> None:
     n_samples = int(settings_dict["n_samples"])
     seed = int(settings_dict["seed"])
     # ``mcs_method`` selects the MCS method for BOTH legs:
-    #   "field"  — prior leg uses ``compute_or_load_pf_grid`` + integration
-    #              over the cr PDF (uniform-cr-per-sample assumption); the
-    #              posterior leg uses ``posterior_mcs`` (per-sample fragility
-    #              interpolation on the Kriged cr-field).
-    #   "nested" — both legs use a nested-FORM tangent-hyperplane MCS on a
-    #              spatially-varying cr-field; the only difference between
-    #              the legs is whether the cr-field is conditioned on obs.
-    # Each method writes to its own cache files (pf_grid.json / pf_grid_nested.json,
-    # posterior_grid.json / posterior_grid_nested.json) so the two coexist.
+    #   "interpolate" — prior leg uses ``compute_or_load_pf_grid`` + integration
+    #                   over the cr PDF (uniform-cr-per-sample assumption); the
+    #                   posterior leg uses ``posterior_mcs`` (per-sample fragility
+    #                   interpolation on the Kriged cr-field).
+    #   "alphas"      — both legs use a nested-FORM tangent-hyperplane MCS on a
+    #                   spatially-varying cr-field; the only difference between
+    #                   the legs is whether the cr-field is conditioned on obs.
+    # Each method writes to its own cache files (pf_grid.json / pf_grid_alphas.json,
+    # posterior_grid.json / posterior_grid_alphas.json) so the two coexist.
     # ``posterior_method`` is the legacy key from when the flag was posterior-only;
-    # accept it with a deprecation warning so existing settings files still work.
+    # the old values "field"/"nested" are also still accepted. Both emit a
+    # DeprecationWarning so existing settings files keep working.
     if "posterior_method" in settings_dict and "mcs_method" not in settings_dict:
         import warnings
         warnings.warn(
@@ -133,10 +141,19 @@ def analyze(spatial_settings: dict | None = None) -> None:
         )
         mcs_method = str(settings_dict["posterior_method"]).lower()
     else:
-        mcs_method = str(settings_dict.get("mcs_method", "field")).lower()
-    if mcs_method not in ("field", "nested"):
+        mcs_method = str(settings_dict.get("mcs_method", "interpolate")).lower()
+    _LEGACY_METHOD = {"field": "interpolate", "nested": "alphas"}
+    if mcs_method in _LEGACY_METHOD:
+        import warnings
+        new_name = _LEGACY_METHOD[mcs_method]
+        warnings.warn(
+            f"mcs_method={mcs_method!r} is deprecated; use {new_name!r} instead.",
+            DeprecationWarning, stacklevel=2,
+        )
+        mcs_method = new_name
+    if mcs_method not in ("interpolate", "alphas"):
         raise ValueError(
-            f"Unknown mcs_method={mcs_method!r}. Use 'field' or 'nested'."
+            f"Unknown mcs_method={mcs_method!r}. Use 'interpolate' or 'alphas'."
         )
 
     points = fragility.load_points(_remote, lsf_name)
@@ -190,18 +207,18 @@ def analyze(spatial_settings: dict | None = None) -> None:
     betas_frag = betas_frag[_order_frag]
 
     # Prior leg — two methods.
-    if mcs_method == "nested":
+    if mcs_method == "alphas":
         # Unconditional nested-FORM MCS: one (beta_T, alpha_cr, alpha_basic)
         # per t (prior is stationary along the wall), tangent-hyperplane LSF
         # evaluated on a spatially-varying cr-field. Same technique as the
-        # nested posterior leg, with no obs conditioning.
+        # alphas-method posterior leg, with no obs conditioning.
         print(f"\nPrior leg — nested-FORM tangent-hyperplane MCS (unconditional)")
         print(f"  cr kernel: theta = {theta_cr_val:.1f} m,  rho_0 = {rho_0_cr_val:.3f}")
         print(f"  Corrosion model: {crp.get('model_type', 'unknown')}")
         print(f"  Forecast grid:   t = {forecast_times[0]:.1f} -> {forecast_times[-1]:.1f}, "
               f"n_t = {len(forecast_times)}")
 
-        cached_prior_nested = spatial_checkpoint.try_load_prior_nested(
+        cached_prior_alphas = spatial_checkpoint.try_load_prior_alphas(
             cache_dir,
             lsf_name=lsf_name, n_samples=n_samples, seed=seed,
             n_sections=n_sections, L=L,
@@ -210,10 +227,10 @@ def analyze(spatial_settings: dict | None = None) -> None:
             cr_values=cr_values_frag, betas=betas_frag,
             forecast_times=forecast_times.tolist(),
         )
-        if cached_prior_nested is not None:
-            nfs_prior = np.array(cached_prior_nested["n_fail_section"])
-            nfsys_prior = np.array(cached_prior_nested["n_fail_system"])
-            prior_nf_block = cached_prior_nested["nested_form"]
+        if cached_prior_alphas is not None:
+            nfs_prior = np.array(cached_prior_alphas["n_fail_section"])
+            nfsys_prior = np.array(cached_prior_alphas["n_fail_system"])
+            prior_nf_block = cached_prior_alphas["nested_form"]
             prior_precomp = {
                 k: np.asarray(v) if k != "active_vars" else list(v)
                 for k, v in prior_nf_block.items()
@@ -226,11 +243,11 @@ def analyze(spatial_settings: dict | None = None) -> None:
                 prior_pdf_per_t=prior_pdf_per_t,
                 forecast_times=forecast_times,
                 n_samples=n_samples, seed=seed,
-                desc="nested prior MC",
+                desc="alphas prior MC",
             )
-            spatial_checkpoint.save_prior_nested(cache_dir, {
+            spatial_checkpoint.save_prior_alphas(cache_dir, {
                 "lsf_name": lsf_name,
-                "method": "nested",
+                "method": "alphas",
                 "n_samples": int(n_samples),
                 "seed": int(seed),
                 "n_sections": int(n_sections),
@@ -253,20 +270,20 @@ def analyze(spatial_settings: dict | None = None) -> None:
                     "cr_star":     prior_precomp["cr_star"].tolist(),
                 },
             })
-            print(f"  Saved nested-prior grid to "
-                  f"{spatial_checkpoint.path(cache_dir, method='nested')}")
+            print(f"  Saved alphas-prior grid to "
+                  f"{spatial_checkpoint.path(cache_dir, method='alphas')}")
 
         pf_section_t = nfs_prior / n_samples
         pf_system_t = nfsys_prior / n_samples
-        # Field-method-only artifacts (the Pf-vs-cr table) — not produced by
-        # the nested method; sentinel-empty so downstream plot/branch guards
+        # Interpolate-method-only artifacts (the Pf-vs-cr table) — not produced
+        # by the alphas method; sentinel-empty so downstream plot/branch guards
         # know to skip the pf_vs_cr and realisations plots.
         cr_values = None
         betas_form = None
         n_fail_section = None
         n_fail_system = None
     else:
-        # Field method: classic cr-grid spatial MCS + integration over cr.
+        # Interpolate method: classic cr-grid spatial MCS + integration over cr.
         data = compute_or_load_pf_grid(settings_dict)
 
         cr_values = np.array(data["cr_values"])
@@ -370,9 +387,9 @@ def analyze(spatial_settings: dict | None = None) -> None:
     plots_dir = results_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
     # pf_vs_cr and realizations need the per-cr-point Pf table that only
-    # the field method produces. The nested method goes straight from
+    # the interpolate method produces. The alphas method goes straight from
     # (beta_T, alpha_*) to Pf(t), so these plots are skipped.
-    if mcs_method == "field":
+    if mcs_method == "interpolate":
         plots.pf_vs_cr(
             cr_values=cr_values,
             n_fail_section=n_fail_section,
@@ -401,7 +418,7 @@ def analyze(spatial_settings: dict | None = None) -> None:
         out_path=plots_dir / "beta_along_wall.png",
         t_label=f"t = {forecast_times[i_last]:.1f}",
     )
-    if mcs_method == "field":
+    if mcs_method == "interpolate":
         # Realisations at cr = 0 (the cr point where the spatial spread is
         # measured before integration; useful as a visual sanity check for
         # the spatial sampler regardless of t).
@@ -415,7 +432,7 @@ def analyze(spatial_settings: dict | None = None) -> None:
             out_path=plots_dir / "realizations.png",
         )
 
-    if mcs_method == "nested":
+    if mcs_method == "alphas":
         # Prior-leg alpha plot — single panel (prior is stationary along the
         # wall, so alpha_v(t) is one curve per variable, not per (section, t)).
         # Companion to the per-obs ``alpha_lines`` plots on the posterior side.
@@ -439,7 +456,7 @@ def analyze(spatial_settings: dict | None = None) -> None:
     )
 
     print(f"\n{'='*60}")
-    if mcs_method == "nested":
+    if mcs_method == "alphas":
         print(f"Posterior leg — nested-FORM tangent-hyperplane MCS at x = 0")
     else:
         print(f"Posterior leg — field-sampling MCS conditioned at x = 0")
@@ -470,7 +487,7 @@ def analyze(spatial_settings: dict | None = None) -> None:
             ft_block = np.array(
                 sorted(float(t) for t in post_block.keys()), dtype=float,
             )
-            if mcs_method == "nested":
+            if mcs_method == "alphas":
                 nfs, nfsys, precomp = nested_mcs.run_nested_mcs(
                     points=points, x=x, spec_basic=spec,
                     theta_cr=theta_cr_val, rho_0_cr=rho_0_cr_val,
@@ -479,7 +496,7 @@ def analyze(spatial_settings: dict | None = None) -> None:
                     posterior_pdf_per_t=post_block,
                     forecast_times=ft_block,
                     n_samples=n_samples, seed=seed,
-                    desc=f"nested t_obs={float(t_obs_str):.1f}",
+                    desc=f"alphas t_obs={float(t_obs_str):.1f}",
                 )
             else:
                 nfs, nfsys = posterior_mcs.run_posterior_mcs(
@@ -778,7 +795,7 @@ def analyze(spatial_settings: dict | None = None) -> None:
             )
         collect_pngs_to_pdf(violin_png_dir, plots_dir / "cr_violin.pdf")
 
-        # ---- Nested-FORM alpha plots (only when mcs_method == "nested").
+        # ---- Nested-FORM alpha plots (only when mcs_method == "alphas").
         # Posterior leg, per (section, t).
         # Per obs scenario, render two views of the (section, t) alphas:
         #   * alpha_heatmap   — RdBu heatmap per variable, one panel each, in
@@ -786,7 +803,7 @@ def analyze(spatial_settings: dict | None = None) -> None:
         #     contribution at a glance.
         #   * alpha_lines     — alpha_v(t) lines at first/middle/last sections
         #     for direct comparison across distance from the obs anchor.
-        if mcs_method == "nested" and posterior_results:
+        if mcs_method == "alphas" and posterior_results:
             heat_dir = plots_dir / "alpha_heatmap"
             lines_dir = plots_dir / "alpha_lines"
             heat_dir.mkdir(parents=True, exist_ok=True)
@@ -832,5 +849,64 @@ def analyze(spatial_settings: dict | None = None) -> None:
     print(f"  Plots: {plots_dir}")
 
 
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description=(
+            "Run the spatial-variability MCS. Reads "
+            "<remote>/input/spatial_settings.json by default; any flag below "
+            "overrides the matching field for this run only."
+        ),
+    )
+    p.add_argument("--settings", type=Path, default=None,
+                   help="Path to a spatial_settings.json "
+                        "(default: <remote>/input/spatial_settings.json)")
+    p.add_argument("--lsf-name", type=str, default=None,
+                   help="LSF name; selects fragility_curve_<lsf>/ + cr_pdfs_<lsf>.json")
+    p.add_argument("--n-samples", type=int, default=None, help="MCS sample count")
+    p.add_argument("--seed", type=int, default=None, help="MCS RNG seed")
+    p.add_argument("--L", type=float, default=None, help="Wall length (m)")
+    p.add_argument("--n-sections", type=int, default=None,
+                   help="Number of sections along the wall")
+    p.add_argument("--mcs-method",
+                   choices=["interpolate", "alphas", "field", "nested"],
+                   default=None,
+                   help="MCS method for BOTH legs ('field'/'nested' are "
+                        "deprecated aliases for 'interpolate'/'alphas')")
+    p.add_argument("--wall-theta", type=float, default=None,
+                   help="Wall-kernel correlation length (m)")
+    p.add_argument("--wall-rho0", type=float, default=None,
+                   help="Wall-kernel correlation floor")
+    p.add_argument("--cr-theta", type=float, default=None,
+                   help="cr-field correlation length (m)")
+    p.add_argument("--cr-rho0", type=float, default=None,
+                   help="cr-field correlation floor")
+    return p
+
+
+def _apply_overrides(base: dict, args: argparse.Namespace) -> dict:
+    """Return a deep copy of ``base`` with any non-None CLI flag applied."""
+    cfg = json.loads(json.dumps(base))
+    if args.lsf_name   is not None: cfg["lsf_name"]   = args.lsf_name
+    if args.n_samples  is not None: cfg["n_samples"]  = args.n_samples
+    if args.seed       is not None: cfg["seed"]       = args.seed
+    if args.L          is not None: cfg["L"]          = args.L
+    if args.n_sections is not None: cfg["n_sections"] = args.n_sections
+    if args.mcs_method is not None: cfg["mcs_method"] = args.mcs_method
+    if args.wall_theta is not None or args.wall_rho0 is not None:
+        cfg.setdefault("wall", {})
+        if args.wall_theta is not None: cfg["wall"]["theta"] = args.wall_theta
+        if args.wall_rho0  is not None: cfg["wall"]["rho_0"] = args.wall_rho0
+    if args.cr_theta is not None or args.cr_rho0 is not None:
+        cfg.setdefault("cr", {})
+        if args.cr_theta is not None: cfg["cr"]["theta"] = args.cr_theta
+        if args.cr_rho0  is not None: cfg["cr"]["rho_0"] = args.cr_rho0
+    return cfg
+
+
 if __name__ == "__main__":
-    analyze()
+    args = _build_parser().parse_args()
+    settings_path = args.settings or (_remote / "input" / "spatial_settings.json")
+    if not settings_path.exists():
+        raise FileNotFoundError(f"Missing settings file: {settings_path}")
+    base = json.load(open(settings_path))
+    analyze(_apply_overrides(base, args))

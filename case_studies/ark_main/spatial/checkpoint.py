@@ -30,15 +30,16 @@ from pathlib import Path
 import numpy as np
 
 
-def path(out_dir: Path, method: str = "field") -> Path:
+def path(out_dir: Path, method: str = "interpolate") -> Path:
     """File name for the prior-leg cache.
 
-    ``method="field"`` -> the classic ``pf_grid.json`` (one Pf per cr-point
-    from :func:`spatial.engine.compute_or_load_pf_grid`). ``method="nested"``
-    -> ``pf_grid_nested.json`` (per-t fail counts from the nested-FORM
-    unconditional MCS). The two coexist in the same signature folder.
+    ``method="interpolate"`` -> the classic ``pf_grid.json`` (one Pf per
+    cr-point from :func:`spatial.engine.compute_or_load_pf_grid`).
+    ``method="alphas"`` -> ``pf_grid_alphas.json`` (per-t fail counts from
+    the nested-FORM unconditional MCS). The two coexist in the same
+    signature folder.
     """
-    if method == "field":
+    if method == "interpolate":
         return out_dir / "pf_grid.json"
     return out_dir / f"pf_grid_{method}.json"
 
@@ -105,10 +106,10 @@ def save(out_dir: Path, data: dict) -> None:
 
 
 # ----------------------------------------------------------------------
-# Prior leg cache for the nested-FORM unconditional MCS
+# Prior leg cache for the nested-FORM unconditional MCS (mcs_method="alphas")
 # ----------------------------------------------------------------------
 
-def try_load_prior_nested(
+def try_load_prior_alphas(
     out_dir: Path,
     *,
     lsf_name: str,
@@ -124,20 +125,20 @@ def try_load_prior_nested(
     betas: np.ndarray,
     forecast_times: list[float],
 ) -> dict | None:
-    """Return the cached nested-prior MCS result if every key matches.
+    """Return the cached alphas-prior MCS result if every key matches.
 
-    Unlike the field prior (``pf_grid.json``), this cache depends on the cr
-    kernel parameters because the unconditional cr field is sampled with the
-    cr spatial covariance, and on the forecast time grid because
-    ``(beta_T, alpha_cr, alpha_basic)`` is recomputed per t.
+    Unlike the interpolate-method prior (``pf_grid.json``), this cache
+    depends on the cr kernel parameters because the unconditional cr field
+    is sampled with the cr spatial covariance, and on the forecast time
+    grid because ``(beta_T, alpha_cr, alpha_basic)`` is recomputed per t.
     """
-    p = path(out_dir, method="nested")
+    p = path(out_dir, method="alphas")
     if not p.exists():
         return None
     try:
         data = json.load(open(p))
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"  Cached nested-prior grid {p} unreadable ({exc!r}) — recomputing.")
+        print(f"  Cached alphas-prior grid {p} unreadable ({exc!r}) — recomputing.")
         return None
 
     same = (
@@ -155,15 +156,15 @@ def try_load_prior_nested(
         and _arrays_close(data.get("forecast_times", []), list(forecast_times))
     )
     if not same:
-        print(f"  Cached nested-prior grid {p} has a different run config — recomputing.")
+        print(f"  Cached alphas-prior grid {p} has a different run config — recomputing.")
         return None
-    print(f"  Loaded cached nested-prior grid from {p}.")
+    print(f"  Loaded cached alphas-prior grid from {p}.")
     return data
 
 
-def save_prior_nested(out_dir: Path, data: dict) -> None:
+def save_prior_alphas(out_dir: Path, data: dict) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    p = path(out_dir, method="nested")
+    p = path(out_dir, method="alphas")
     tmp = p.with_suffix(".json.tmp")
     with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
@@ -174,14 +175,14 @@ def save_prior_nested(out_dir: Path, data: dict) -> None:
 # Posterior leg cache (cr-field MCS, per obs scenario)
 # ----------------------------------------------------------------------
 
-def posterior_path(out_dir: Path, method: str = "field") -> Path:
+def posterior_path(out_dir: Path, method: str = "interpolate") -> Path:
     """File name for the posterior-leg cache.
 
     Two methods write to different files so they coexist in the same cache
-    folder: the existing field-MCS posterior at ``posterior_grid.json`` and
-    the nested-FORM MCS at ``posterior_grid_nested.json``.
+    folder: the interpolate-method posterior at ``posterior_grid.json`` and
+    the nested-FORM (alphas) MCS at ``posterior_grid_alphas.json``.
     """
-    if method == "field":
+    if method == "interpolate":
         return out_dir / "posterior_grid.json"
     return out_dir / f"posterior_grid_{method}.json"
 
@@ -201,7 +202,7 @@ def try_load_posterior(
     cr_values: np.ndarray,
     betas: np.ndarray,
     obs_times: list[float],
-    method: str = "field",
+    method: str = "interpolate",
 ) -> dict | None:
     """Return the cached posterior-leg result if every key matches, else ``None``.
 
@@ -240,7 +241,7 @@ def try_load_posterior(
     return data
 
 
-def save_posterior(out_dir: Path, data: dict, method: str = "field") -> None:
+def save_posterior(out_dir: Path, data: dict, method: str = "interpolate") -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     p = posterior_path(out_dir, method=method)
     tmp = p.with_suffix(".json.tmp")

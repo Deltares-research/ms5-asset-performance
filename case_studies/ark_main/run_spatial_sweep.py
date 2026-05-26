@@ -14,9 +14,17 @@ forecast time, both prior and posterior (taking the last obs scenario).
 Usage::
 
     python -m case_studies.ark_main.run_spatial_sweep
+    python -m case_studies.ark_main.run_spatial_sweep --theta-wall 50 200 --theta-cr 50 200
+    python -m case_studies.ark_main.run_spatial_sweep --mcs-method nested --n-samples 5000
+
+``--theta-wall``/``--theta-cr`` set the sweep grid. The remaining scalar
+flags override fields in the base config for the whole sweep (same flag
+surface as ``run_spatial.py``, minus ``--wall-theta``/``--cr-theta`` since
+those are swept).
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from itertools import product
@@ -27,7 +35,7 @@ sys.path.insert(0, str(_ARK))
 
 # Importing ``run_spatial`` pulls dotenv + sys.path + load_settings via the
 # spatial.engine chain.
-from run_spatial import analyze
+from run_spatial import _apply_overrides, analyze
 from spatial import results_dir as _results_dir
 from src.io import get_remote_path
 
@@ -35,8 +43,8 @@ _ENV = _ARK / ".env"
 _remote = get_remote_path(_ENV)
 
 
-def _load_base() -> dict:
-    return json.load(open(_remote / "input" / "spatial_settings.json"))
+def _load_base(path: Path | None = None) -> dict:
+    return json.load(open(path or (_remote / "input" / "spatial_settings.json")))
 
 
 def _override(base: dict, theta_wall: float, theta_cr: float) -> dict:
@@ -49,8 +57,10 @@ def _override(base: dict, theta_wall: float, theta_cr: float) -> dict:
 def sweep(
     theta_wall_values: tuple[float, ...] = (50.0, 200.0, 800.0),
     theta_cr_values:   tuple[float, ...] = (50.0, 200.0, 800.0),
+    base: dict | None = None,
 ) -> None:
-    base = _load_base()
+    if base is None:
+        base = _load_base()
     combos = list(product(theta_wall_values, theta_cr_values))
 
     print(f"\n{'>' * 5}  Spatial-MCS sweep: {len(combos)} combinations  {'<' * 5}")
@@ -115,5 +125,50 @@ def sweep(
         ))
 
 
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description=(
+            "Sweep theta_wall x theta_cr for the spatial-variability MCS. "
+            "Reads <remote>/input/spatial_settings.json as base; the scalar "
+            "flags below override the base config for the whole sweep."
+        ),
+    )
+    p.add_argument("--theta-wall", type=float, nargs="+", default=None,
+                   help="Wall-kernel correlation lengths (m). Default: 50 200 800")
+    p.add_argument("--theta-cr", type=float, nargs="+", default=None,
+                   help="cr-field correlation lengths (m). Default: 50 200 800")
+    p.add_argument("--settings", type=Path, default=None,
+                   help="Path to base spatial_settings.json "
+                        "(default: <remote>/input/spatial_settings.json)")
+    p.add_argument("--lsf-name", type=str, default=None,
+                   help="LSF name override applied to every combo")
+    p.add_argument("--n-samples", type=int, default=None,
+                   help="MCS sample count override applied to every combo")
+    p.add_argument("--seed", type=int, default=None,
+                   help="MCS RNG seed override applied to every combo")
+    p.add_argument("--L", type=float, default=None, help="Wall length (m)")
+    p.add_argument("--n-sections", type=int, default=None,
+                   help="Number of sections along the wall")
+    p.add_argument("--mcs-method",
+                   choices=["interpolate", "alphas", "field", "nested"],
+                   default=None,
+                   help="MCS method for BOTH legs applied to every combo "
+                        "('field'/'nested' are deprecated aliases for "
+                        "'interpolate'/'alphas')")
+    p.add_argument("--wall-rho0", type=float, default=None,
+                   help="Wall-kernel correlation floor (theta is swept, not this)")
+    p.add_argument("--cr-rho0", type=float, default=None,
+                   help="cr-field correlation floor (theta is swept, not this)")
+    return p
+
+
 if __name__ == "__main__":
-    sweep()
+    args = _build_parser().parse_args()
+    # The two thetas are SWEPT, not overridden; null those fields out of args
+    # before handing them to _apply_overrides so it doesn't pin them.
+    args.wall_theta = None
+    args.cr_theta = None
+    base = _apply_overrides(_load_base(args.settings), args)
+    theta_wall_values = tuple(args.theta_wall) if args.theta_wall else (50.0, 200.0, 800.0)
+    theta_cr_values   = tuple(args.theta_cr)   if args.theta_cr   else (50.0, 200.0, 800.0)
+    sweep(theta_wall_values, theta_cr_values, base=base)

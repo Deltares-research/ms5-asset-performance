@@ -4,7 +4,7 @@ Nested-FORM MCS for prior and posterior legs.
 Companion to ``posterior_mcs.py`` (per-sample fragility interpolation) and to
 ``engine.py`` (cr-grid-then-integrate prior leg). Both legs of the spatial
 pipeline can use this module via ``spatial_settings.mcs_method =
-"nested"``: posterior obs scenarios go through :func:`run_nested_mcs`, and
+"alphas"``: posterior obs scenarios go through :func:`run_nested_mcs`, and
 the unconditional prior leg goes through :func:`run_nested_mcs_prior`. The
 two share the same 1-D nested-FORM search; the prior variant just sets
 ``mu_z = 0``, ``sigma_z = 1`` (no obs conditioning) and collapses the
