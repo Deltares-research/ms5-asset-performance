@@ -404,6 +404,11 @@ def analyze(spatial_settings: dict | None = None) -> None:
         pf_system_t=pf_system_t,
         out_path=plots_dir / "pf_vs_time.png",
     )
+    plots.pf_vs_time_system(
+        forecast_times=forecast_times,
+        pf_system_t=pf_system_t,
+        out_path=plots_dir / "pf_vs_time_system.png",
+    )
     # Per-section beta snapshot at t_end (the most degraded state in the grid).
     i_last = len(forecast_times) - 1
     beta_single_at_tend_section = (
@@ -599,6 +604,59 @@ def analyze(spatial_settings: dict | None = None) -> None:
             posterior_results=posterior_results,
             out_path=plots_dir / "pf_vs_time_posterior.png",
         )
+
+        # ---- beta along the wall per forecast time, prior + posterior.
+        # One PNG per ``t`` in ``forecast_times``: prior per-section + system
+        # beta as black lines; each obs scenario with ``t`` in its forecast
+        # block adds a viridis-coloured per-section curve and a matching
+        # dashed system line. PDF + GIF bundled like ``cr_along_wall/``.
+        post_beta: dict[float, dict] = {}
+        for t_obs_str in sorted(posterior_results.keys(), key=float):
+            block = posterior_results[t_obs_str]
+            post_beta[float(t_obs_str)] = {
+                "forecast_times": np.asarray(block["forecast_times"], dtype=float),
+                "beta_section": _to_beta(np.asarray(block["pf_section"], dtype=float)),
+                "beta_system":  _to_beta(np.asarray(block["pf_system"],  dtype=float)),
+            }
+
+        # Shared y-axis range across the GIF.
+        def _finite(arr):
+            a = np.asarray(arr, dtype=float)
+            return a[np.isfinite(a)]
+        beta_pool = [_finite(beta_section_t), _finite(beta_system_t)]
+        for pb in post_beta.values():
+            beta_pool.append(_finite(pb["beta_section"]))
+            beta_pool.append(_finite(pb["beta_system"]))
+        beta_pool_arr = (
+            np.concatenate([p for p in beta_pool if p.size])
+            if any(p.size for p in beta_pool) else np.array([0.0, 5.0])
+        )
+        lo, hi = float(beta_pool_arr.min()), float(beta_pool_arr.max())
+        pad = 0.10 * max(hi - lo, 0.5)
+        ylim_beta = (lo - pad, hi + pad)
+
+        beta_xt_dir = plots_dir / "beta_along_wall_over_time"
+        beta_xt_dir.mkdir(parents=True, exist_ok=True)
+        for ti, t in enumerate(forecast_times):
+            posterior_at_t: dict[float, dict] = {}
+            for t_obs_val, pb in post_beta.items():
+                idx = np.where(np.isclose(pb["forecast_times"], float(t)))[0]
+                if len(idx) == 0:
+                    continue
+                i_local = int(idx[0])
+                posterior_at_t[t_obs_val] = {
+                    "beta_section": pb["beta_section"][i_local],
+                    "beta_system":  float(pb["beta_system"][i_local]),
+                }
+            plots.beta_along_wall_at_time(
+                x=x, t=float(t),
+                beta_section_prior=beta_section_t[ti],
+                beta_system_prior=float(beta_system_t[ti]),
+                posterior_at_t=posterior_at_t,
+                out_path=beta_xt_dir / f"beta_along_wall_t{float(t):06.2f}.png",
+                ylim=ylim_beta,
+            )
+        collect_pngs_to_pdf(beta_xt_dir, plots_dir / "beta_along_wall_over_time.pdf")
 
         # ---- System-β forecast PNG-per-obs-time + PDF + GIF, mirroring
         # run.py's beta_forecast plot but on the system (series) beta. We

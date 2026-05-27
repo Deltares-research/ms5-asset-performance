@@ -139,7 +139,8 @@ def sample_variables(
     n_samples: int,
     seed: int = 42,
     correlations: list | None = None,
-) -> np.ndarray:
+    return_z: bool = False,
+) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """Draw MC samples via Nataf transform: correlate in standard normal
     (u-space), then apply each variable's marginal PPF.
 
@@ -153,12 +154,18 @@ def sample_variables(
         correlations: Optional list of {"vars": [a, b], "rho": float} pairs.
             Off-diagonal entries default to 0 (independent). Pairs that
             reference a deterministic variable are silently skipped.
+        return_z: If True also return the underlying uncorrelated standard
+            normal sample matrix (n_samples, n_vars). Deterministic columns
+            are zero-padded so the shape matches ``samples``. Used by the
+            post-processing design-point estimator.
 
     Returns:
-        Array of shape (n_samples, n_vars).
+        ``samples`` of shape ``(n_samples, n_vars)``, or ``(samples, z_full)``
+        if ``return_z=True``.
     """
     n_vars = len(variables)
     samples = np.empty((n_samples, n_vars))
+    z_full = np.zeros((n_samples, n_vars))
 
     stoch_idx = [i for i, v in enumerate(variables) if not is_deterministic(v)]
     det_idx = [i for i in range(n_vars) if i not in stoch_idx]
@@ -168,7 +175,7 @@ def sample_variables(
         samples[:, i] = variables[i]["mean"]
 
     if not stoch_idx:
-        return samples
+        return (samples, z_full) if return_z else samples
 
     # Correlation among stochastic variables only
     stoch_names = [variables[i]["name"] for i in stoch_idx]
@@ -193,8 +200,126 @@ def sample_variables(
         lo = v.get("lower_bound", -np.inf)
         hi = v.get("upper_bound", np.inf)
         samples[:, i] = _truncated_ppf(dist, u_clipped[:, k], lo, hi)
+        z_full[:, i] = Z[:, k]
 
-    return samples
+    return (samples, z_full) if return_z else samples
+
+
+def design_point_from_samples(
+    X: np.ndarray,                      # (n_samples, n_vars) physical
+    Z: np.ndarray,                      # (n_samples, n_vars) uncorrelated standard normal
+    fail_mask: np.ndarray,              # (n_samples,) bool
+    variables: list,
+    var_names: list[str],
+    correlations: list | None,
+    *,
+    corrosion_rate: float,
+    lsf_name: str,
+    seed: int,
+    convergence_threshold: int = 30,
+) -> dict:
+    """Empirical FORM design point from MCS samples.
+
+    Recipe (matches the PTK fragility-cache sign convention)::
+
+        pf    = mean(fail_mask)
+        beta  = -Phi^{-1}(pf)                       # Cornell beta, signed
+        Z_c   = mean(Z[fail_mask])                  # centroid in u-space
+        alpha = -Z_c / ||Z_c||                      # unit-norm, fragility convention
+        u*    = -beta * alpha                       # in uncorrelated z-space
+        x*    = Nataf_inverse(u*)                   # physical-space design point
+
+    The sign convention was verified against ``fragility_curve_lsf_wall/``
+    on the ARK main share: back-projecting ``u* = -beta * alpha`` through
+    the Nataf transform reproduces the cached ``design_point`` for both a
+    Pf << 0.5 point (cr=0) and a Pf >> 0.5 point (cr=0.5).
+
+    Variables flagged ``deterministic`` get ``alpha=0`` and
+    ``design_point=mean`` since they have no underlying standard normal.
+
+    Returns a dict in the fragility-cache JSON schema (``pf``, ``beta``,
+    ``logpf``, ``convergence``, ``method``, ``design_point``, ``alphas``)
+    plus ``n_samples`` and ``n_failures`` for traceability.
+    """
+    n_samples = int(len(X))
+    n_fail = int(fail_mask.sum())
+    pf = n_fail / n_samples if n_samples else 0.0
+
+    if 0.0 < pf < 1.0:
+        beta_val: float | None = float(st.norm.ppf(1.0 - pf))
+        logpf_val: float | None = float(np.log(pf))
+    else:
+        beta_val = None
+        logpf_val = None
+
+    # Defaults: zeros for alpha, means for design point (covers deterministic
+    # vars and the early-return non-converged case).
+    alphas = {name: 0.0 for name in var_names}
+    design_point = {
+        name: float(variables[i]["mean"]) for i, name in enumerate(var_names)
+    }
+
+    stoch_idx = [i for i, v in enumerate(variables) if not is_deterministic(v)]
+
+    out: dict = {
+        "index": 0,
+        "point": {"corrosion_rate": float(corrosion_rate)},
+        "pf": float(pf),
+        "beta": beta_val,
+        "logpf": logpf_val,
+        "convergence": False,
+        "method": "mcs_postprocess",
+        "design_point": design_point,
+        "alphas": alphas,
+        "lsf_name": lsf_name,
+        "seed": int(seed),
+        "n_samples": n_samples,
+        "n_failures": n_fail,
+    }
+
+    if n_fail < convergence_threshold or beta_val is None:
+        # Too few failures (or all-fail / no-fail): direction is unreliable.
+        return out
+
+    # Empirical FORM design direction from the failure centroid in z-space.
+    Z_fail = Z[fail_mask, :]
+    Z_c_stoch = Z_fail[:, stoch_idx].mean(axis=0)               # (n_stoch,)
+    norm = float(np.linalg.norm(Z_c_stoch))
+    if norm < 1e-12:
+        # Pathological: failed samples averaged out to origin.
+        return out
+
+    alpha_stoch = -Z_c_stoch / norm                              # PTK convention
+    for k, i in enumerate(stoch_idx):
+        alphas[var_names[i]] = float(alpha_stoch[k])
+
+    # Back-project u* = -beta * alpha through the same Nataf transform used
+    # when generating X (so the reported physical-space design point is
+    # interpretable on the same scale as the input variables).
+    u_z = -float(beta_val) * alpha_stoch                         # uncorrelated
+    stoch_names = [var_names[i] for i in stoch_idx]
+    stoch_set = set(stoch_names)
+    stoch_pairs = [p for p in (correlations or [])
+                   if p["vars"][0] in stoch_set and p["vars"][1] in stoch_set]
+    R = _build_correlation_matrix(stoch_names, stoch_pairs)
+    eigvals, eigvecs = np.linalg.eigh(R)
+    eigvals = np.clip(eigvals, 0.0, None)
+    L = eigvecs * np.sqrt(eigvals)
+    u_corr = u_z @ L.T                                            # correlated
+    u_clipped = np.clip(st.norm.cdf(u_corr), 1e-12, 1.0 - 1e-12)
+
+    for k, i in enumerate(stoch_idx):
+        v = variables[i]
+        dist = _build_marginal(v)
+        lo = v.get("lower_bound", -np.inf)
+        hi = v.get("upper_bound", np.inf)
+        x_val = float(
+            _truncated_ppf(dist, np.array([u_clipped[k]]), lo, hi)[0]
+        )
+        design_point[var_names[i]] = x_val
+
+    out["convergence"] = True
+    return out
 
 
 def component_names(lsf_name: str) -> list[str]:
@@ -534,6 +659,12 @@ def postprocess(
     corrosion_rate: float,
     seed: int,
     out_dir: Path,
+    X: np.ndarray | None = None,
+    Z: np.ndarray | None = None,
+    variables: list | None = None,
+    var_names: list[str] | None = None,
+    correlations: list | None = None,
+    design_point_threshold: int = 30,
 ) -> None:
     """Compute summary stats, write summary.json, and emit all plots.
 
@@ -637,6 +768,42 @@ def postprocess(
     )
     print(f"  Plots:         {plots_dir}")
 
+    # ---- Empirical FORM design point(s) from MCS samples.
+    # Skipped if X / Z weren't supplied (e.g. legacy callers that only have
+    # g_history). Multi-component LSFs write one JSON per sub-failure mode
+    # plus a system file: e.g. lsf_wall_anchor yields design_point_lsf_wall.json
+    # (wall fails), design_point_lsf_anchor.json (anchor fails), and
+    # design_point_lsf_wall_anchor.json (either fails). Each is drop-in for the
+    # matching fragility_curve_<target>/ cache.
+    if X is not None and Z is not None and variables is not None and var_names is not None:
+        targets: list[tuple[str, np.ndarray]] = [
+            (f"lsf_{c}", g_arrays[c] < 0) for c in comps
+        ]
+        if len(comps) > 1:
+            sys_mask = np.zeros(n_loaded, dtype=bool)
+            for c in comps:
+                sys_mask |= g_arrays[c] < 0
+            targets.append((lsf_name, sys_mask))
+        for target_lsf, fail_mask in targets:
+            dp = design_point_from_samples(
+                X=X[:n_loaded], Z=Z[:n_loaded],
+                fail_mask=fail_mask,
+                variables=variables, var_names=var_names,
+                correlations=correlations,
+                corrosion_rate=corrosion_rate, lsf_name=target_lsf, seed=seed,
+                convergence_threshold=design_point_threshold,
+            )
+            dp_path = out_dir / f"design_point_{target_lsf}.json"
+            with open(dp_path, "w") as f:
+                json.dump(dp, f, indent=2)
+            if dp["convergence"]:
+                print(f"  Design point:  {dp_path.name}  "
+                      f"(beta = {dp['beta']:.3f},  n_fail = {dp['n_failures']})")
+            else:
+                print(f"  Design point:  {dp_path.name}  "
+                      f"(non-converged: n_fail = {dp['n_failures']}, "
+                      f"threshold = {design_point_threshold})")
+
 
 def main(
     lsf_name: str = "lsf_wall_anchor",
@@ -645,6 +812,7 @@ def main(
     use_api: bool = False,
     seed: int = 42,
     postprocess_only: bool = False,
+    design_point_threshold: int = 30,
 ):
     if lsf_name not in LSF_REGISTRY:
         raise ValueError(f"Unknown LSF '{lsf_name}'. Available: {list(LSF_REGISTRY.keys())}")
@@ -684,7 +852,20 @@ def main(
                 f"seed={seed}, cr={corrosion_rate:.4f}). Check the leading "
                 f"'#' header lines in the CSV to see what it was written with."
             )
-        postprocess(g_history, comps, lsf_name, corrosion_rate, seed, out_dir)
+        # Regenerate X, Z deterministically from the seed so the design-point
+        # estimator can run alongside the standard postprocess. Same call as
+        # the run path uses; matches by row index up to ``i_loaded``.
+        correlations = _settings.get("correlation_in_u_space")
+        X, Z = sample_variables(
+            variables, n_samples, seed=seed,
+            correlations=correlations, return_z=True,
+        )
+        postprocess(
+            g_history, comps, lsf_name, corrosion_rate, seed, out_dir,
+            X=X, Z=Z, variables=variables, var_names=var_names,
+            correlations=correlations,
+            design_point_threshold=design_point_threshold,
+        )
         return
 
     init_model(use_api=use_api)
@@ -706,9 +887,14 @@ def main(
 
     # Draw samples (with optional u-space correlation from settings).
     # The full sample array is deterministic in `seed`, so resuming from a
-    # checkpoint just skips the rows that have already been evaluated.
+    # checkpoint just skips the rows that have already been evaluated. We
+    # also keep the uncorrelated standard normals Z so the post-processing
+    # design-point estimator can recover the FORM alphas from samples.
     correlations = _settings.get("correlation_in_u_space")
-    X = sample_variables(variables, n_samples, seed=seed, correlations=correlations)
+    X, Z = sample_variables(
+        variables, n_samples, seed=seed,
+        correlations=correlations, return_z=True,
+    )
 
     i_start, g_history = _load_checkpoint(
         out_dir, lsf_name, n_samples, seed, corrosion_rate, comps, var_names,
@@ -755,7 +941,12 @@ def main(
                 lsf_name, n_samples, seed, corrosion_rate,
             )
 
-    postprocess(g_history, comps, lsf_name, corrosion_rate, seed, out_dir)
+    postprocess(
+        g_history, comps, lsf_name, corrosion_rate, seed, out_dir,
+        X=X, Z=Z, variables=variables, var_names=var_names,
+        correlations=correlations,
+        design_point_threshold=design_point_threshold,
+    )
 
 
 if __name__ == "__main__":
@@ -772,6 +963,14 @@ if __name__ == "__main__":
              "(--lsf, --n-samples, --seed, --cr) and re-emit the summary and "
              "plots (including a Pf/beta convergence plot).",
     )
+    parser.add_argument(
+        "--design-point-threshold", type=int, default=30,
+        help="Minimum failure count required for the MCS-derived design "
+             "point to be marked converged (default: 30). Below the "
+             "threshold the design_point.json is still written but with "
+             "alphas=0 / design_point=mean and convergence=false, so the "
+             "spatial loader skips it.",
+    )
     args = parser.parse_args()
     main(
         lsf_name=args.lsf,
@@ -780,4 +979,5 @@ if __name__ == "__main__":
         use_api=args.use_api,
         seed=args.seed,
         postprocess_only=args.postprocess_only,
+        design_point_threshold=args.design_point_threshold,
     )

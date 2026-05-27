@@ -160,6 +160,51 @@ def pf_vs_time(
 
 
 # ----------------------------------------------------------------------
+# Pf and beta vs time, system-only (no per-section spread band)
+# ----------------------------------------------------------------------
+
+def pf_vs_time_system(
+    forecast_times: np.ndarray,
+    pf_system_t: np.ndarray,      # (n_t,)
+    out_path: Path,
+) -> None:
+    """Pf and beta vs forecast time, system curve only.
+
+    Companion to :func:`pf_vs_time` with the per-section min-max band and
+    the per-section mean line removed. With a homogeneous wall the band is
+    MCS noise (see :func:`pf_vs_time` docstring) so this variant is the
+    cleaner view when only the system reliability matters.
+    """
+    def to_beta(pf):
+        out = np.full_like(pf, np.nan, dtype=float)
+        m = (pf > 0) & (pf < 1)
+        out[m] = st.norm.ppf(1.0 - np.clip(pf[m], 1e-300, 1.0 - 1e-15))
+        return out
+
+    fig, (ax_pf, ax_b) = plt.subplots(1, 2, figsize=(12, 4.5))
+
+    ax_pf.plot(forecast_times, pf_system_t, "-", color="#d6604d",
+               linewidth=1.8, label="system")
+    ax_pf.set_xlabel("t [years]")
+    ax_pf.set_ylabel("Pf")
+    ax_pf.set_yscale("log")
+    ax_pf.set_title("Pf vs time (system, prior cr integration)")
+    ax_pf.grid(alpha=0.3, which="both")
+    ax_pf.legend(loc="best", fontsize=9)
+
+    ax_b.plot(forecast_times, to_beta(pf_system_t), "-", color="#d6604d",
+              linewidth=1.8, label="system")
+    ax_b.set_xlabel("t [years]")
+    ax_b.set_ylabel(r"$\beta$")
+    ax_b.set_title("beta vs time (system)")
+    ax_b.grid(alpha=0.3)
+    ax_b.legend(loc="best", fontsize=9)
+
+    fig.tight_layout()
+    save_figure(fig, out_path)
+
+
+# ----------------------------------------------------------------------
 # Pf and beta vs time, posterior leg (one curve per obs time)
 # ----------------------------------------------------------------------
 
@@ -272,6 +317,67 @@ def section_beta(
     ax.set_title(f"Beta along the wall — {t_label}")
     ax.grid(alpha=0.3)
     ax.legend(loc="best", fontsize=9)
+    fig.tight_layout()
+    save_figure(fig, out_path)
+
+
+# ----------------------------------------------------------------------
+# Beta along the wall at one forecast time (prior + posterior overlay)
+# ----------------------------------------------------------------------
+
+def beta_along_wall_at_time(
+    *,
+    x: np.ndarray,
+    t: float,
+    beta_section_prior: np.ndarray,       # (n_sections,)
+    beta_system_prior: float,
+    posterior_at_t: dict[float, dict],    # {t_obs: {"beta_section": (n_sections,), "beta_system": float}}
+    out_path: Path,
+    ylim: tuple[float, float] | None = None,
+) -> None:
+    """beta along the wall at one forecast time, prior + posterior.
+
+    Single panel: ``x`` (position along wall) vs ``beta``. Prior per-section
+    beta as a solid black curve; prior system beta as a black dashed
+    horizontal line. For each obs scenario ``t_obs`` whose forecast block
+    covers this ``t``, a viridis-coloured curve plots posterior per-section
+    beta and a matching dashed horizontal line plots the posterior system
+    beta. ``ylim`` is shared across frames so the GIF doesn't rescale.
+    """
+    fig, ax = plt.subplots(figsize=(10, 4.5))
+
+    ax.plot(x, beta_section_prior, "o-", color="#222", linewidth=1.8,
+            markersize=4, label="prior per-section")
+    if np.isfinite(beta_system_prior):
+        ax.axhline(
+            float(beta_system_prior), color="#222", linestyle="--",
+            linewidth=1.2,
+            label=f"prior system = {float(beta_system_prior):.2f}",
+        )
+
+    n_obs = len(posterior_at_t)
+    cmap = plt.get_cmap("viridis")
+    for k, t_obs in enumerate(sorted(posterior_at_t.keys())):
+        block = posterior_at_t[t_obs]
+        color = cmap((k + 0.5) / max(n_obs, 1))
+        beta_sec = np.asarray(block["beta_section"], dtype=float)
+        beta_sys = float(block["beta_system"])
+        ax.plot(x, beta_sec, "o-", color=color, linewidth=1.4,
+                markersize=4, alpha=0.95,
+                label=f"posterior per-section (t_obs={t_obs:.1f})")
+        if np.isfinite(beta_sys):
+            ax.axhline(
+                beta_sys, color=color, linestyle="--", linewidth=1.0,
+                label=f"posterior system = {beta_sys:.2f} (t_obs={t_obs:.1f})",
+            )
+
+    ax.set_xlabel("position along wall [m]")
+    ax.set_ylabel(r"$\beta$")
+    ax.set_title(rf"$\beta$ along wall at t = {t:.1f} yr  |  prior + posterior")
+    if ylim is not None:
+        ax.set_ylim(ylim)
+    ax.grid(alpha=0.3)
+    ax.legend(loc="best", fontsize=8, framealpha=0.9)
     fig.tight_layout()
     save_figure(fig, out_path)
 

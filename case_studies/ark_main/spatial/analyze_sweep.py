@@ -1,18 +1,18 @@
 """
-Aggregate a theta_wall x theta_cr sweep into two summary plots.
+Aggregate a theta_cr x rho_0_cr sweep into two summary plots.
 
 Reads each combo's ``forecasts/posterior.json`` and ``forecasts/prior.json``
 from ``<remote>/output/spatial_analysis/results/<signature>/`` (written
 earlier by ``run_spatial.py``), then renders:
 
-* ``beta_forecast_grid.png`` — small multiples, one panel per
-  ``(theta_wall, theta_cr)``. Each panel overlays the prior beta(t) curve
-  (black) with one posterior curve per obs scenario (viridis gradient),
-  same y-axis across panels.
+* ``beta_forecast_grid.png`` — small multiples, one panel per ``theta_cr``.
+  Each panel overlays the prior beta(t) curve (grey) with one posterior
+  curve per ``rho_0_cr`` value (viridis gradient), same y-axis across
+  panels.
 * ``beta_contour_tend.png`` — bilinear-interpolated contour of system
   beta at the final forecast time (latest obs scenario) over the
-  ``(theta_wall, theta_cr)`` plane. Axes log-scaled; sample points
-  marked with white dots.
+  ``(theta_cr, rho_0_cr)`` plane. theta_cr axis log-scaled; rho_0_cr
+  axis linear; sample points marked with white dots.
 
 No MCS is invoked — purely read-only analysis on disk artefacts. If a
 combo's folder is missing, the panel/cell shows ``"missing"`` and the
@@ -59,10 +59,11 @@ def _load_base() -> dict:
     return json.load(open(_remote / "input" / "spatial_settings.json"))
 
 
-def _override(base: dict, theta_wall: float, theta_cr: float) -> dict:
+def _override(base: dict, theta_cr: float, rho_0_cr: float) -> dict:
     cfg = json.loads(json.dumps(base))           # deep copy
-    cfg.setdefault("wall", {})["theta"] = float(theta_wall)
-    cfg.setdefault("cr",   {})["theta"] = float(theta_cr)
+    cr = cfg.setdefault("cr", {})
+    cr["theta"] = float(theta_cr)
+    cr["rho_0"] = float(rho_0_cr)
     return cfg
 
 
@@ -104,43 +105,43 @@ def _load_combo_forecasts(rdir: Path) -> dict | None:
 # ----------------------------------------------------------------------
 
 def plot_beta_forecast_grid(
-    theta_wall_values: Sequence[float],
     theta_cr_values: Sequence[float],
+    rho_0_cr_values: Sequence[float],
     base: dict,
     out_path: Path,
 ) -> None:
-    """One subplot per ``theta_wall``, one curve per ``theta_cr``.
+    """One subplot per ``theta_cr``, one curve per ``rho_0_cr``.
 
-    Each curve is the posterior β forecast from the **earliest** obs
+    Each curve is the posterior beta forecast from the **earliest** obs
     scenario (the obs with the longest forecast horizon — the latest obs
     in the current data has ``t_obs = t_end``, a single-point curve). The
-    prior β(t) is overlaid as a grey reference.
+    prior beta(t) is overlaid as a grey reference.
     """
-    n_w = len(theta_wall_values)
-    n_c = len(theta_cr_values)
+    n_t = len(theta_cr_values)
+    n_r = len(rho_0_cr_values)
     fig, axes = plt.subplots(
-        1, n_w,
-        figsize=(5.0 * n_w, 4.0),
+        1, n_t,
+        figsize=(5.0 * n_t, 4.0),
         sharey=True,
         squeeze=False,
     )
 
-    cmap_cr = plt.get_cmap("viridis")
+    cmap_rho = plt.get_cmap("viridis")
     all_betas: list[float] = []
 
-    for i, tw in enumerate(theta_wall_values):
+    for i, tc in enumerate(theta_cr_values):
         ax = axes[0, i]
         prior_drawn = False
 
-        for j, tc in enumerate(theta_cr_values):
-            cfg = _override(base, tw, tc)
+        for j, rc in enumerate(rho_0_cr_values):
+            cfg = _override(base, tc, rc)
             rdir = _results_dir(_remote, cfg)
             data = _load_combo_forecasts(rdir)
             if data is None:
                 continue
 
             # Prior reference (once per subplot — it's identical across
-            # theta_cr values; only theta_wall changes it).
+            # rho_0_cr values; only the cr-field kernel changes it).
             if not prior_drawn:
                 ax.plot(
                     data["prior_t"], data["prior_beta"],
@@ -156,17 +157,17 @@ def plot_beta_forecast_grid(
             if not obs_keys:
                 continue
             first_block = data["post_per_obs"][obs_keys[0]]
-            color = cmap_cr((j + 0.5) / max(n_c, 1))
+            color = cmap_rho((j + 0.5) / max(n_r, 1))
             ax.plot(
                 first_block["t"], first_block["beta"],
                 "-", color=color, linewidth=1.6,
-                label=fr"$\theta_{{cr}}$={tc:.0f}",
+                label=fr"$\rho_{{0,cr}}$={rc:g}",
             )
             m = ~np.isnan(first_block["beta"])
             all_betas.extend(first_block["beta"][m].tolist())
 
         ax.set_xlabel("forecast time [yr]")
-        ax.set_title(fr"$\theta_{{wall}}$ = {tw:.0f} m", fontsize=11)
+        ax.set_title(fr"$\theta_{{cr}}$ = {tc:.0f} m", fontsize=11)
         ax.grid(alpha=0.3)
         if i == 0:
             ax.set_ylabel(r"$\beta$ system")
@@ -179,8 +180,8 @@ def plot_beta_forecast_grid(
             ax.set_ylim(ymin, ymax)
 
     fig.suptitle(
-        "Posterior β forecast from the earliest obs scenario "
-        "(one subplot per θ_wall, one colour per θ_cr)",
+        "Posterior beta forecast from the earliest obs scenario "
+        "(one subplot per theta_cr, one colour per rho_0_cr)",
         fontsize=12,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.94))
@@ -188,19 +189,19 @@ def plot_beta_forecast_grid(
 
 
 # ----------------------------------------------------------------------
-# Plot 2 — contour of β at t_end vs (θ_wall, θ_cr)
+# Plot 2 — contour of beta at t_end vs (theta_cr, rho_0_cr)
 # ----------------------------------------------------------------------
 
 def plot_beta_contour(
-    theta_wall_values: Sequence[float],
     theta_cr_values: Sequence[float],
+    rho_0_cr_values: Sequence[float],
     base: dict,
     out_path: Path,
 ) -> None:
-    grid = np.full((len(theta_wall_values), len(theta_cr_values)), np.nan)
-    for i, tw in enumerate(theta_wall_values):
-        for j, tc in enumerate(theta_cr_values):
-            cfg = _override(base, tw, tc)
+    grid = np.full((len(theta_cr_values), len(rho_0_cr_values)), np.nan)
+    for i, tc in enumerate(theta_cr_values):
+        for j, rc in enumerate(rho_0_cr_values):
+            cfg = _override(base, tc, rc)
             rdir = _results_dir(_remote, cfg)
             data = _load_combo_forecasts(rdir)
             if data is None:
@@ -213,12 +214,12 @@ def plot_beta_contour(
             if not np.isnan(beta_end):
                 grid[i, j] = beta_end
 
-    tw_arr = np.array(theta_wall_values, dtype=float)
     tc_arr = np.array(theta_cr_values, dtype=float)
+    rc_arr = np.array(rho_0_cr_values, dtype=float)
 
-    # meshgrid with indexing='xy': X varies along columns (theta_wall),
-    # Y varies along rows (theta_cr). Z must be shape (n_cr, n_wall).
-    X, Y = np.meshgrid(tw_arr, tc_arr, indexing="xy")
+    # meshgrid with indexing='xy': X varies along columns (theta_cr),
+    # Y varies along rows (rho_0_cr). Z must be shape (n_rho, n_theta).
+    X, Y = np.meshgrid(tc_arr, rc_arr, indexing="xy")
     Z = grid.T
 
     fig, ax = plt.subplots(figsize=(9, 6))
@@ -229,22 +230,21 @@ def plot_beta_contour(
     ax.clabel(cs, inline=True, fontsize=8, fmt="%.2f")
 
     # Mark the actual sample points.
-    for tw in theta_wall_values:
-        for tc in theta_cr_values:
-            ax.scatter([tw], [tc], c="white", edgecolor="k",
+    for tc in theta_cr_values:
+        for rc in rho_0_cr_values:
+            ax.scatter([tc], [rc], c="white", edgecolor="k",
                        s=40, zorder=5)
 
     cbar = plt.colorbar(cf, ax=ax)
     cbar.set_label(r"posterior $\beta$ system at $t_{end}$", fontsize=11)
 
     ax.set_xscale("log")
-    ax.set_yscale("log")
-    ax.set_xticks(tw_arr)
-    ax.set_yticks(tc_arr)
-    ax.set_xticklabels([f"{v:g}" for v in tw_arr])
-    ax.set_yticklabels([f"{v:g}" for v in tc_arr])
-    ax.set_xlabel(r"$\theta_{wall}$ [m]")
-    ax.set_ylabel(r"$\theta_{cr}$ [m]")
+    ax.set_xticks(tc_arr)
+    ax.set_yticks(rc_arr)
+    ax.set_xticklabels([f"{v:g}" for v in tc_arr])
+    ax.set_yticklabels([f"{v:g}" for v in rc_arr])
+    ax.set_xlabel(r"$\theta_{cr}$ [m]")
+    ax.set_ylabel(r"$\rho_{0,cr}$")
     ax.set_title(
         r"Posterior $\beta$ at $t_{end}$ (latest obs scenario) — "
         r"bilinear interp between sample points (white)"
@@ -258,29 +258,29 @@ def plot_beta_contour(
 # ----------------------------------------------------------------------
 
 def main(
-    theta_wall_values: Sequence[float] = (50.0, 200.0, 800.0),
     theta_cr_values: Sequence[float] = (50.0, 200.0, 800.0),
+    rho_0_cr_values: Sequence[float] = (0.0, 0.3, 0.6),
 ) -> None:
     base = _load_base()
     out_dir = _remote / "output" / "spatial_analysis" / "sweep"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    n_combos = len(theta_wall_values) * len(theta_cr_values)
+    n_combos = len(theta_cr_values) * len(rho_0_cr_values)
     print(f"Reading {n_combos} combo result folders...")
 
     plot_beta_forecast_grid(
-        theta_wall_values, theta_cr_values, base,
+        theta_cr_values, rho_0_cr_values, base,
         out_path=out_dir / "beta_forecast_grid.png",
     )
     print(f"  wrote {out_dir / 'beta_forecast_grid.png'}")
 
     plot_beta_contour(
-        theta_wall_values, theta_cr_values, base,
+        theta_cr_values, rho_0_cr_values, base,
         out_path=out_dir / "beta_contour_tend.png",
     )
     print(f"  wrote {out_dir / 'beta_contour_tend.png'}")
 
-    print(f"\nDone — sweep analysis in {out_dir}")
+    print(f"\nDone -- sweep analysis in {out_dir}")
 
 
 if __name__ == "__main__":
