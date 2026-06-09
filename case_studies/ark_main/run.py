@@ -234,6 +234,30 @@ def main(
         output_dir=output_dir,
     )
 
+    # =========================================================================
+    # Corrosion-rate PDF export + alpha-importance plots
+    # =========================================================================
+    # Export the prior/posterior cr-PDFs over time to
+    # <remote>/output/cr_pdfs_<lsf>.json, then use that file to build the
+    # fragility-vs-corrosion alpha decomposition (pies + per-variable lines).
+    print("\n" + "=" * 60)
+    print("Exporting cr-PDFs + alpha-importance plots")
+    print("=" * 60)
+
+    # ``export_cr_pdfs`` lives in the case-study ``io`` package, whose name
+    # shadows the stdlib ``io`` — load it by file path to avoid the clash.
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location(
+        "ark_export_cr_pdfs", Path(__file__).parent / "io" / "export_cr_pdfs.py")
+    _export_cr_pdfs = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_export_cr_pdfs)
+    _export_cr_pdfs.main(lsf_name=lsf_name)
+
+    from analysis.alpha_pie_cross_section import make_plots as _alpha_pie
+    from analysis.alpha_lines_cross_section import make_plots as _alpha_lines
+    _alpha_pie(_remote, lsf_name, results_dir=output_dir)
+    _alpha_lines(_remote, lsf_name, results_dir=output_dir)
+
 
 if __name__ == "__main__":
     parser = ArgumentParser()

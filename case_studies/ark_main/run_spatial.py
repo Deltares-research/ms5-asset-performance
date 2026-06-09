@@ -79,12 +79,26 @@ _remote = get_remote_path(_ENV)
 # instead of re-deriving the prior from the corrosion model in two places.
 # ----------------------------------------------------------------------
 
-def _load_cr_pdfs(lsf_name: str) -> dict:
-    """Load ``output/cr_pdfs_<lsf>.json`` or raise with a regen hint."""
-    path = _remote / "output" / f"cr_pdfs_{lsf_name}.json"
+def _resolve_cr_pdfs_path(lsf_name: str, cr_pdfs_path: str | Path | None) -> Path:
+    """Resolve the cr-PDF file path.
+
+    Explicit ``cr_pdfs_path`` (CLI ``--cr-pdfs`` or settings ``cr_pdfs_path``)
+    wins; a relative path is taken relative to ``<remote>``. Falls back to the
+    conventional ``<remote>/output/cr_pdfs_<lsf>.json``.
+    """
+    if cr_pdfs_path:
+        p = Path(cr_pdfs_path)
+        return p if p.is_absolute() else _remote / p
+    return _remote / "output" / f"cr_pdfs_{lsf_name}.json"
+
+
+def _load_cr_pdfs(lsf_name: str, cr_pdfs_path: str | Path | None = None) -> dict:
+    """Load the cr-PDF JSON for ``lsf_name`` or raise with a regen hint."""
+    path = _resolve_cr_pdfs_path(lsf_name, cr_pdfs_path)
     if not path.exists():
         raise FileNotFoundError(
-            f"Missing {path}. Regenerate with:\n"
+            f"Missing {path}. Point to it with --cr-pdfs / settings 'cr_pdfs_path', "
+            f"or regenerate the default with:\n"
             f"  python -m case_studies.ark_main.io.export_cr_pdfs "
             f"--lsf-name {lsf_name}"
         )
@@ -186,7 +200,9 @@ def analyze(spatial_settings: dict | None = None) -> None:
     print(f"results dir:      {results_dir}")
 
     # Shared inputs (used by both methods and both legs).
-    crp = _load_cr_pdfs(lsf_name)
+    cr_pdfs_path = _resolve_cr_pdfs_path(lsf_name, settings_dict.get("cr_pdfs_path"))
+    print(f"cr_pdfs file:     {cr_pdfs_path}")
+    crp = _load_cr_pdfs(lsf_name, settings_dict.get("cr_pdfs_path"))
     cr_grid_export = np.array(crp["cr_grid"])
     forecast_times = np.array(crp["forecast_times"], dtype=float)
     prior_pdf_per_t = crp["prior_pdf_per_t"]
@@ -938,6 +954,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="cr-field correlation length (m)")
     p.add_argument("--cr-rho0", type=float, default=None,
                    help="cr-field correlation floor")
+    p.add_argument("--cr-pdfs", type=Path, default=None,
+                   help="Path to cr_pdfs_<lsf>.json "
+                        "(default: <remote>/output/cr_pdfs_<lsf>.json; "
+                        "relative paths resolved against <remote>)")
     return p
 
 
@@ -958,6 +978,10 @@ def _apply_overrides(base: dict, args: argparse.Namespace) -> dict:
         cfg.setdefault("cr", {})
         if args.cr_theta is not None: cfg["cr"]["theta"] = args.cr_theta
         if args.cr_rho0  is not None: cfg["cr"]["rho_0"] = args.cr_rho0
+    # ``getattr`` guard: sibling parsers (e.g. run_spatial_sweep) reuse this
+    # helper but don't define --cr-pdfs, so the attribute may be absent.
+    cr_pdfs = getattr(args, "cr_pdfs", None)
+    if cr_pdfs is not None: cfg["cr_pdfs_path"] = str(cr_pdfs)
     return cfg
 
 

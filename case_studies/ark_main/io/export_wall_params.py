@@ -6,7 +6,9 @@ one row per variable with the columns
 
 * Variable         — name as it appears in settings.json
 * Distribution     — compact descriptor, e.g. ``LogN(3.10, 0.08)``,
-                     ``Gumbel(14.0)``, ``N(20.0, 5.0)``, ``Deterministic(3.0)``
+                     ``Gumbel(51.90, 14.03)``, ``N(20.0, 5.0)``,
+                     ``Deterministic(3.0)``. Gumbel carries both parameters:
+                     location ``mu`` and scale ``beta``.
 * Mean             — distribution mean in x-space
 * CoV              — coefficient of variation (std / |mean|) as a %
 * 1% / 99%         — distribution quantiles, computed analytically with scipy
@@ -126,9 +128,11 @@ def _build_marginal(v: dict):
 def _distribution_label(v: dict) -> str:
     """Compact human-readable distribution descriptor.
 
-    Lognormal uses ``LogN(mu, sigma)`` of the log-distribution; Gumbel
-    uses ``Gumbel(beta)`` with the scale parameter (``beta = sigma *
-    sqrt(6) / pi``). Same conventions as the screenshot the user posted.
+    Lognormal uses ``LogN(mu, sigma)`` of the log-distribution. Gumbel is a
+    two-parameter distribution and is shown as ``Gumbel(mu, beta)`` with
+    location ``mu`` and scale ``beta``, where ``beta = sigma * sqrt(6) / pi``
+    and ``mu = mean -/+ euler_gamma * beta`` (minus for gumbel_max, plus for
+    gumbel_min). Both are derived from the mean/std stored in settings.
     """
     dist_type = v.get("distribution_type", "normal").lower()
     mean = float(v["mean"])

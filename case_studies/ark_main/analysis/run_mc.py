@@ -473,9 +473,12 @@ def plot_convergence(
 
     component_colors = ["#4c8dde", "#f0a000", "#2ca02c", "#9467bd"]
     if len(comps) > 1:
-        for c, color in zip(comps, component_colors):
-            _add(np.cumsum(g_arrays[c] < 0), label=c, color=color, lw=1.0)
+        # Draw the system first so the component curves stay visible on top
+        # when one component dominates the system Pf (e.g. wall == system at
+        # high cr).
         _add(cum_sys, label="system", color="#222", lw=1.8)
+        for c, color in zip(comps, component_colors):
+            _add(np.cumsum(g_arrays[c] < 0), label=c, color=color, lw=1.2)
     else:
         _add(cum_sys, label=comps[0], color="#222", lw=1.8)
 
@@ -489,11 +492,13 @@ def plot_convergence(
     ax_pf.set_yscale("log")
     ax_pf.set_title("Running Pf (95% CI shaded)")
     ax_pf.grid(alpha=0.3, which="both")
+    ax_pf.legend(loc="lower right", fontsize=9, framealpha=0.85)
 
     ax_b.set_xlabel("iteration")
     ax_b.set_ylabel("running beta")
     ax_b.set_title("Running beta (95% CI shaded)")
     ax_b.grid(alpha=0.3)
+    ax_b.legend(loc="best", fontsize=9, framealpha=0.85)
 
     fig.suptitle(f"MC convergence — N = {n}", fontsize=11)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
