@@ -526,6 +526,83 @@ def fig_series_system(path: Path) -> None:
     plt.close(fig)
 
 
+def fig_posterior_correlation(path: Path) -> None:
+    """Posterior system β vs θ_cr (non-monotone) + the extreme-swap over time.
+
+    Values mirror an observed lsf_wall sweep at t_obs = 25 yr with an *adverse*
+    single-location observation: posterior system β as a function of the
+    corrosion correlation length θ_cr is non-monotone and rises ABOVE both the
+    θ_cr → 0 (independent) and θ_cr → ∞ (fully-correlated) limits, and the two
+    limits swap their ordering as the forecast horizon lengthens.
+    """
+    fig, (axA, axB) = plt.subplots(1, 2, figsize=(11, 4.3))
+
+    # ---- Panel A: β_system(θ_cr) at fixed (t_obs = 25, t = 32) ----------
+    # Faithful illustrative points from the θ_cr sweep (N = 5e6).
+    theta_cr = np.array([1e-2, 10.0, 100.0, 500.0, 1e3, 1e6])
+    beta_sys = np.array([2.054, 2.057, 2.079, 2.070, 2.053, 2.047])
+    indep_limit = 2.054   # θ_cr -> 0   : observation reaches only section x=0
+    full_limit = 2.047    # θ_cr -> inf : observation contaminates whole wall
+
+    lo, hi = min(indep_limit, full_limit), max(indep_limit, full_limit)
+    axA.axhspan(lo, hi, color="#bbbbbb", alpha=0.30, linewidth=0,
+                label="bracket the prior-leg\nintuition predicts")
+    axA.semilogx(theta_cr, beta_sys, "-o", color="#1a3d6d", linewidth=1.8,
+                 markersize=6, zorder=4, label=r"posterior $\beta_{sys}(\theta_{cr})$")
+    i_pk = int(np.argmax(beta_sys))
+    axA.scatter([theta_cr[i_pk]], [beta_sys[i_pk]], s=130, facecolors="none",
+                edgecolors="#a83232", linewidths=2.0, zorder=5)
+    axA.axhline(indep_limit, color="#4c8dde", linestyle="--", linewidth=1.3,
+                label=r"independent limit ($\theta_{cr}\to 0$)")
+    axA.axhline(full_limit, color="#7a3a3a", linestyle=":", linewidth=1.5,
+                label=r"full-correlation limit ($\theta_{cr}\to\infty$)")
+    axA.annotate("interior maximum —\nescapes both limits",
+                 xy=(theta_cr[i_pk], beta_sys[i_pk]),
+                 xytext=(2.0, 2.073), fontsize=8.5, color="#a83232",
+                 arrowprops=dict(arrowstyle="->", color="#a83232"))
+    axA.set_xlabel(r"corrosion correlation length $\theta_{cr}$ [m]")
+    axA.set_ylabel(r"posterior system $\beta$")
+    axA.set_title(r"Adverse obs: $\beta_{sys}$ vs $\theta_{cr}$ at fixed $t$")
+    axA.grid(alpha=0.3, which="both")
+    axA.legend(fontsize=7.5, loc="lower center")
+
+    # ---- Panel B: the two competing effects vs forecast time ------------
+    # Decomposition of the full-correlation margin (β_full - β_indep):
+    #   series benefit  grows with t (decorrelation helps the system),
+    #   obs penalty      decays with t (the adverse obs loses its grip),
+    #   net margin       crosses zero -> the extremes swap ordering.
+    t = np.linspace(25.0, 50.0, 60)
+    series_benefit = 0.074 + (0.154 - 0.074) / 25.0 * (t - 25.0)
+    obs_penalty = 0.108 * np.exp(-0.00866 * (t - 25.0))
+    net = series_benefit - obs_penalty
+    i_cross = int(np.argmin(np.abs(net)))
+
+    axB.plot(t, series_benefit, color="#2e7d32", linewidth=1.8,
+             label="series benefit (full corr.)")
+    axB.plot(t, obs_penalty, color="#a83232", linewidth=1.8,
+             label="adverse-obs penalty (full corr.)")
+    axB.plot(t, net, color="#1a3d6d", linewidth=2.2,
+             label=r"net margin $\beta_{full}-\beta_{indep}$")
+    axB.axhline(0.0, color="k", linewidth=0.8)
+    axB.axvline(t[i_cross], color="#7a6a4d", linestyle="--", linewidth=1.0)
+    axB.annotate(f"swap at t ≈ {t[i_cross]:.0f}", xy=(t[i_cross], 0.0),
+                 xytext=(t[i_cross] + 1.0, -0.025), fontsize=8.5,
+                 color="#7a6a4d")
+    axB.text(26.0, -0.03, "full corr.\nworst", fontsize=8, color="#7a3a3a")
+    axB.text(45.0, 0.075, "full corr.\nbest", fontsize=8, color="#2e7d32")
+    axB.set_xlabel("forecast time t [yr]")
+    axB.set_ylabel(r"reliability-index margin")
+    axB.set_title("Why the extremes swap over time")
+    axB.grid(alpha=0.3)
+    axB.legend(fontsize=8, loc="upper left")
+
+    fig.suptitle("Posterior series-system reliability vs corrosion correlation "
+                 "length (adverse single-location observation)")
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
+
+
 # ======================================================================
 # DOCX assembly helpers
 # ======================================================================
@@ -609,6 +686,7 @@ def main() -> None:
     fig_mcs_convergence_cartoon(FIG / "09_mcs_convergence.png")
     fig_alpha_corrosion(FIG / "10_alpha_corrosion.png")
     fig_series_system(FIG / "11_series_system.png")
+    fig_posterior_correlation(FIG / "12_posterior_correlation.png")
 
     print(">> assembling docx")
     doc = Document()
@@ -1195,14 +1273,101 @@ def main() -> None:
         "the upper estimate; perfect correlation collapses the system Pf back "
         "to the single-section value.")
     para(doc,
-        "System reliability and correlation. The series-system probability "
-        "sits between two bounds: if sections were perfectly correlated the "
-        "system Pf equals the single-section Pf, and if independent it "
-        "approaches 1 − Π(1 − Pf_i). The correlation lengths θ and the floors "
-        "ρ₀ therefore directly control the system result — short correlation "
-        "lengths inflate the system Pf, long ones suppress it. This coupling "
-        "is precisely why the θ_wall × θ_cr sweep (run_spatial_sweep.py) "
-        "exists.")
+        "System reliability and correlation (prior leg). In the prior leg the "
+        "series-system probability sits between two bounds: if sections were "
+        "perfectly correlated the system Pf equals the single-section Pf, and "
+        "if independent it approaches 1 − Π(1 − Pf_i). The correlation lengths "
+        "θ and the floors ρ₀ therefore directly control the system result — "
+        "short correlation lengths inflate the system Pf, long ones suppress "
+        "it. This coupling is precisely why the θ_wall × θ_cr sweep "
+        "(run_spatial_sweep.py) exists. This clean bracketing holds for the "
+        "prior leg and for a favourable observation; an adverse observation "
+        "breaks it, as the next subsection shows.")
+
+    doc.add_heading("10.3 Posterior correlation effects — a non-monotonic β",
+                    level=2)
+    para(doc,
+        "The bracketing picture above is the prior-leg intuition: more "
+        "decorrelation (shorter θ_cr) can only add independent failure paths, "
+        "so the system Pf is largest when sections are independent and "
+        "smallest when they move together, and θ_cr slides the result "
+        "monotonically between those two limits. In the posterior leg this "
+        "intuition is correct only when the observation is favourable. When "
+        "the single-location measurement at x = 0 is adverse — it implies more "
+        "corrosion than the prior expected — the system reliability as a "
+        "function of θ_cr is no longer monotone and is no longer bracketed by "
+        "the two limits. Because the same observation is the standard "
+        "monitoring outcome the pipeline must handle, this behaviour is worth "
+        "documenting explicitly rather than leaving it to be rediscovered from "
+        "a surprising sweep plot.")
+    para(doc,
+        "Two competing effects. Increasing θ_cr does two opposing things to "
+        "the posterior system reliability:")
+    bullet(doc,
+        "Series decorrelation (helps). A longer corrosion correlation length "
+        "makes neighbouring sections move together, which removes independent "
+        "failure paths and raises the system β — the same effect that operates "
+        "in the prior leg.")
+    bullet(doc,
+        "Observation propagation (hurts, for an adverse obs). A longer θ_cr "
+        "also lets the single x = 0 measurement reach more of the wall. For an "
+        "adverse observation that means the bad news is Kriged onto sections "
+        "that the prior would have left alone, lowering their reliability and "
+        "pulling the system β down.")
+    para(doc,
+        "At θ_cr → 0 the observation touches only the one section it was taken "
+        "at (1 of N), so the system is essentially the prior system and the "
+        "adverse news is contained. At θ_cr → ∞ the whole wall is one "
+        "perfectly-correlated block: the series benefit is maximal, but the "
+        "adverse observation is now applied uniformly to every section. At "
+        "intermediate θ_cr the series benefit has largely accrued while the "
+        "observation still reaches only the near field — so the system β can "
+        "rise above both limits. The result is a non-monotonic curve with an "
+        "interior maximum (near θ_cr ≈ 100 m in the reference sweep) that "
+        "exceeds both the independent and the fully-correlated values. The "
+        "excess is real, not Monte-Carlo noise: at N = 5 × 10⁶ the spread in "
+        "system Pf across θ_cr is roughly 25× the binomial standard error.")
+    add_figure(doc, FIG / "12_posterior_correlation.png",
+        "Figure 10.3 — Posterior series-system reliability under an adverse "
+        "single-location observation. Left: system β as a function of θ_cr at "
+        "a fixed forecast time overshoots the bracket (grey) that the prior-leg "
+        "intuition predicts, with an interior maximum (red ring) above both "
+        "the independent (θ_cr → 0) and fully-correlated (θ_cr → ∞) limits. "
+        "Right: the two extremes swap ordering over the forecast horizon — the "
+        "full-correlation series benefit grows with time while the adverse-obs "
+        "penalty decays, so their net margin crosses zero.")
+    para(doc,
+        "Why the extremes swap over the horizon. The ordering of the two "
+        "limiting cases is itself time-dependent. The series benefit of full "
+        "correlation grows as the forecast horizon lengthens (the wall becomes "
+        "more likely to have at least one failing section, so collapsing the "
+        "independent paths helps more), whereas the penalty from the adverse "
+        "observation decays with time. The decay is the key subtlety: the "
+        "corrosion model carries random parameters that are fixed in time "
+        "(A and B in cr(t) = A·t^B), and a single measurement pins one linear "
+        "combination of them. Forecasting to a time far from the observation "
+        "queries a different combination — chiefly the under-constrained growth "
+        "exponent — so the posterior fans back toward the prior and the "
+        "observation loses its grip. This is the familiar geometry of "
+        "anchoring a straight line through one point: the slope still has play, "
+        "so admissible lines fan out the further you extrapolate from the "
+        "anchor. The consequence is that the fully-correlated wall is the least "
+        "reliable extreme early in the horizon (the fresh adverse news "
+        "dominates) and the most reliable extreme later (the series benefit "
+        "dominates once the news has faded), crossing over at an intermediate "
+        "forecast time.")
+    para(doc,
+        "Favourable observations restore the clean picture. None of this "
+        "non-monotonicity arises when the observation is favourable — implying "
+        "less corrosion than the prior. Then both effects push the same way: "
+        "longer θ_cr both removes independent failure paths and spreads good "
+        "news along the wall, so the system β increases monotonically with "
+        "θ_cr and stays inside the independent/fully-correlated bracket. The "
+        "non-monotonic overshoot and the time-dependent extreme-swap are "
+        "therefore signatures specifically of propagating an adverse "
+        "single-location observation through a series system, and reading a "
+        "sweep plot correctly means knowing which sign of observation produced "
+        "it.")
 
     # ==================================================================
     # PART IV — SUPPORTING MACHINERY
@@ -1358,6 +1523,18 @@ def main() -> None:
         "the posterior system Pf at the end of the horizon should move "
         "monotonically (down for benign measurements, up for adverse ones), "
         "never jump erratically.")
+    bullet(doc,
+        "Posterior θ_cr non-monotonicity (Section 10.3): for an adverse "
+        "observation the system β as a function of θ_cr is expected to be "
+        "non-monotone with an interior maximum that exceeds both the θ_cr → 0 "
+        "and θ_cr → ∞ limits, and the two limits should swap ordering across "
+        "the forecast horizon. For a favourable observation the curve must "
+        "instead stay monotone and bracketed. A sweep that shows the "
+        "overshoot for a favourable obs — or none for an adverse one — points "
+        "to a sign error in the Kriged observation moments rather than to the "
+        "physics. The overshoot must also stand well clear of the Monte-Carlo "
+        "band (≈25× the binomial standard error at N = 5 × 10⁶) to count as "
+        "real rather than sampling noise.")
 
     # ------------------------------------------------------------------
     doc.add_heading("Appendix A — Module map", level=1)

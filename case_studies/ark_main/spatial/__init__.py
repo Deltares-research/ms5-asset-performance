@@ -58,6 +58,14 @@ def setup_signature(spatial_settings: dict) -> str:
             json.dumps(pv, sort_keys=True).encode()
         ).hexdigest()[:8]
         parts.append(f"pv-{h}")
+    # Non-uniform section grid: hash the spec so a custom grid never collides
+    # with a uniform grid that happens to have the same section count.
+    sg = s.get("section_grid") or {}
+    if sg:
+        h = hashlib.sha1(
+            json.dumps(sg, sort_keys=True).encode()
+        ).hexdigest()[:8]
+        parts.append(f"gr-{h}")
     return "_".join(parts)
 
 

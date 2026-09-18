@@ -115,6 +115,37 @@ def _load_spatial_settings() -> dict:
     return json.load(open(path))
 
 
+def _build_section_grid(settings_dict: dict, L: float, n_sections: int) -> np.ndarray:
+    """Section coordinates along the wall.
+
+    Default: ``np.linspace(0, L, n_sections)`` (uniform). If
+    ``settings_dict["section_grid"]["segments"]`` is present, build a
+    piecewise grid instead — one ``linspace(start, end, n)`` per segment,
+    concatenated and de-duplicated (shared segment boundaries collapse to a
+    single node). This lets the grid be refined where it matters most
+    (near the observation at ``x = 0``) while staying coarse far away, e.g.::
+
+        "section_grid": {"segments": [
+            {"start": 0,   "end": 100,  "n": 10},
+            {"start": 100, "end": 1000, "n": 10}
+        ]}
+
+    yields 10 points over 0–100 m (~11 m spacing) and 10 over 100–1000 m
+    (100 m spacing); the shared 100 m node collapses, giving 19 unique
+    sections. The grid is returned sorted and ascending.
+    """
+    sg = settings_dict.get("section_grid") or {}
+    segments = sg.get("segments")
+    if not segments:
+        return np.linspace(0.0, L, n_sections)
+    pieces = []
+    for seg in segments:
+        start, end, n = float(seg["start"]), float(seg["end"]), int(seg["n"])
+        pieces.append(np.linspace(start, end, n))
+    x = np.unique(np.concatenate(pieces))   # sorted + de-duplicated
+    return x
+
+
 def analyze(spatial_settings: dict | None = None) -> None:
     """Run (or load) the spatial MCS, integrate against prior and posterior
     cr distributions, and produce summary + forecasts + plots under
@@ -175,7 +206,16 @@ def analyze(spatial_settings: dict | None = None) -> None:
     L, n_sections, wall_theta, wall_rho_0, spec = covariance.resolve_config(
         var_names, settings_dict,
     )
-    x = np.linspace(0.0, L, n_sections)
+    # Section grid: uniform linspace by default, or a piecewise non-uniform
+    # grid from settings["section_grid"] (denser near the obs at x=0). The
+    # actual point count + wall length are read back from the grid and
+    # written into settings_dict so the signature, prints and caches all
+    # reflect the real geometry.
+    x = _build_section_grid(settings_dict, L, n_sections)
+    n_sections = len(x)
+    L = float(x[-1])
+    settings_dict["n_sections"] = n_sections
+    settings_dict["L"] = L
 
     # Cache and results live side-by-side under spatial_analysis/, both
     # keyed by the same setup signature (LSF, n_samples, seed, geometry,
@@ -190,7 +230,12 @@ def analyze(spatial_settings: dict | None = None) -> None:
     print("=" * 60)
     print(f"LSF:              {lsf_name}")
     print(f"mcs method:       {mcs_method}")
-    print(f"L:                {L:.1f} m,  n_sections={n_sections}  (spacing {L/(n_sections-1):.1f} m)")
+    _dx = np.diff(x)
+    if np.allclose(_dx, _dx[0]):
+        _spacing = f"spacing {_dx[0]:.1f} m"
+    else:
+        _spacing = f"non-uniform spacing {_dx.min():.1f}..{_dx.max():.1f} m"
+    print(f"L:                {L:.1f} m,  n_sections={n_sections}  ({_spacing})")
     print(f"wall theta:       {wall_theta:.1f} m")
     print(f"wall rho_0:       {wall_rho_0:.3f}")
     print(f"n_cr points:      {len(points)}")
